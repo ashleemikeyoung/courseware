@@ -1,0 +1,1490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ask Ash</title>
+<link rel="icon" href="/static/logo-light.png">
+<script>
+/* Runs before the stylesheet paints, so a dark-theme user never sees a white
+   flash on load. Falls back to the OS preference on first visit. */
+(function(){
+  var t;
+  try { t = window.localStorage.getItem("theme"); } catch(e){}
+  if (!t) t = (window.matchMedia &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", t);
+})();
+</script>
+<style>
+/* ---------------------------------------------------------------------------
+   Proofreader's galley.
+   Two-colour proofing convention: red marks what is wrong, blue carries author
+   apparatus. That mapping survives every theme, because it means something.
+   Charter for prose (Carter designed it for proofing on low-res output), mono
+   for everything the machine says. No web fonts, no CDN.
+
+   Three themes. Every text colour was checked against its own background for
+   WCAG contrast rather than picked by eye, since red-vs-blue here is load
+   bearing: it is the difference between a real citation and an invented one.
+   --------------------------------------------------------------------------- */
+
+/* LIGHT — warm grey stock, the colour of proofing paper */
+:root, [data-theme="light"]{
+  --paper:#edefe9; --paper-2:#e4e7df; --paper-3:#daded2;
+  --ink:#16191a; --ink-soft:#5a625e; --ink-faint:#626a65;
+  --rule:#c9cec3; --rule-soft:#d8dcd1;
+  --red:#a5372c; --red-wash:#f0dcd8;
+  --blue:#26478d; --blue-wash:#dde2ef;
+  --green:#3c6147;
+  --shadow:rgba(22,25,26,.07);
+}
+
+/* DARK — not inverted. Warm near-black, accents lifted until they read as ink
+   on the new ground rather than as glowing UI. */
+[data-theme="dark"]{
+  --paper:#16181a; --paper-2:#1e2124; --paper-3:#282c2f;
+  --ink:#e6e8e3; --ink-soft:#a3aaa4; --ink-faint:#909891;
+  --rule:#343a3c; --rule-soft:#282d2f;
+  --red:#e08472; --red-wash:#3a2622;
+  --blue:#8fabe0; --blue-wash:#212a3a;
+  --green:#7fb894;
+  --shadow:rgba(0,0,0,.4);
+}
+
+/* BALLET PINK — pale rose stock. The proofing red shifts toward carmine so it
+   still separates from the ground, and the blue warms toward violet so it sits
+   with the pink instead of fighting it. */
+[data-theme="pink"]{
+  --paper:#faeef0; --paper-2:#f4e2e6; --paper-3:#ecd4da;
+  --ink:#2e1e24; --ink-soft:#6b4f58; --ink-faint:#7c5e67;
+  --rule:#e0c3cb; --rule-soft:#ebd3d9;
+  --red:#a8324f; --red-wash:#f6d9e0;
+  --blue:#5a4a8c; --blue-wash:#e5dff0;
+  --green:#4a7256;
+  --shadow:rgba(46,30,36,.08);
+}
+
+:root{
+  --serif:Charter,"Bitstream Charter","Iowan Old Style",Georgia,serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --wordmark:"Cormorant Garamond",Charter,"Bitstream Charter",Georgia,serif;
+  --measure:34rem;
+}
+/* Self-hosted, not a Google Fonts <link> -- this file's own comment above
+   says "no web fonts, no CDN" and that's a real boundary this project
+   holds elsewhere (see app.py's docstring: nothing here reaches the
+   network). A CDN-served font would mean the browser fetches from
+   Google's servers on every load; @font-face pointing at a local file
+   under /static keeps that boundary intact while still getting the
+   typeface. Only the weights actually used are declared. */
+@font-face{
+  font-family:"Cormorant Garamond";
+  src:url("/static/fonts/CormorantGaramond-Regular.ttf") format("truetype");
+  font-weight:400;font-style:normal;font-display:swap;
+}
+@font-face{
+  font-family:"Cormorant Garamond";
+  src:url("/static/fonts/CormorantGaramond-Medium.ttf") format("truetype");
+  font-weight:500;font-style:normal;font-display:swap;
+}
+html{color-scheme:light}
+[data-theme="dark"]{color-scheme:dark}
+body,.rail,.slab,.sec,.log,.stream,input,textarea,select{
+  transition:background-color .18s ease,border-color .18s ease,color .18s ease}
+@media (prefers-reduced-motion:reduce){*{transition:none !important}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  background:var(--paper); color:var(--ink); font-family:var(--serif);
+  font-size:16px; line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+button,input,textarea,select{font:inherit;color:inherit}
+
+/* --- chrome ------------------------------------------------------------- */
+.rail{
+  display:flex;align-items:stretch;gap:0;
+  border-bottom:1px solid var(--rule);background:var(--paper-2);
+  position:sticky;top:0;z-index:40;
+}
+.brand{
+  padding:9px 18px;border-right:1px solid var(--rule);
+  display:flex;align-items:center;gap:11px;white-space:nowrap;
+}
+/* Three recoloured copies, one shown per theme. Swapping in CSS rather than
+   JS means the right mark is painted on the first frame, with no flash. */
+.brand .mark{height:48px;width:auto;display:none}
+[data-theme="light"] .mark:nth-of-type(1),
+:root:not([data-theme]) .mark:nth-of-type(1),
+[data-theme="dark"]  .mark:nth-of-type(2),
+[data-theme="pink"]  .mark:nth-of-type(3){display:block}
+/* The wordmark carries the brand, so this only has to name the tool. Set on
+   the baseline of the logo rather than centred, so the two align optically.
+   Cormorant Garamond at Medium weight -- the mono default reads fine as a
+   utility label, but this is the one spot actually meant to feel designed
+   rather than instrumented, so it gets the display serif instead. */
+.wordmark-sub{
+  font-family:var(--wordmark);font-weight:500;font-size:15px;letter-spacing:.04em;
+  color:var(--ink-faint);padding-top:5px;white-space:nowrap;
+}
+nav{display:flex;flex:1;overflow-x:auto}
+nav button{
+  background:none;border:0;border-right:1px solid var(--rule-soft);
+  padding:11px 20px;cursor:pointer;font-family:var(--mono);font-size:11px;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint);
+  white-space:nowrap;transition:color .12s,background .12s;
+}
+nav button:hover{color:var(--ink);background:var(--paper)}
+nav button[aria-selected="true"]{
+  color:var(--ink);background:var(--paper);
+  box-shadow:inset 0 -2px 0 var(--blue);
+}
+nav button:focus-visible,.btn:focus-visible,.cite:focus-visible{
+  outline:2px solid var(--blue);outline-offset:1px}
+.projpick{display:flex;align-items:center;border-right:1px solid var(--rule)}
+.projpick select{
+  background:none;border:0;padding:11px 10px 11px 16px;cursor:pointer;
+  font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--ink);
+  max-width:15rem;
+}
+.projpick select:focus{outline:0;background:var(--paper)}
+.projpick button{
+  background:none;border:0;border-left:1px solid var(--rule-soft);cursor:pointer;
+  padding:11px 13px;font-family:var(--mono);font-size:13px;color:var(--ink-faint);
+}
+.projpick button:hover{color:var(--ink);background:var(--paper)}
+.themes{display:flex;align-items:center;gap:7px;padding:0 15px;
+  border-left:1px solid var(--rule)}
+.themes button{
+  width:17px;height:17px;border-radius:50%;cursor:pointer;padding:0;
+  border:1px solid var(--rule);position:relative;
+}
+.themes button:hover{transform:scale(1.14)}
+.themes button[aria-pressed="true"]{
+  box-shadow:0 0 0 1.5px var(--paper),0 0 0 3px var(--ink)}
+.themes button:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+.sw-light{background:#edefe9;border-color:#c9cec3}
+.sw-dark{background:#16181a;border-color:#343a3c}
+.sw-pink{background:#faeef0;border-color:#e0c3cb}
+.statusbit{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;
+  padding:11px 16px;color:var(--ink-faint);border-left:1px solid var(--rule);
+  display:flex;align-items:center;gap:14px;white-space:nowrap;
+}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;margin-right:5px}
+.dot.bad{background:var(--red)}
+
+/* --- update banner -------------------------------------------------------
+   Shown when the code on disk has changed since this server process
+   started. "Apply" commits the change as a real version and restarts;
+   nothing here ever restarts on its own without that click. */
+.updatebar{
+  display:none;align-items:center;gap:14px;flex-wrap:wrap;
+  padding:9px 18px;background:var(--blue-wash);border-bottom:1px solid var(--rule);
+  font-family:var(--mono);font-size:11.5px;color:var(--blue);
+}
+.updatebar.on{display:flex}
+.updatebar .files{color:var(--ink-faint);font-size:10.5px}
+.restarting{
+  position:fixed;inset:0;background:var(--paper);z-index:200;
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-soft);
+}
+
+/* --- panels ------------------------------------------------------------- */
+.panel{display:none;padding:34px 40px 90px}
+.panel.on{display:block}
+.wrap{max-width:74rem;margin:0 auto}
+.eyebrow{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--ink-faint);margin:0 0 10px;
+}
+h1{font-size:1.85rem;font-weight:600;letter-spacing:-.01em;margin:0 0 6px;line-height:1.2}
+h2{font-size:1.2rem;font-weight:600;margin:0 0 4px}
+.lede{color:var(--ink-soft);margin:0 0 26px;max-width:44rem}
+
+.btn{
+  background:var(--ink);color:var(--paper);border:0;padding:9px 20px;cursor:pointer;
+  font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+  border-radius:2px;transition:opacity .12s;
+}
+.btn:hover{opacity:.85}
+.btn[disabled]{opacity:.32;cursor:not-allowed}
+.btn.ghost{background:none;color:var(--ink-soft);border:1px solid var(--rule)}
+.btn.ghost:hover{color:var(--ink);border-color:var(--ink-soft)}
+.btn.small{padding:5px 11px;font-size:10px}
+
+label{display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-faint);margin:0 0 6px}
+input[type=text],textarea{
+  width:100%;background:var(--paper-2);border:1px solid var(--rule);
+  padding:10px 12px;border-radius:2px;font-family:var(--serif);
+}
+input[type=text]:focus,textarea:focus{outline:0;border-color:var(--blue);
+  background:var(--paper)}
+textarea{resize:vertical;min-height:74px}
+.field{margin-bottom:18px}
+.row{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap}
+
+/* --- setup grid --------------------------------------------------------- */
+.slab{border:1px solid var(--rule);background:var(--paper-2);padding:18px 20px;border-radius:2px}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-bottom:28px}
+.metric{font-family:var(--mono);font-size:1.7rem;letter-spacing:-.02em}
+.metric small{font-size:11px;letter-spacing:.1em;color:var(--ink-faint);display:block;margin-top:3px}
+.rolerow{display:flex;justify-content:space-between;gap:12px;font-family:var(--mono);
+  font-size:11.5px;padding:6px 0;border-bottom:1px dotted var(--rule)}
+.rolerow:last-child{border:0}
+.role-bad{color:var(--red)}
+
+/* --- outline editor ----------------------------------------------------- */
+.sec{
+  border:1px solid var(--rule);background:var(--paper-2);border-radius:2px;
+  margin-bottom:12px;display:flex;
+}
+.sec .num{
+  font-family:var(--mono);font-size:11px;color:var(--ink-faint);
+  padding:16px 0 0;width:44px;text-align:center;flex:0 0 44px;
+  border-right:1px solid var(--rule-soft);
+}
+.sec .body{flex:1;padding:14px 18px}
+.sec .tools{display:flex;flex-direction:column;gap:4px;padding:12px;border-left:1px solid var(--rule-soft)}
+.sec .tools button{background:none;border:0;cursor:pointer;color:var(--ink-faint);
+  font-family:var(--mono);font-size:11px;padding:3px 6px;border-radius:2px}
+.sec .tools button:hover{color:var(--ink);background:var(--paper-3)}
+.sec .tools button.danger:hover{color:var(--red)}
+.qlist{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.q{font-family:var(--mono);font-size:10.5px;background:var(--blue-wash);color:var(--blue);
+  padding:3px 8px;border-radius:2px;display:inline-flex;gap:7px;align-items:center}
+.q button{background:none;border:0;cursor:pointer;color:var(--blue);opacity:.5;padding:0}
+.q button:hover{opacity:1}
+.tally{font-family:var(--mono);font-size:11px;color:var(--ink-faint);margin:16px 0 22px}
+
+/* --- galley: the signature ---------------------------------------------- */
+.galley{display:grid;grid-template-columns:minmax(0,var(--measure)) 20rem;gap:3.2rem;
+  align-items:start;justify-content:center}
+.column{max-width:var(--measure)}
+.column h2{font-size:1.05rem;letter-spacing:.02em;margin:2.4em 0 .5em;
+  padding-bottom:.3em;border-bottom:1px solid var(--rule)}
+.column h2:first-child{margin-top:0}
+.column p{margin:0 0 1.1em;hyphens:auto}
+.column ul,.column ol{margin:0 0 1.1em;padding-left:1.3em}
+.doctitle{font-size:2rem;line-height:1.15;margin:0 0 .2em;letter-spacing:-.015em}
+.thesis{color:var(--ink-soft);font-style:italic;margin:0 0 2.2em;
+  padding-bottom:1.4em;border-bottom:2px solid var(--ink)}
+
+.cite{
+  font-family:var(--mono);font-size:.62em;vertical-align:.42em;
+  color:var(--blue);background:none;border:0;cursor:pointer;padding:0 .12em;
+  text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px;
+}
+.cite:hover,.cite.active{background:var(--blue-wash)}
+.cite.ghostmark{color:var(--red);text-decoration-style:wavy;font-weight:600}
+/* Red and blue sit at almost identical luminance in every theme, so colour
+   alone cannot carry the real-vs-fabricated distinction. The wavy rule and
+   this dagger do the work for anyone who cannot separate the hues. */
+.cite.ghostmark::after{content:"\2020";font-size:.9em;margin-left:.1em}
+.cite.ghostmark:hover{background:var(--red-wash)}
+
+.margin{position:sticky;top:64px;max-height:calc(100vh - 92px);overflow-y:auto}
+.margin .hint{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);
+  line-height:1.7;border-left:2px solid var(--rule);padding-left:12px}
+.gloss{
+  border-left:2px solid var(--blue);padding:9px 0 9px 12px;margin-bottom:14px;
+  animation:slide .16s ease-out;
+}
+.gloss.ghost{border-left-color:var(--red)}
+@keyframes slide{from{opacity:0;transform:translateX(6px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.gloss{animation:none}}
+.gloss .head{font-family:var(--mono);font-size:10px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--blue);display:flex;justify-content:space-between;gap:10px}
+.gloss.ghost .head{color:var(--red)}
+.gloss .src{font-family:var(--mono);font-size:11px;color:var(--ink-soft);margin:5px 0 6px;
+  word-break:break-all}
+.gloss .txt{font-size:13.5px;line-height:1.55;color:var(--ink-soft);
+  max-height:15em;overflow-y:auto}
+.gloss.ghost .txt{color:var(--red)}
+
+/* --- run log ------------------------------------------------------------ */
+.log{font-family:var(--mono);font-size:11.5px;line-height:1.85;background:var(--paper-2);
+  border:1px solid var(--rule);border-radius:2px;padding:14px 16px;max-height:15rem;
+  overflow-y:auto;margin-bottom:22px}
+.log div{color:var(--ink-soft)}
+.log div.now{color:var(--ink)}
+.log div.err{color:var(--red)}
+.stream{font-family:var(--serif);font-size:14px;color:var(--ink-soft);
+  background:var(--paper-2);border:1px solid var(--rule);padding:14px 16px;
+  border-radius:2px;max-height:13rem;overflow-y:auto;white-space:pre-wrap;margin-bottom:22px}
+
+/* --- ask / chat ---------------------------------------------------------- */
+.askbar{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:24px}
+.toggle{display:inline-flex;align-items:center;gap:8px;cursor:pointer;
+  font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--ink-soft)}
+.toggle input{accent-color:var(--blue);width:14px;height:14px;cursor:pointer}
+#askModel{
+  background:var(--paper-2);border:1px solid var(--rule);border-radius:2px;
+  padding:6px 10px;font-family:var(--mono);font-size:11px;color:var(--ink);
+}
+.chatmsg{margin:0 0 1.9em}
+.chatmsg .who{
+  font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ink-faint);margin-bottom:.45em;
+}
+.chatmsg.user .who{color:var(--blue)}
+.chatmsg .bubble{white-space:pre-wrap}
+.chatmsg .bubble p{margin:0 0 1em}
+.chatmsg .bubble p:last-child{margin-bottom:0}
+.chatmsg .bubble.pending::after{
+  content:"";display:inline-block;width:.5em;height:1em;margin-left:2px;
+  background:var(--ink-faint);vertical-align:text-bottom;
+  animation:blink 1s step-end infinite;
+}
+@keyframes blink{50%{opacity:0}}
+@media (prefers-reduced-motion:reduce){.chatmsg .bubble.pending::after{animation:none}}
+.chatmsg .sources{margin-top:.6em}
+.composer{
+  display:flex;gap:10px;align-items:flex-end;position:sticky;bottom:0;
+  background:var(--paper);padding:16px 0 4px;border-top:1px solid var(--rule);
+  margin-top:8px;
+}
+.composer textarea{
+  flex:1;min-height:44px;max-height:14rem;resize:none;font-size:15px;line-height:1.5;
+}
+.composer .btn{flex:0 0 auto;padding:11px 22px}
+table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}
+th{text-align:left;font-weight:500;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ink-faint);padding:8px 10px;border-bottom:1px solid var(--ink)}
+td{padding:9px 10px;border-bottom:1px solid var(--rule-soft)}
+tr:hover td{background:var(--paper-2)}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.bad{color:var(--red);font-weight:600}
+.win{color:var(--green)}
+.bar{height:3px;background:var(--blue);display:block;margin-top:3px}
+.legend{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);
+  line-height:1.9;margin-top:16px;border-left:2px solid var(--rule);padding-left:12px}
+.chip{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.08em;
+  text-transform:uppercase;padding:2px 7px;border-radius:2px;margin:0 4px 4px 0;
+  background:var(--red-wash);color:var(--red)}
+.pick{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:20px}
+.pick label{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);
+  font-size:11px;text-transform:none;letter-spacing:0;color:var(--ink);
+  border:1px solid var(--rule);padding:6px 11px;border-radius:2px;cursor:pointer;margin:0}
+.pick label:has(input:checked){border-color:var(--blue);background:var(--blue-wash)}
+.pick label.cloud{color:var(--red);border-style:dashed}
+.empty{font-family:var(--mono);font-size:12px;color:var(--ink-faint);
+  border:1px dashed var(--rule);padding:26px;text-align:center;border-radius:2px}
+
+@media(max-width:880px){
+  .galley{grid-template-columns:1fr;gap:1.6rem}
+  .margin{position:static;max-height:none}
+  .panel{padding:24px 18px 80px}
+}
+</style>
+</head>
+<body>
+
+<div class="rail">
+  <div class="brand">
+    <img class="mark" src="/static/logo-light.png" alt="Qavats">
+    <img class="mark" src="/static/logo-dark.png" alt="" aria-hidden="true">
+    <img class="mark" src="/static/logo-pink.png" alt="" aria-hidden="true">
+    <span class="wordmark-sub">Ask Ash</span>
+  </div>
+  <div class="projpick">
+    <select id="projSel" title="Project"></select>
+    <button id="btnNewProj" title="New project">+</button>
+  </div>
+  <nav id="nav">
+    <button data-tab="setup" aria-selected="true">Setup</button>
+    <button data-tab="ask" aria-selected="false">Ask</button>
+    <button data-tab="summarize" aria-selected="false">Summarize</button>
+    <button data-tab="outline" aria-selected="false">Outline</button>
+    <button data-tab="draft" aria-selected="false">Draft</button>
+    <button data-tab="bench" aria-selected="false">Compare</button>
+    <button data-tab="history" aria-selected="false">History</button>
+  </nav>
+  <div class="themes" role="group" aria-label="Theme">
+    <button class="sw-light" data-theme-set="light" title="Light" aria-pressed="true"></button>
+    <button class="sw-dark"  data-theme-set="dark"  title="Dark"  aria-pressed="false"></button>
+    <button class="sw-pink"  data-theme-set="pink"  title="Ballet pink" aria-pressed="false"></button>
+  </div>
+  <div class="statusbit" id="statusbit">connecting</div>
+</div>
+
+<div class="updatebar" id="updateBar">
+  <span>Update available</span>
+  <span class="files" id="updateFiles"></span>
+  <button class="btn small" id="btnApplyUpdate">Apply &amp; restart</button>
+</div>
+
+<!-- SETUP -->
+<section class="panel on" id="p-setup"><div class="wrap">
+  <p class="eyebrow">Before you start</p>
+  <h1>What the machine has to work with</h1>
+  <p class="lede">Projects are folders under your documents root. Retrieval,
+    outlines, drafts, and comparisons all stay inside the project you have
+    selected. Everything runs on this computer.</p>
+  <div class="grid3" id="setupgrid"></div>
+  <div class="slab" style="margin-bottom:20px">
+    <p class="eyebrow" style="margin-bottom:12px">Model roles</p>
+    <div id="roles"></div>
+  </div>
+  <div class="slab" style="margin-bottom:20px">
+    <p class="eyebrow" style="margin-bottom:12px">Version</p>
+    <div id="versionInfo"></div>
+    <div id="versionHistory" style="margin-top:4px"></div>
+  </div>
+  <div class="row">
+    <button class="btn" id="btnRescan">Rescan documents</button>
+    <button class="btn ghost" id="btnToOutline">Plan a document</button>
+  </div>
+  <div class="log" id="setuplog" style="display:none;margin-top:20px"></div>
+</div></section>
+
+<!-- ASK -->
+<section class="panel" id="p-ask"><div class="wrap">
+  <p class="eyebrow">Open-ended</p>
+  <h1>Ask anything</h1>
+  <p class="lede" id="askLede">A plain conversation. Turn grounding on to pull
+    answers from the current project's documents, or leave it off and talk to
+    the model directly.</p>
+
+  <div class="askbar">
+    <label class="toggle">
+      <input type="checkbox" id="groundToggle" checked>
+      <span>Ground in documents</span>
+    </label>
+    <select id="askModel" title="Model"></select>
+    <button class="btn ghost small" id="btnClearChat">Clear conversation</button>
+  </div>
+
+  <div class="galley" id="chatGalley">
+    <div class="column" id="chatColumn"></div>
+    <div class="margin" id="chatMargin">
+      <div class="hint" id="chatHint">Click any citation to read its source.</div>
+      <div id="chatGlosses"></div>
+    </div>
+  </div>
+
+  <div class="log" id="asklog" style="display:none"></div>
+
+  <div class="composer">
+    <textarea id="askInput" rows="1"
+      placeholder="Ask about your documents, or anything else. Shift+Enter for a new line."></textarea>
+    <button class="btn" id="btnAsk">Send</button>
+  </div>
+</div></section>
+
+<!-- SUMMARIZE -->
+<section class="panel" id="p-summarize"><div class="wrap">
+  <p class="eyebrow">Whole documents, not fragments</p>
+  <h1>Search, then summarize</h1>
+  <p class="lede">Finds every indexed file that mentions your term — every
+    one, not just the closest matches — then reads and summarizes each straight
+    off disk. No retrieved chunks involved, so a passing mention doesn't get
+    truncated into nothing.</p>
+
+  <div class="row" style="margin-bottom:22px">
+    <div class="field" style="flex:1;min-width:220px;margin-bottom:0">
+      <label for="sumTerm">Search term</label>
+      <input type="text" id="sumTerm" placeholder="An author, title fragment, or topic">
+    </div>
+    <button class="btn" id="btnSummarize">Search &amp; summarize</button>
+  </div>
+
+  <div class="log" id="sumlog" style="display:none"></div>
+  <div id="sumWrap"></div>
+</div></section>
+
+<!-- OUTLINE -->
+<section class="panel" id="p-outline"><div class="wrap">
+  <p class="eyebrow">Step one</p>
+  <h1>Plan it before you spend the time</h1>
+  <p class="lede">Editing the plan is the highest-leverage two minutes here. The
+    search queries in each section are run against your own documents, so phrase
+    them the way your material reads, not as questions.</p>
+
+  <div class="slab" style="margin-bottom:26px">
+    <div class="field"><label for="topic">Topic</label>
+      <input type="text" id="topic" placeholder="What is the document about?"></div>
+    <div class="field"><label for="brief">Direction (optional)</label>
+      <textarea id="brief" placeholder="Angle, audience, emphasis"></textarea></div>
+    <button class="btn" id="btnPlan">Generate outline</button>
+  </div>
+
+  <div class="log" id="outlog" style="display:none"></div>
+  <div id="outlineWrap"></div>
+  <div id="archive"></div>
+</div></section>
+
+<!-- DRAFT -->
+<section class="panel" id="p-draft"><div class="wrap">
+  <div id="draftPre">
+    <p class="eyebrow">Step two</p>
+    <h1>Write it</h1>
+    <p class="lede" id="draftLede">Load or create an outline first.</p>
+    <button class="btn" id="btnDraft" disabled>Start drafting</button>
+  </div>
+  <div class="log" id="draftlog" style="display:none;margin-top:22px"></div>
+  <div class="stream" id="stream" style="display:none"></div>
+  <div id="docWrap"></div>
+</div></section>
+
+<!-- BENCH -->
+<section class="panel" id="p-bench"><div class="wrap">
+  <p class="eyebrow">Controlled comparison</p>
+  <h1>Which model writes this best</h1>
+  <p class="lede">Same outline, same retrieval, same prompts. Only the drafting
+    model changes, so the difference you see is the model.</p>
+  <div class="slab" style="margin-bottom:22px">
+    <p class="eyebrow" style="margin-bottom:10px">Models to compare</p>
+    <div class="pick" id="modelpick"></div>
+    <div class="row">
+      <div><label for="secLimit">Sections</label>
+        <select id="secLimit" style="padding:8px;border:1px solid var(--rule);
+          background:var(--paper-2);border-radius:2px"></select></div>
+      <button class="btn" id="btnBench">Run comparison</button>
+    </div>
+  </div>
+  <div class="log" id="benchlog" style="display:none"></div>
+  <div id="benchWrap"></div>
+</div></section>
+
+<!-- HISTORY -->
+<section class="panel" id="p-history"><div class="wrap">
+  <p class="eyebrow">Accumulated evidence</p>
+  <h1>How each model holds up over time</h1>
+  <p class="lede">One topic proves very little. Several start to mean something.</p>
+  <div id="histWrap"></div>
+</div></section>
+
+<script>
+const $ = s => document.querySelector(s);
+const el = (t, c, x) => { const n = document.createElement(t);
+  if (c) n.className = c; if (x !== undefined) n.textContent = x; return n; };
+const esc = s => (s ?? "").replace(/[&<>"]/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+let STATE = { outline:null, evidence:{}, models:[], busy:false,
+              project:null, projects:[] };
+
+/* Every request carries the project explicitly. The server holds no session,
+   so there is no way to be looking at one project and writing into another. */
+const withProject = (o) => Object.assign({project: STATE.project}, o || {});
+const qp = (u) => u + (u.includes("?") ? "&" : "?") +
+  "project=" + encodeURIComponent(STATE.project || "");
+
+/* --- theme -------------------------------------------------------------- */
+/* Applied before first paint by the inline script in <head>, so there is no
+   flash of the wrong theme on load. This only handles switching. */
+function setTheme(name){
+  document.documentElement.setAttribute("data-theme", name);
+  document.querySelectorAll("[data-theme-set]").forEach(b =>
+    b.setAttribute("aria-pressed", b.dataset.themeSet === name));
+  try { window.localStorage.setItem("theme", name); } catch(e){}
+}
+document.querySelectorAll("[data-theme-set]").forEach(b =>
+  b.onclick = () => setTheme(b.dataset.themeSet));
+
+/* --- tabs --------------------------------------------------------------- */
+$("#nav").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return; show(b.dataset.tab);
+});
+function show(tab){
+  document.querySelectorAll("#nav button").forEach(b =>
+    b.setAttribute("aria-selected", b.dataset.tab === tab));
+  document.querySelectorAll(".panel").forEach(p =>
+    p.classList.toggle("on", p.id === "p-" + tab));
+  if (tab === "history") loadHistory();
+}
+
+/* --- job streaming ------------------------------------------------------ */
+function runJob(url, body, logEl, onEvent){
+  return new Promise((resolve, reject) => {
+    logEl.style.display = "block"; logEl.innerHTML = "";
+    fetch(url, {method:"POST", headers:{"Content-Type":"application/json"},
+                body: JSON.stringify(withProject(body))})
+      .then(r => r.json()).then(j => {
+        if (j.error) { logLine(logEl, j.error, "err"); return reject(j.error); }
+        const src = new EventSource(`/api/jobs/${j.job}/stream`);
+        src.onmessage = m => {
+          const ev = JSON.parse(m.data);
+          onEvent(ev, logEl);
+          if (ev.type === "done"){ src.close(); resolve(ev); }
+          if (ev.type === "error"){ src.close();
+            logLine(logEl, ev.message, "err"); reject(ev.message); }
+        };
+        src.onerror = () => { src.close(); reject("connection lost"); };
+      }).catch(reject);
+  });
+}
+function logLine(box, text, cls){
+  box.querySelectorAll(".now").forEach(n => n.classList.remove("now"));
+  const d = el("div", "now " + (cls || ""), text);
+  box.appendChild(d); box.scrollTop = box.scrollHeight;
+}
+
+/* --- setup -------------------------------------------------------------- */
+async function loadStatus(){
+  const s = await (await fetch(qp("/api/status"))).json();
+  STATE.models = s.models;
+  STATE.roles = s.roles;
+  const bad = s.roles.filter(r => !r.ok).length;
+  $("#statusbit").innerHTML =
+    `<span><span class="dot${s.ollama ? "" : " bad"}"></span>ollama</span>` +
+    `<span><span class="dot${bad ? " bad" : ""}"></span>${bad ? bad + " model missing" : "models ready"}</span>` +
+    `<span>${(s.projects.find(p => p.name === STATE.project)?.chunks ?? s.chunks).toLocaleString()} chunks in ${STATE.project}</span>`;
+  STATE.projects = s.projects;
+
+  const g = $("#setupgrid"); g.innerHTML = "";
+  [["Indexed chunks", s.chunks.toLocaleString()],
+   ["Models installed", s.models.length],
+   ["Saved outline", s.has_plan ? "yes" : "none"]].forEach(([k, v]) => {
+    const d = el("div", "slab");
+    const m = el("div", "metric", v); m.appendChild(el("small", "", k));
+    d.appendChild(m); g.appendChild(d);
+  });
+
+  // This asks the RUNNING server process directly which fixes it actually
+  // has loaded. Two separate lines, not one: a process can have picked up
+  // an earlier fix without the next one, and a single combined status would
+  // hide exactly that gap.
+  const codeCard = el("div", "slab");
+  codeCard.style.gridColumn = "1 / -1";
+  const allLoaded = s.ask_retry_guard && s.ask_history_sanitizer;
+  codeCard.style.borderColor = allLoaded ? "" : "var(--red)";
+  const head = el("div", "eyebrow", "Running code");
+  head.style.margin = "0 0 8px";
+  codeCard.appendChild(head);
+  [["Ask retry guard", s.ask_retry_guard],
+   ["Ask history sanitizer", s.ask_history_sanitizer]].forEach(([label, ok]) => {
+    const row = el("div", "rolerow" + (ok ? "" : " role-bad"));
+    row.appendChild(el("span", "", label));
+    row.appendChild(el("span", "",
+      ok ? "active" : "NOT LOADED — restart the server after updating ask.py"));
+    codeCard.appendChild(row);
+  });
+  g.appendChild(codeCard);
+
+  const r = $("#roles"); r.innerHTML = "";
+  s.roles.forEach(x => {
+    const row = el("div", "rolerow" + (x.ok ? "" : " role-bad"));
+    row.appendChild(el("span", "", x.role));
+    row.appendChild(el("span", "", x.model + (x.ok ? "" : "  not installed")));
+    r.appendChild(row);
+  });
+  if (bad) {
+    const p = el("div", "legend",
+      "Pull the missing model, or point its OLLAMA_*_MODEL variable in .env at one you have.");
+    r.appendChild(p);
+  }
+  buildModelPicker();
+  buildAskModel();
+  loadVersionInfo();
+}
+
+$("#btnRescan").onclick = () =>
+  runJob("/api/rescan", {}, $("#setuplog"), (ev, box) => {
+    if (ev.type === "stage") logLine(box, ev.stage);
+    if (ev.type === "done"){
+      const s = ev.summary;
+      logLine(box, `${s.new.length} new, ${s.updated.length} updated, ` +
+                   `${s.removed.length} removed. ${s.chunks} chunks indexed.`);
+      loadStatus();
+    }
+  });
+$("#btnToOutline").onclick = () => show("outline");
+
+/* --- outline editor ----------------------------------------------------- */
+$("#btnPlan").onclick = async () => {
+  const topic = $("#topic").value.trim();
+  if (!topic) { $("#topic").focus(); return; }
+  $("#btnPlan").disabled = true;
+  try {
+    const ev = await runJob("/api/outline", {topic, brief: $("#brief").value},
+      $("#outlog"), (e, box) => {
+        if (e.type === "stage") logLine(box, e.stage);
+      });
+    STATE.outline = ev.outline; renderOutline();
+  } catch(e){} finally { $("#btnPlan").disabled = false; }
+};
+
+function toast(msg){
+  let t = $("#toast");
+  if (!t){ t = el("div"); t.id = "toast";
+    t.style.cssText = "position:fixed;bottom:22px;left:50%;transform:translateX(-50%);" +
+      "background:var(--ink);color:var(--paper);font-family:var(--mono);font-size:11px;" +
+      "letter-spacing:.08em;padding:9px 16px;border-radius:2px;z-index:99";
+    document.body.appendChild(t); }
+  t.textContent = msg; t.style.opacity = "1";
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.opacity = "0", 2600);
+}
+
+async function loadArchive(){
+  const box = $("#archive");
+  const j = await (await fetch(qp("/api/plans"))).json();
+  box.innerHTML = "";
+  if (!j.plans.length) return;
+  box.appendChild(Object.assign(el("p", "eyebrow"),
+    {textContent: "Discarded outlines", style: "margin:34px 0 10px"}));
+  j.plans.forEach(p => {
+    const row = el("div", "rolerow");
+    const left = el("span", "", `${p.title}   ${p.sections} sections`);
+    const b = el("button", "btn small ghost", "Restore");
+    b.onclick = async () => {
+      const r = await (await fetch(qp(`/api/plans/${encodeURIComponent(p.file)}/restore`),
+        {method:"POST"})).json();
+      STATE.outline = r.outline; renderOutline(); toast("Restored");
+    };
+    row.append(left, b); box.appendChild(row);
+  });
+}
+
+function renderOutline(){
+  const w = $("#outlineWrap"); w.innerHTML = "";
+  const o = STATE.outline;
+  if (!o) { w.appendChild(el("div", "empty",
+    "No outline yet. Describe the document above and generate one.")); 
+    prepDraft(); loadArchive(); return; }
+
+  const head = el("div", "slab"); head.style.marginBottom = "18px";
+  const t = el("div", "field");
+  t.appendChild(Object.assign(el("label"), {textContent:"Title"}));
+  const ti = el("input"); ti.type = "text"; ti.value = o.title || "";
+  ti.oninput = e => o.title = e.target.value; t.appendChild(ti);
+  const th = el("div", "field"); th.style.marginBottom = "0";
+  th.appendChild(Object.assign(el("label"), {textContent:"Thesis"}));
+  const ta = el("textarea"); ta.value = o.thesis || "";
+  ta.oninput = e => o.thesis = e.target.value; th.appendChild(ta);
+  head.append(t, th); w.appendChild(head);
+
+  o.sections.forEach((s, i) => w.appendChild(sectionCard(s, i)));
+
+  const total = o.sections.reduce((a, s) => a + (+s.target_words || 700), 0);
+  const n = o.sections.length;
+  w.appendChild(el("div", "tally",
+    `${n} sections   ${total.toLocaleString()} words   about ${n*3}–${n*5} minutes to draft`));
+
+  const bar = el("div", "row");
+  const add = el("button", "btn ghost", "Add section");
+  add.onclick = () => { o.sections.push({heading:"New section", purpose:"",
+    target_words:700, queries:[]}); renderOutline(); };
+  const save = el("button", "btn ghost", "Save plan");
+  save.onclick = async () => { await fetch("/api/plan", {method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({outline:o})}); save.textContent = "Saved"; 
+    setTimeout(() => save.textContent = "Save plan", 1400); };
+  const go = el("button", "btn", "Draft this");
+  go.onclick = () => { show("draft"); prepDraft(); };
+  const drop = el("button", "btn ghost", "Discard outline");
+  drop.style.marginLeft = "auto";
+  drop.onclick = async () => {
+    if (!confirm("Clear this outline and start over?\n\n" +
+                 "A copy is kept in the plans folder, so you can bring it back.")) return;
+    const r = await (await fetch(qp("/api/plan"), {method:"DELETE"})).json();
+    STATE.outline = null;
+    $("#topic").value = ""; $("#brief").value = "";
+    renderOutline(); loadArchive();
+    if (r.archived) toast(`Archived to ${r.archived.split("/").slice(-2).join("/")}`);
+  };
+  bar.append(add, save, go, drop); w.appendChild(bar);
+
+  loadArchive();
+
+  prepDraft(); buildSectionLimit();
+}
+
+function sectionCard(s, i){
+  const o = STATE.outline;
+  const card = el("div", "sec");
+  card.appendChild(el("div", "num", String(i + 1).padStart(2, "0")));
+
+  const body = el("div", "body");
+  const h = el("input"); h.type = "text"; h.value = s.heading || "";
+  h.style.cssText = "font-family:var(--serif);font-size:1.02rem;font-weight:600;" +
+    "border:0;background:none;padding:0;margin-bottom:6px";
+  h.oninput = e => s.heading = e.target.value;
+
+  const p = el("textarea"); p.value = s.purpose || "";
+  p.placeholder = "What this section establishes, and what it leaves to others";
+  p.style.cssText = "font-size:14px;min-height:52px;background:none;border:0;" +
+    "padding:0;color:var(--ink-soft)";
+  p.oninput = e => s.purpose = e.target.value;
+
+  const wr = el("div"); wr.style.cssText = "display:flex;gap:8px;align-items:center;margin-top:8px";
+  const wl = el("span", "", "target"); 
+  wl.style.cssText = "font-family:var(--mono);font-size:10px;letter-spacing:.1em;" +
+    "text-transform:uppercase;color:var(--ink-faint)";
+  const wi = el("input"); wi.type = "text"; wi.value = s.target_words || 700;
+  wi.style.cssText = "width:70px;font-family:var(--mono);font-size:12px;padding:3px 7px";
+  wi.oninput = e => { const v = parseInt(e.target.value, 10);
+    if (!isNaN(v)) s.target_words = v; };
+  wr.append(wl, wi, el("span", "", "words"));
+  wr.lastChild.style.cssText = "font-family:var(--mono);font-size:10px;color:var(--ink-faint)";
+
+  const ql = el("div", "qlist");
+  (s.queries || []).forEach((q, qi) => {
+    const chip = el("span", "q"); chip.appendChild(el("span", "", q));
+    const x = el("button", "", "\u00d7"); x.title = "Remove query";
+    x.onclick = () => { s.queries.splice(qi, 1); renderOutline(); };
+    chip.appendChild(x); ql.appendChild(chip);
+  });
+  const addq = el("button", "btn small ghost", "+ query");
+  addq.onclick = () => { const v = prompt("Search phrase, as your documents would word it:");
+    if (v) { (s.queries = s.queries || []).push(v); renderOutline(); } };
+  ql.appendChild(addq);
+
+  body.append(h, p, wr, ql);
+
+  const tools = el("div", "tools");
+  const up = el("button", "", "\u2191"); up.title = "Move up"; up.disabled = i === 0;
+  up.onclick = () => { o.sections.splice(i - 1, 0, o.sections.splice(i, 1)[0]); renderOutline(); };
+  const dn = el("button", "", "\u2193"); dn.title = "Move down";
+  dn.disabled = i === o.sections.length - 1;
+  dn.onclick = () => { o.sections.splice(i + 1, 0, o.sections.splice(i, 1)[0]); renderOutline(); };
+  const rm = el("button", "danger", "\u00d7"); rm.title = "Delete section";
+  rm.onclick = () => { o.sections.splice(i, 1); renderOutline(); };
+  tools.append(up, dn, rm);
+
+  card.append(body, tools);
+  return card;
+}
+
+/* --- drafting ----------------------------------------------------------- */
+function prepDraft(){
+  const o = STATE.outline, ok = o && o.sections && o.sections.length;
+  $("#btnDraft").disabled = !ok || STATE.busy;
+  $("#draftLede").textContent = ok
+    ? `${o.sections.length} sections planned. Roughly ${o.sections.length*3}–${o.sections.length*5} minutes.`
+    : "Load or create an outline first.";
+}
+
+$("#btnDraft").onclick = async () => {
+  STATE.busy = true; prepDraft();
+  $("#stream").style.display = "block"; $("#stream").textContent = "";
+  $("#docWrap").innerHTML = "";
+  const bodies = [];
+  try {
+    const ev = await runJob("/api/draft", {outline: STATE.outline},
+      $("#draftlog"), (e, box) => {
+        if (e.type === "stage") logLine(box, e.stage);
+        if (e.type === "section_start")
+          logLine(box, `${String(e.index+1).padStart(2,"0")}  ${e.heading}  ` +
+                       `${e.passages} passages, target ${e.target}w`);
+        if (e.type === "token"){
+          const s = $("#stream"); s.textContent += e.text;
+          if (s.textContent.length > 4000) s.textContent = s.textContent.slice(-4000);
+          s.scrollTop = s.scrollHeight;
+        }
+        if (e.type === "section_done"){
+          bodies[e.index] = e.body;
+          logLine(box, `    done  ${e.words}w in ${e.elapsed_s}s`);
+        }
+      });
+    STATE.evidence = ev.evidence || {};
+    $("#stream").style.display = "none";
+    renderDocument(ev.title, STATE.outline.thesis, bodies, ev.report);
+  } catch(e){} finally { STATE.busy = false; prepDraft(); }
+};
+
+/* Minimal markdown: headings, lists, bold, italic. The drafter is told to emit
+   an h2 and prose, so a full parser would be more surface area than value. */
+function mdToHtml(md){
+  const lines = md.split("\n"); let out = [], list = null;
+  const inline = t => esc(t)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|\W)\*(?!\s)(.+?)\*/g, "$1<em>$2</em>")
+    // Chat markers are prefixed per turn ("t1-C3") so citations from different
+    // turns never collide once merged into one evidence map; document markers
+    // stay bare ("C3"). Both shapes match here.
+    .replace(/\[([\w-]*C\d+)\]/g, (m, c) => citeHtml(c));
+  const close = () => { if (list){ out.push(`</${list}>`); list = null; } };
+  for (const raw of lines){
+    const l = raw.trim();
+    if (!l) { close(); continue; }
+    let m;
+    if ((m = l.match(/^#{2,4}\s+(.*)/))) { close(); out.push(`<h2>${inline(m[1])}</h2>`); }
+    else if ((m = l.match(/^[-*]\s+(.*)/))) {
+      if (list !== "ul"){ close(); out.push("<ul>"); list = "ul"; }
+      out.push(`<li>${inline(m[1])}</li>`);
+    } else if ((m = l.match(/^\d+\.\s+(.*)/))) {
+      if (list !== "ol"){ close(); out.push("<ol>"); list = "ol"; }
+      out.push(`<li>${inline(m[1])}</li>`);
+    } else { close(); out.push(`<p>${inline(l)}</p>`); }
+  }
+  close(); return out.join("");
+}
+function citeHtml(c){
+  const known = !!STATE.evidence[c];
+  return `<button class="cite${known ? "" : " ghostmark"}" data-c="${c}" ` +
+         `title="${known ? "Show source" : "No such source"}">${c}</button>`;
+}
+
+/* Shared by the document galley and the chat galley: clicking any [Cn] marker
+   inside containerEl slides its source into marginEl.glosses. One definition
+   so the two views cannot drift apart on what a click does. */
+function wireCitations(containerEl, glossesEl){
+  containerEl.addEventListener("click", e => {
+    const b = e.target.closest(".cite"); if (!b) return;
+    containerEl.querySelectorAll(".cite.active").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    const c = b.dataset.c, ev = STATE.evidence[c];
+    glossesEl.innerHTML = "";
+    const box = el("div", "gloss" + (ev ? "" : " ghost"));
+    const head = el("div", "head");
+    head.appendChild(el("span", "", c));
+    head.appendChild(el("span", "", ev ? (ev.start === ev.end
+      ? `chunk ${ev.start}` : `chunks ${ev.start}\u2013${ev.end}`) : "no source"));
+    box.appendChild(head);
+    box.appendChild(el("div", "src", ev ? ev.source : "This marker was invented by the model."));
+    if (ev) box.appendChild(el("div", "txt", ev.text));
+    glossesEl.appendChild(box);
+    if (window.innerWidth <= 880) box.scrollIntoView({behavior:"smooth", block:"center"});
+  });
+}
+
+function renderDocument(title, thesis, bodies, report){
+  const w = $("#docWrap"); w.innerHTML = "";
+  const g = el("div", "galley");
+
+  const col = el("div", "column");
+  col.appendChild(Object.assign(el("h1", "doctitle"), {textContent: title || "Untitled"}));
+  if (thesis) col.appendChild(Object.assign(el("p", "thesis"), {textContent: thesis}));
+  const prose = el("div");
+  prose.innerHTML = bodies.filter(Boolean).map(mdToHtml).join("");
+  col.appendChild(prose);
+
+  const margin = el("div", "margin");
+  const hint = el("div", "hint");
+  hint.textContent = report
+    ? `${report.words.toLocaleString()} words   score ${report.quality_score}   ` +
+      `grounding ${report.grounding}   ${report.passages_cited} of ` +
+      `${report.passages_retrieved} passages cited\n\nClick any marker to read its source.`
+    : "Click any marker to read its source.";
+  hint.style.whiteSpace = "pre-line";
+  margin.appendChild(hint);
+  const glosses = el("div"); margin.appendChild(glosses);
+
+  if (report && report.invented_markers && report.invented_markers.length){
+    const warn = el("div", "gloss ghost");
+    warn.appendChild(Object.assign(el("div", "head"), {textContent: "Fabricated"}));
+    warn.appendChild(Object.assign(el("div", "txt"),
+      {textContent: `${report.invented_markers.join(", ")} cite nothing that was retrieved. Treat those claims as unsupported.`}));
+    margin.insertBefore(warn, glosses);
+  }
+  if (report && report.flags && report.flags.length){
+    const f = el("div"); f.style.marginTop = "12px";
+    report.flags.forEach(x => f.appendChild(el("span", "chip", x.replace(/_/g, " "))));
+    margin.appendChild(f);
+  }
+
+  g.append(col, margin); w.appendChild(g);
+  wireCitations(prose, glosses);
+}
+
+/* --- benchmark ---------------------------------------------------------- */
+function buildModelPicker(){
+  const p = $("#modelpick"); p.innerHTML = "";
+  STATE.models.forEach(m => {
+    const cloud = m.includes("cloud");
+    const l = el("label", cloud ? "cloud" : "");
+    const cb = el("input"); cb.type = "checkbox"; cb.value = m; cb.disabled = cloud;
+    l.append(cb, el("span", "", m + (cloud ? "  leaves your machine" : "")));
+    p.appendChild(l);
+  });
+}
+function buildSectionLimit(){
+  const s = $("#secLimit"); const n = STATE.outline?.sections?.length || 0;
+  s.innerHTML = "";
+  [["2","first 2, quick"], ["3","first 3"], ["", `all ${n}`]].forEach(([v, t]) => {
+    const o = el("option", "", t); o.value = v; s.appendChild(o);
+  });
+}
+$("#btnBench").onclick = async () => {
+  const models = [...document.querySelectorAll("#modelpick input:checked")].map(i => i.value);
+  if (!models.length || !STATE.outline) return;
+  const limit = $("#secLimit").value;
+  $("#btnBench").disabled = true; $("#benchWrap").innerHTML = "";
+  try {
+    const ev = await runJob("/api/bench",
+      {outline: STATE.outline, models, sections: limit ? +limit : null},
+      $("#benchlog"), (e, box) => {
+        if (e.type === "stage") logLine(box, e.stage);
+        if (e.type === "evidence") logLine(box, `${e.passages} shared passages, identical for every model`);
+        if (e.type === "model_start") logLine(box, `drafting with ${e.model}`);
+        if (e.type === "model_done") logLine(box,
+          `    ${e.model}  score ${e.report.score}  ` +
+          `${e.report.citations.fabricated_count} fabricated  ` +
+          `${e.report.speed.total_min} min`);
+        if (e.type === "model_failed") logLine(box, `    ${e.model} failed: ${e.message}`, "err");
+      });
+    STATE.evidence = ev.evidence || {};
+    renderBench(ev.results, ev.drafts);
+  } catch(e){} finally { $("#btnBench").disabled = false; }
+};
+
+function renderBench(results, drafts){
+  const w = $("#benchWrap"); w.innerHTML = "";
+  if (!results || !results.length){
+    w.appendChild(el("div", "empty", "No results.")); return; }
+  const rows = [...results].sort((a, b) => b.score - a.score);
+  const best = rows[0].score;
+
+  const tb = el("table");
+  tb.innerHTML = "<thead><tr>" +
+    ["Model","Score","Fabricated","Grounding","Distinct-3","Cross-section","Length","Tok/s","Minutes"]
+    .map((h, i) => `<th${i ? ' style="text-align:right"' : ""}>${h}</th>`).join("") +
+    "</tr></thead>";
+  const body = el("tbody");
+  rows.forEach(r => {
+    const tr = el("tr");
+    const name = el("td", "", r.model); tr.appendChild(name);
+    const cells = [
+      [r.score.toFixed(1), r.score === best ? "win" : ""],
+      [r.citations.fabricated_count, r.citations.fabricated_count ? "bad" : ""],
+      [r.grounding.toFixed(3), ""],
+      [r.distinct_3.toFixed(3), r.distinct_3 < 0.75 ? "bad" : ""],
+      [r.cross_section.mean.toFixed(3), r.cross_section.mean > 0.05 ? "bad" : ""],
+      [r.length.ratio.toFixed(2), ""],
+      [r.speed.mean_tok_per_s ?? "\u2013", ""],
+      [r.speed.total_min.toFixed(1), ""],
+    ];
+    cells.forEach(([v, cls], i) => {
+      const td = el("td", "num " + cls, String(v));
+      if (i === 0){ const b = el("span", "bar");
+        b.style.width = (100 * r.score / 100) + "%"; td.appendChild(b); }
+      tr.appendChild(td);
+    });
+    body.appendChild(tr);
+  });
+  tb.appendChild(body); w.appendChild(tb);
+
+  const notes = el("div", "legend");
+  notes.textContent =
+    "Fabricated must be zero. Grounding is overlap with the evidence given, higher means less invention. " +
+    "Distinct-3 below 0.75 means visible repetition. Cross-section above 0.05 means sections repeat each other. " +
+    "The score ranks candidates. It does not judge prose, so read the drafts.";
+  w.appendChild(notes);
+
+  rows.forEach(r => {
+    if (!r.flags.length && !r.citations.fabricated.length) return;
+    const d = el("div"); d.style.marginTop = "12px";
+    d.appendChild(Object.assign(el("span"), {textContent: r.model + "  ",
+      style: "font-family:var(--mono);font-size:11px"}));
+    r.citations.fabricated.forEach(c => d.appendChild(el("span", "chip", "invented " + c)));
+    r.flags.forEach(f => d.appendChild(el("span", "chip", f.replace(/_/g, " "))));
+    w.appendChild(d);
+  });
+
+  const pick = el("div"); pick.style.margin = "30px 0 16px";
+  pick.appendChild(Object.assign(el("p", "eyebrow"), {textContent: "Read a draft"}));
+  const bar = el("div", "row");
+  rows.forEach(r => {
+    const b = el("button", "btn ghost small", r.model);
+    b.onclick = () => {
+      bar.querySelectorAll("button").forEach(x => x.className = "btn ghost small");
+      b.className = "btn small";
+      renderDocument(STATE.outline.title, STATE.outline.thesis, drafts[r.model], null);
+      $("#docWrap").scrollIntoView({behavior:"smooth"});
+    };
+    bar.appendChild(b);
+  });
+  pick.appendChild(bar); w.appendChild(pick);
+  w.appendChild(Object.assign(el("div"), {id:"docWrapBench"}));
+}
+
+/* --- ask / chat ----------------------------------------------------------
+   Free-form prompting. No outline, no sections, no target length: one message
+   in, one streamed back, with retrieval as an optional ingredient rather than
+   the whole architecture. Citations reuse the same wireCitations/mdToHtml
+   machinery as the document galley, which is why chat markers arrive from the
+   server pre-prefixed per turn ("t1-C3") rather than bare ("C3"): once merged
+   into one STATE.evidence map, two different turns' [C1] would otherwise be
+   indistinguishable and the wrong source would surface on click. -------- */
+
+STATE.chat = { messages: [], busy: false, turnSeq: 0 };
+
+function buildAskModel(){
+  const sel = $("#askModel"); if (!sel) return;
+  const keep = sel.value;
+  sel.innerHTML = "";
+  STATE.models.filter(m => !m.includes("cloud")).forEach(m => {
+    const o = el("option", "", m); o.value = m; sel.appendChild(o);
+  });
+  // Default to whatever Compare has already told you drafts best, if it's
+  // in the list; otherwise whatever the drafter role is set to.
+  const preferred = keep || writerDefaultModel();
+  if (preferred && [...sel.options].some(o => o.value === preferred))
+    sel.value = preferred;
+}
+function writerDefaultModel(){
+  const role = (STATE.roles || []).find(r => r.role === "drafter");
+  return role ? role.model : null;
+}
+
+function renderChat(){
+  const col = $("#chatColumn");
+  if (!STATE.chat.messages.length){
+    col.innerHTML = "";
+    col.appendChild(el("div", "empty",
+      "Ask about your documents, or anything else. Grounding pulls from the " +
+      "current project; turn it off for a plain conversation."));
+    return;
+  }
+  col.innerHTML = "";
+  STATE.chat.messages.forEach(m => col.appendChild(chatBubble(m)));
+  wireCitations(col, $("#chatGlosses"));
+  window.scrollTo(0, document.body.scrollHeight);
+}
+
+function chatBubble(m){
+  const box = el("div", "chatmsg " + m.role);
+  box.appendChild(el("div", "who", m.role === "user" ? "you" : "assistant"));
+  const bubble = el("div", "bubble" + (m.pending ? " pending" : ""));
+  bubble.innerHTML = m.role === "user"
+    ? esc(m.content).replace(/\n/g, "<br>")
+    : mdToHtml(m.content || "");
+  box.appendChild(bubble);
+  if (m.sources && m.sources.length){
+    const s = el("div", "sources qlist");
+    m.sources.forEach(c => s.appendChild(el("span", "q", c)));
+    box.appendChild(s);
+  }
+  return box;
+}
+
+/* Streamed tokens update just the last bubble's text rather than calling
+   renderChat() per token, the same restraint the Draft tab uses on its
+   preview stream: a full re-render per token is needless churn once a
+   response runs past a few hundred words. */
+function appendToLastBubble(text){
+  const col = $("#chatColumn");
+  const last = col.lastElementChild;
+  const bubble = last && last.querySelector(".bubble");
+  if (!bubble) return renderChat();
+  bubble.textContent = text;
+  window.scrollTo(0, document.body.scrollHeight);
+}
+
+function autoResize(ta){
+  ta.style.height = "auto";
+  ta.style.height = Math.min(ta.scrollHeight, 224) + "px";
+}
+$("#askInput").addEventListener("input", e => autoResize(e.target));
+$("#askInput").addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); sendAsk(); }
+});
+$("#btnAsk").onclick = sendAsk;
+$("#btnClearChat").onclick = () => {
+  if (STATE.chat.messages.length && !confirm("Clear this conversation?")) return;
+  STATE.chat.messages = []; renderChat();
+};
+
+async function sendAsk(){
+  if (STATE.chat.busy) return;
+  const input = $("#askInput");
+  const text = input.value.trim();
+  if (!text) return;
+  if (!STATE.project) return toast("Pick a project first");
+
+  STATE.chat.messages.push({role: "user", content: text});
+  input.value = ""; autoResize(input);
+  const pending = {role: "assistant", content: "", pending: true};
+  STATE.chat.messages.push(pending);
+  STATE.chat.busy = true; $("#btnAsk").disabled = true;
+  renderChat();
+
+  const turnId = "t" + (++STATE.chat.turnSeq) + Date.now().toString(36).slice(-4);
+  const ground = $("#groundToggle").checked;
+  const model = $("#askModel").value;
+  // History excludes the pending placeholder and is trimmed server-side too;
+  // sending full role/content pairs keeps the server stateless per request.
+  const history = STATE.chat.messages.slice(0, -1)
+    .map(m => ({role: m.role, content: m.content}));
+
+  try {
+    const ev = await runJob("/api/ask",
+      {messages: history, ground, model, turn_id: turnId},
+      $("#asklog"),
+      (e) => {
+        if (e.type === "token"){
+          pending.content += e.text;
+          appendToLastBubble(pending.content);
+        }
+      });
+    pending.content = ev.text;
+    pending.pending = false;
+    pending.sources = Object.keys(ev.evidence || {});
+    Object.assign(STATE.evidence, ev.evidence || {});
+    renderChat();
+  } catch(err){
+    STATE.chat.messages.pop();
+    STATE.chat.messages.pop();
+    input.value = text; autoResize(input);
+    renderChat();
+    toast(typeof err === "string" ? err : "That didn't go through");
+  } finally {
+    STATE.chat.busy = false; $("#btnAsk").disabled = false;
+  }
+}
+
+/* --- summarize -------------------------------------------------------------
+   Search finds every file that mentions the term (see summarize.py's
+   find_documents -- exhaustive, scanning every indexed chunk, not a top-k
+   ranked call), then each match is read straight off disk and summarized
+   whole. One card per document, filled in as its stream arrives -- the
+   same on_token -> emit -> SSE path draft() uses for its preview stream,
+   just one card per source instead of one shared box. -------------------- */
+
+$("#sumTerm").addEventListener("keydown", e => {
+  if (e.key === "Enter"){ e.preventDefault(); runSummarize(); }
+});
+$("#btnSummarize").onclick = runSummarize;
+
+async function runSummarize(){
+  const term = $("#sumTerm").value.trim();
+  if (!term) { $("#sumTerm").focus(); return; }
+  if (!STATE.project) return toast("Pick a project first");
+
+  const wrap = $("#sumWrap"); wrap.innerHTML = "";
+  $("#btnSummarize").disabled = true;
+  const cards = {};   // source -> body element, filled in as tokens stream
+
+  try {
+    await runJob("/api/summarize", {query: term}, $("#sumlog"), (e, box) => {
+      if (e.type === "stage") logLine(box, e.stage);
+
+      if (e.type === "found")
+        logLine(box, e.sources.length
+          ? `${e.sources.length} matching document(s)`
+          : "no matches");
+
+      if (e.type === "document_start"){
+        const card = el("div", "slab"); card.style.marginBottom = "16px";
+        const head = el("div", "eyebrow", e.source);
+        head.style.marginBottom = "8px";
+        const body = el("div"); body.style.whiteSpace = "pre-wrap";
+        card.append(head, body); wrap.appendChild(card);
+        cards[e.source] = body;
+        logLine(box, `reading ${e.source}`);
+      }
+
+      if (e.type === "token" && cards[e.source])
+        cards[e.source].textContent += e.text;
+
+      if (e.type === "document_done"){
+        const r = e.result, body = cards[r.source];
+        if (body){
+          if (r.error){
+            body.textContent = "";
+            body.appendChild(Object.assign(el("span"),
+              {textContent: "Could not summarize: " + r.error,
+               style: "color:var(--red)"}));
+          } else if (r.truncated){
+            body.appendChild(el("div", "legend",
+              `(truncated at ${r.chars.toLocaleString()} characters)`));
+          }
+        }
+        logLine(box, `done: ${r.source}`);
+      }
+    });
+  } catch(e){} finally { $("#btnSummarize").disabled = false; }
+
+  if (!wrap.children.length)
+    wrap.appendChild(el("div", "empty", "No indexed documents matched."));
+}
+
+/* --- history ------------------------------------------------------------ */
+async function loadHistory(){
+  const h = await (await fetch(qp("/api/history"))).json();
+  const w = $("#histWrap"); w.innerHTML = "";
+  if (!h.models.length){
+    w.appendChild(el("div", "empty",
+      "No comparisons yet. Run one from the Compare tab.")); return; }
+
+  const tb = el("table");
+  tb.innerHTML = "<thead><tr>" +
+    ["Model","Runs","Avg score","Fabrications","Grounding","Distinct-3","Avg minutes"]
+    .map((x, i) => `<th${i ? ' style="text-align:right"' : ""}>${x}</th>`).join("") + "</tr></thead>";
+  const body = el("tbody");
+  h.models.forEach(m => {
+    const tr = el("tr");
+    tr.appendChild(el("td", "", m.model));
+    [[m.runs,""], [m.score.toFixed(1),""], [m.fabrications, m.fabrications ? "bad" : ""],
+     [m.grounding.toFixed(3),""], [m.distinct_3.toFixed(3),""], [m.minutes.toFixed(1),""]]
+      .forEach(([v, c]) => tr.appendChild(el("td", "num " + c, String(v))));
+    body.appendChild(tr);
+  });
+  tb.appendChild(body); w.appendChild(tb);
+  w.appendChild(Object.assign(el("div", "legend"),
+    {textContent: `${h.runs.length} runs across ${h.topics.length} topic(s). ` +
+      "Averages across different topics are rough, since some material grounds better than others."}));
+}
+
+/* --- updates --------------------------------------------------------------
+   Polled lightly (every 15s) rather than tied to any specific action, since
+   an update can land at any point in a long session -- there's no single
+   moment that would reliably trigger a check otherwise. Applying or rolling
+   back never restarts inline from this code; the server schedules its own
+   restart after responding (see app.py's _delayed_restart), and this side
+   just waits for it to come back before reloading the page. -------------- */
+
+async function checkUpdateStatus(){
+  try {
+    const s = await (await fetch("/api/update/status")).json();
+    const bar = $("#updateBar");
+    bar.classList.toggle("on", !!s.update_available);
+    if (s.update_available){
+      const files = s.pending_files || [];
+      $("#updateFiles").textContent = files.slice(0, 6).join(", ") +
+        (files.length > 6 ? `  +${files.length - 6} more` : "");
+    }
+  } catch(e){}
+}
+
+$("#btnApplyUpdate").onclick = async () => {
+  if (!confirm("Apply this update and restart the server now?")) return;
+  try {
+    await fetch("/api/update/apply", {method:"POST",
+      headers:{"Content-Type":"application/json"}, body: JSON.stringify({})});
+  } catch(e){}
+  showRestarting();
+};
+
+function showRestarting(){
+  if ($("#restartOverlay")) return;
+  const box = el("div", "restarting", "Restarting\u2026");
+  box.id = "restartOverlay";
+  document.body.appendChild(box);
+  waitForRestart();
+}
+
+/* Polls the plain status endpoint (not the update one specifically) since
+   the whole point is "has the process come back up at all" -- any
+   successful response means it has. Reloads on the first success rather
+   than trying to reconcile client state with whatever changed server-side;
+   a fresh page load is simpler and correct either way. */
+async function waitForRestart(tries){
+  tries = tries || 0;
+  try {
+    const r = await fetch("/api/status", {cache: "no-store"});
+    if (r.ok){ window.location.reload(); return; }
+  } catch(e){}
+  if (tries === 20)
+    $("#restartOverlay").textContent = "Still restarting\u2026 taking longer than expected.";
+  setTimeout(() => waitForRestart(tries + 1), 1000);
+}
+
+async function loadVersionInfo(){
+  const info = $("#versionInfo"), hist = $("#versionHistory");
+  if (!info || !hist) return;
+  try {
+    const s = await (await fetch("/api/update/status")).json();
+    info.innerHTML = "";
+    if (s.current){
+      const row = el("div", "rolerow");
+      row.appendChild(el("span", "", s.current.message));
+      row.appendChild(el("span", "", `${s.current.hash}   ${s.current.date.slice(0, 16)}`));
+      info.appendChild(row);
+    } else {
+      info.appendChild(el("div", "legend", "No version tracked yet."));
+    }
+
+    const h = await (await fetch("/api/update/history")).json();
+    hist.innerHTML = "";
+    const older = (h.releases || []).slice(1, 11);  // [0] is current, shown above
+    if (older.length){
+      hist.appendChild(Object.assign(el("p", "eyebrow"),
+        {textContent: "Earlier versions", style: "margin:14px 0 6px"}));
+      older.forEach(rel => {
+        const row = el("div", "rolerow");
+        row.appendChild(el("span", "", `${rel.message}  (${rel.hash})`));
+        const b = el("button", "btn small ghost", "Roll back to this");
+        b.onclick = () => rollbackTo(rel.full_hash, rel.message);
+        row.appendChild(b);
+        hist.appendChild(row);
+      });
+    }
+  } catch(e){}
+}
+
+async function rollbackTo(hash, message){
+  if (!confirm(`Roll back to "${message}"? The server will restart.`)) return;
+  try {
+    await fetch("/api/update/rollback", {method:"POST",
+      headers:{"Content-Type":"application/json"}, body: JSON.stringify({hash})});
+  } catch(e){}
+  showRestarting();
+}
+
+/* --- projects ----------------------------------------------------------- */
+async function loadProjects(keep){
+  const j = await (await fetch("/api/projects")).json();
+  STATE.projects = j.projects;
+  const sel = $("#projSel"); sel.innerHTML = "";
+  if (!j.projects.length){
+    const o = el("option", "", "no projects yet"); o.value = ""; sel.appendChild(o);
+    STATE.project = null; return;
+  }
+  j.projects.forEach(p => {
+    const o = el("option", "", `${p.name}  ${p.chunks.toLocaleString()} chunks`);
+    o.value = p.name; sel.appendChild(o);
+  });
+  const saved = keep || localStorage_get();
+  STATE.project = j.projects.some(p => p.name === saved) ? saved : j.projects[0].name;
+  sel.value = STATE.project;
+}
+/* localStorage is unavailable in some embedded contexts, so fail soft. */
+function localStorage_get(){ try { return window.localStorage.getItem("proj"); }
+  catch(e){ return null; } }
+function localStorage_set(v){ try { window.localStorage.setItem("proj", v); }
+  catch(e){} }
+
+async function switchProject(name){
+  STATE.project = name; localStorage_set(name);
+  STATE.outline = null; STATE.evidence = {};
+  STATE.chat.messages = []; STATE.chat.turnSeq = 0;
+  $("#topic").value = ""; $("#brief").value = "";
+  $("#docWrap").innerHTML = ""; $("#benchWrap").innerHTML = ""; $("#chatColumn").innerHTML = "";
+  $("#chatGlosses").innerHTML = ""; renderChat();
+  $("#draftlog").style.display = "none"; $("#outlog").style.display = "none";
+  await loadStatus();
+  const j = await (await fetch(qp("/api/plan"))).json();
+  STATE.outline = j.outline; renderOutline();
+  if (j.outline) $("#topic").value = j.outline.title || "";
+  toast(`Project: ${name}`);
+}
+
+$("#projSel").onchange = e => switchProject(e.target.value);
+$("#btnNewProj").onclick = async () => {
+  const name = prompt("New project name.\n\nThis creates a folder under your " +
+                      "documents root. Put source files there, then rescan.");
+  if (!name) return;
+  const r = await (await fetch("/api/projects", {method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({name})})).json();
+  if (r.error) return toast(r.error);
+  await loadProjects(r.name);
+  await switchProject(r.name);
+  toast(`Created ${r.path}`);
+};
+
+/* --- boot --------------------------------------------------------------- */
+(async () => {
+  await loadProjects();
+  await loadStatus();
+  renderChat();
+  checkUpdateStatus();
+  setInterval(checkUpdateStatus, 15000);
+  if (STATE.project){
+    const j = await (await fetch(qp("/api/plan"))).json();
+    if (j.outline){ STATE.outline = j.outline; renderOutline();
+      $("#topic").value = j.outline.title || ""; }
+    else renderOutline();
+    show("ask");
+  }
+})();
+</script>
+</body>
+</html>

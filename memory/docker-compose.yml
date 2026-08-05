@@ -1,0 +1,27 @@
+# ~/Development/RAG/memory/docker-compose.yml
+#
+# Runs libsql-server (the project formerly called sqld) as the memory
+# database for this machine. Currently single-machine: bound to localhost
+# only, since nothing else needs to reach it over the network right now.
+#
+# If a second machine joins later, change the port line back to
+# "8080:8080" (or a specific LAN interface) and SQLD_HTTP_LISTEN_ADDR back
+# to 0.0.0.0:8080 -- everything else here stays the same.
+#
+# No cloud account, no external service. Auth is a locally generated
+# Ed25519 keypair (see README.md "First-time setup").
+
+services:
+  memory-db:
+    image: ghcr.io/tursodatabase/libsql-server:latest
+    container_name: memory-db
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"   # HTTP API -- localhost only
+    volumes:
+      - ./data:/var/lib/sqld
+      - ./keys:/var/lib/sqld/keys:ro
+    environment:
+      - SQLD_NODE=primary
+      - SQLD_HTTP_LISTEN_ADDR=0.0.0.0:8080
+      - SQLD_AUTH_JWT_KEY_FILE=/var/lib/sqld/keys/jwt_public_key.pem

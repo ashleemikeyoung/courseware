@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.env
+.env-bak
+chroma_db/
+documents/
+projects/*/output/
+projects/*/plans/
+plans/
+output/
+benchmark.jsonl
+backups/
+backup/
+*.bak-*
+rag.py.bak-*
+rag.py.current
+static/fonts/*.ttf

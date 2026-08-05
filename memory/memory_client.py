@@ -1,0 +1,383 @@
+"""
+memory_client.py -- thin wrapper around libsql_client for logging RAG
+sessions to memory-db.
+
+This is intentionally the *only* place that writes to the sessions/turns/
+quality_scores tables, so the incognito guarantee lives in one function
+instead of being re-implemented (and potentially forgotten) at every call
+site. If incognito=True, start_session() returns a session object whose
+log_turn()/close() calls are no-ops -- nothing touches the network, nothing
+touches the database. Not "logged then filtered out later," never sent.
+
+Usage from orchestrator.py or writer.py:
+
+    from memory_client import start_session
+
+    session = start_session(project="GCU", machine="mac", mode="qa",
+                             incognito=False)
+    ...
+    session.log_turn(question=q, answer=a, model="qwen3:32b",
+                      chunk_ids=[m["source"] + "::" + str(i) for i, m in ...])
+    ...
+    session.close()
+
+Nothing in this file is wired into orchestrator.py or writer.py yet --
+that's a separate, deliberate step so each call site can decide what's
+worth logging rather than everything being captured by default.
+"""
+
+import json
+
+import libsql_client
+
+from memory_config import LIBSQL_URL, LIBSQL_AUTH_TOKEN
+
+
+class _NullSession:
+    """Returned when incognito=True. Every method is a no-op."""
+
+    def log_turn(self, *args, **kwargs):
+        pass
+
+    def close(self):
+        pass
+
+
+class _Session:
+    def __init__(self, client, session_id):
+        self._client = client
+        self._session_id = session_id
+
+    def log_turn(self, question: str, answer: str = None, model: str = None,
+                 chunk_ids: list = None) -> int:
+        result = self._client.execute(
+            "INSERT INTO turns (session_id, question, answer, model, chunk_ids) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [self._session_id, question, answer, model,
+             json.dumps(chunk_ids) if chunk_ids else None],
+        )
+        return result.last_insert_rowid
+
+    def log_quality(self, turn_id: int, fabrication: float = None,
+                     grounding: float = None, self_repetition: float = None,
+                     cross_section_bleed: float = None,
+                     length_adherence: float = None):
+        self._client.execute(
+            "INSERT INTO quality_scores "
+            "(turn_id, fabrication, grounding, self_repetition, "
+            " cross_section_bleed, length_adherence) VALUES (?, ?, ?, ?, ?, ?)",
+            [turn_id, fabrication, grounding, self_repetition,
+             cross_section_bleed, length_adherence],
+        )
+
+    def close(self):
+        self._client.execute(
+            "UPDATE sessions SET ended_at = datetime('now') WHERE id = ?",
+            [self._session_id],
+        )
+        self._client.close()
+
+
+def start_session(project: str, machine: str, mode: str, incognito: bool = False):
+    """
+    project: the rag.py project folder this session relates to, or None
+    machine: 'mac' | 'alice'
+    mode:    'qa' | 'draft' | 'bench'
+    incognito: if True, returns a _NullSession -- nothing is written,
+               nothing is sent over the network, full stop.
+    """
+    if incognito:
+        return _NullSession()
+
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    result = client.execute(
+        "INSERT INTO sessions (project, machine, mode, incognito) VALUES (?, ?, ?, 0)",
+        [project, machine, mode],
+    )
+    return _Session(client, result.last_insert_rowid)
+
+
+def recent_turns(n: int = 10, project: str = None):
+    """Convenience read helper for a quick 'what have I been asking' check."""
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        if project:
+            result = client.execute(
+                "SELECT t.asked_at, s.project, t.question, t.answer "
+                "FROM turns t JOIN sessions s ON s.id = t.session_id "
+                "WHERE s.project = ? ORDER BY t.asked_at DESC LIMIT ?",
+                [project, n],
+            )
+        else:
+            result = client.execute(
+                "SELECT t.asked_at, s.project, t.question, t.answer "
+                "FROM turns t JOIN sessions s ON s.id = t.session_id "
+                "ORDER BY t.asked_at DESC LIMIT ?",
+                [n],
+            )
+        return [dict(zip(result.columns, row)) for row in result.rows]
+    finally:
+        client.close()
+
+
+# ---------------------------------------------------------------------------
+# Verified citations -- durable ground truth, independent of sessions/turns
+# and independent of whatever chroma_db's ranking does or doesn't surface.
+# See schema.sql for the reasoning. Plain module-level functions, not part
+# of the _Session class, since these aren't tied to any one Q&A session --
+# a citation gets recorded once and is meant to outlive every session that
+# will ever look it up.
+# ---------------------------------------------------------------------------
+
+def record_citation(source: str, title: str = None, authors: str = None,
+                    source_line: str = None, publication_year: int = None,
+                    verified_how: str = "manual") -> int:
+    """
+    source is rag.py's relative path, e.g. "GCU/EBSCO-FullText-07_26_2026.pdf" --
+    matching that format is what lets this line up with chunk_ids elsewhere.
+    Upserts on source (ON CONFLICT), so re-verifying the same file just
+    refreshes the record rather than erroring or duplicating.
+    """
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        result = client.execute(
+            "INSERT INTO citations (source, title, authors, source_line, "
+            " publication_year, verified_how) VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(source) DO UPDATE SET "
+            " title=excluded.title, authors=excluded.authors, "
+            " source_line=excluded.source_line, "
+            " publication_year=excluded.publication_year, "
+            " verified_how=excluded.verified_how, "
+            " verified_at=datetime('now')",
+            [source, title, authors, source_line, publication_year, verified_how],
+        )
+        return result.last_insert_rowid
+    finally:
+        client.close()
+
+
+def find_citation(author: str = None, source: str = None):
+    """
+    Look up a verified citation by author (substring match) or exact source
+    path. This is the fallback a query like "articles by Tye" should check
+    when chroma's own ranking comes up empty -- a direct, un-ranked lookup
+    against known-good facts instead of hoping the vector search finds them.
+    """
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        if source:
+            result = client.execute(
+                "SELECT * FROM citations WHERE source = ?", [source])
+        elif author:
+            result = client.execute(
+                "SELECT * FROM citations WHERE authors LIKE ?", [f"%{author}%"])
+        else:
+            return []
+        return [dict(zip(result.columns, row)) for row in result.rows]
+    finally:
+        client.close()
+
+
+def flag_false_positive(turn_id: int, notes: str = None):
+    """
+    Mark a turn's answer as wrong, for later review. Broader than
+    record_retrieval_gap -- this covers any bad answer, not just the
+    specific "the right source existed and search() missed it" case.
+    """
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        client.execute(
+            "UPDATE turns SET flagged_false_positive = 1, flag_notes = ?, "
+            "flagged_at = datetime('now') WHERE id = ?",
+            [notes, turn_id],
+        )
+    finally:
+        client.close()
+
+
+def flagged_turns(n: int = 20):
+    """Review helper: everything flagged as a false positive, most recent first."""
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        result = client.execute(
+            "SELECT id, asked_at, question, answer, flag_notes, flagged_at "
+            "FROM turns WHERE flagged_false_positive = 1 "
+            "ORDER BY flagged_at DESC LIMIT ?",
+            [n],
+        )
+        return [dict(zip(result.columns, row)) for row in result.rows]
+    finally:
+        client.close()
+
+
+def find_cached_answer(question: str, project: str = None):
+    """
+    Exact-match lookup (case/whitespace-insensitive) for a question already
+    asked and answered. Returns the most recent match, or None. Deliberately
+    NOT fuzzy/semantic -- a near-miss match returning a stale answer for a
+    subtly different question is worse than just re-running the pipeline.
+    Excludes anything flagged as a false positive, so a known-bad cached
+    answer never gets silently resurfaced.
+    """
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        normalized = " ".join(question.strip().lower().split())
+        if project:
+            result = client.execute(
+                "SELECT t.id, t.asked_at, t.question, t.answer, t.model "
+                "FROM turns t JOIN sessions s ON s.id = t.session_id "
+                "WHERE lower(trim(t.question)) = ? AND s.project = ? "
+                "AND t.flagged_false_positive = 0 "
+                "ORDER BY t.asked_at DESC LIMIT 1",
+                [normalized, project],
+            )
+        else:
+            result = client.execute(
+                "SELECT id, asked_at, question, answer, model FROM turns "
+                "WHERE lower(trim(question)) = ? AND flagged_false_positive = 0 "
+                "ORDER BY asked_at DESC LIMIT 1",
+                [normalized],
+            )
+        rows = [dict(zip(result.columns, row)) for row in result.rows]
+        return rows[0] if rows else None
+    finally:
+        client.close()
+
+
+def record_retrieval_gap(query: str, expected_source: str, notes: str = None):
+    """
+    Log that rag.search() missed a real, indexed source for this query.
+    expected_source must already exist in citations (that's the point --
+    this only makes sense once the real source has actually been verified).
+    """
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        client.execute(
+            "INSERT INTO retrieval_gaps (query, expected_source, notes) "
+            "VALUES (?, ?, ?)",
+            [query, expected_source, notes],
+        )
+    finally:
+        client.close()
+
+
+# ---------------------------------------------------------------------------
+# Settings -- persistent admin toggles, checked live by any process (see
+# schema.sql for why this can't just be a .env var: separate processes
+# reading a shared .env once at startup can't be flipped without a restart,
+# a shared row here can).
+# ---------------------------------------------------------------------------
+
+def get_setting(key: str, default: str = None) -> str:
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        result = client.execute("SELECT value FROM settings WHERE key = ?", [key])
+        return result.rows[0][0] if result.rows else default
+    finally:
+        client.close()
+
+
+def set_setting(key: str, value: str):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        client.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
+            "updated_at=datetime('now')",
+            [key, value],
+        )
+    finally:
+        client.close()
+
+
+def pii_redaction_enabled() -> bool:
+    """Convenience wrapper -- the one thing every call site actually needs."""
+    return get_setting("pii_redaction", "off") == "on"
+
+
+# ---------------------------------------------------------------------------
+# Documents -- ingest-time synopses. See schema.sql for the "context aware
+# storage" reasoning: chroma_db stays chunk-level, this is document-level,
+# consulted alongside chroma's own search rather than instead of it.
+# ---------------------------------------------------------------------------
+
+def record_synopsis(source: str, synopsis: str, word_count: int = None,
+                    model: str = None):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        client.execute(
+            "INSERT INTO documents (source, synopsis, word_count, model) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(source) DO UPDATE SET "
+            " synopsis=excluded.synopsis, word_count=excluded.word_count, "
+            " model=excluded.model, indexed_at=datetime('now')",
+            [source, synopsis, word_count, model],
+        )
+    finally:
+        client.close()
+
+
+def get_synopsis(source: str):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        result = client.execute("SELECT * FROM documents WHERE source = ?", [source])
+        rows = [dict(zip(result.columns, row)) for row in result.rows]
+        return rows[0] if rows else None
+    finally:
+        client.close()
+
+
+def search_synopses(query_words: list, project_prefix: str = None):
+    """
+    Document-level correlation check: which indexed files' synopses mention
+    any of these words. This is the "correlate against libSQL for more
+    context" piece -- meant to be checked ALONGSIDE chroma_db's chunk-level
+    search() results at query time, not as a replacement for it. Simple
+    substring matching, not semantic -- synopses are short enough that this
+    is a reasonable, cheap, fully-local first pass.
+    """
+    if not query_words:
+        return []
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        clauses = " OR ".join(["lower(synopsis) LIKE ?"] * len(query_words))
+        params = [f"%{w.lower()}%" for w in query_words]
+        sql = f"SELECT source, synopsis FROM documents WHERE ({clauses})"
+        if project_prefix:
+            sql += " AND source LIKE ?"
+            params.append(f"{project_prefix}%")
+        result = client.execute(sql, params)
+        return [dict(zip(result.columns, row)) for row in result.rows]
+    finally:
+        client.close()
+
+
+# ---------------------------------------------------------------------------
+# PII scans -- summary only (entity types + count), never the matched text
+# itself. See schema.sql and pii.py for why.
+# ---------------------------------------------------------------------------
+
+def record_pii_scan(source: str, entity_types: list, finding_count: int):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        client.execute(
+            "INSERT INTO pii_scans (source, entity_types, finding_count) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(source) DO UPDATE SET "
+            " entity_types=excluded.entity_types, "
+            " finding_count=excluded.finding_count, "
+            " scanned_at=datetime('now')",
+            [source, json.dumps(entity_types), finding_count],
+        )
+    finally:
+        client.close()
+
+
+def get_pii_scan(source: str):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        result = client.execute("SELECT * FROM pii_scans WHERE source = ?", [source])
+        rows = [dict(zip(result.columns, row)) for row in result.rows]
+        return rows[0] if rows else None
+    finally:
+        client.close()
