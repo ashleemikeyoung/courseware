@@ -68,16 +68,18 @@
 :root{
   --serif:Charter,"Bitstream Charter","Iowan Old Style",Georgia,serif;
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  --wordmark:"Cormorant Garamond",Charter,"Bitstream Charter",Georgia,serif;
+  --wordmark:"Caveat","Cormorant Garamond",cursive;
   --measure:34rem;
 }
-/* Self-hosted, not a Google Fonts <link> -- this file's own comment above
-   says "no web fonts, no CDN" and that's a real boundary this project
-   holds elsewhere (see app.py's docstring: nothing here reaches the
-   network). A CDN-served font would mean the browser fetches from
-   Google's servers on every load; @font-face pointing at a local file
-   under /static keeps that boundary intact while still getting the
-   typeface. Only the weights actually used are declared. */
+/* Self-hosted, not a Google Fonts <link> -- see the note above about "no
+   web fonts, no CDN". Caveat ships as a single variable-weight file
+   (400-700 in one .ttf) rather than separate static files per weight like
+   Cormorant Garamond did, so only one @font-face rule is needed here. */
+@font-face{
+  font-family:"Caveat";
+  src:url("/static/fonts/Caveat-Regular.ttf") format("truetype-variations");
+  font-weight:400 700;font-style:normal;font-display:swap;
+}
 @font-face{
   font-family:"Cormorant Garamond";
   src:url("/static/fonts/CormorantGaramond-Regular.ttf") format("truetype");
@@ -121,12 +123,14 @@ button,input,textarea,select{font:inherit;color:inherit}
 [data-theme="pink"]  .mark:nth-of-type(3){display:block}
 /* The wordmark carries the brand, so this only has to name the tool. Set on
    the baseline of the logo rather than centred, so the two align optically.
-   Cormorant Garamond at Medium weight -- the mono default reads fine as a
-   utility label, but this is the one spot actually meant to feel designed
-   rather than instrumented, so it gets the display serif instead. */
+   Caveat at a slightly larger size than the mono default used to be --
+   handwritten scripts need more room to read clearly than a geometric
+   sans does at the same size, and letter-spacing is dropped entirely
+   (unlike the Cormorant Garamond version before it) since added tracking
+   works against a handwritten feel rather than for it. */
 .wordmark-sub{
-  font-family:var(--wordmark);font-weight:500;font-size:15px;letter-spacing:.04em;
-  color:var(--ink-faint);padding-top:5px;white-space:nowrap;
+  font-family:var(--wordmark);font-weight:500;font-size:19px;
+  color:var(--ink-faint);padding-top:2px;white-space:nowrap;
 }
 nav{display:flex;flex:1;overflow-x:auto}
 nav button{
@@ -389,7 +393,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <img class="mark" src="/static/logo-light.png" alt="Qavats">
     <img class="mark" src="/static/logo-dark.png" alt="" aria-hidden="true">
     <img class="mark" src="/static/logo-pink.png" alt="" aria-hidden="true">
-    <span class="wordmark-sub">Ask Ash</span>
+    <span class="wordmark-sub">ask ash</span>
   </div>
   <div class="projpick">
     <select id="projSel" title="Project"></select>
