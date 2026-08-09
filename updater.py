@@ -47,13 +47,68 @@ backup/
 rag.py.bak-*
 rag.py.current
 static/fonts/*.ttf
+memory/.env
+memory/data/
+memory/keys/
 """
+
+
+RUNTIME_UPDATE_PREFIXES = (
+    "chroma_db/",
+    "documents/",
+    "memory/data/",
+    "memory/keys/",
+    "projects/",
+    "output/",
+    "plans/",
+    "backups/",
+    "backup/",
+    "__pycache__/",
+)
+
+RUNTIME_UPDATE_FILES = {
+    ".DS_Store",
+    ".env",
+    ".env-bak",
+    "benchmark.jsonl",
+    "memory/.env",
+}
 
 
 def _git(*args, check=True):
     return subprocess.run(
         ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=check,
     )
+
+
+def _status_entries() -> list:
+    r = _git("status", "--porcelain", check=False)
+    out = []
+    for line in r.stdout.splitlines():
+        if not line.strip():
+            continue
+        path = line[2:].strip()
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        out.append({"code": line[:2], "path": path})
+    return out
+
+
+def _is_runtime_file(path: str) -> bool:
+    return (
+        path in RUNTIME_UPDATE_FILES
+        or path.endswith(".pyc")
+        or path.endswith(".bak")
+        or ".bak-" in path
+        or any(path.startswith(prefix) for prefix in RUNTIME_UPDATE_PREFIXES)
+    )
+
+
+def _app_update_entries() -> list:
+    return [
+        entry for entry in _status_entries()
+        if not _is_runtime_file(entry["path"])
+    ]
 
 
 def ensure_repo():
@@ -86,30 +141,21 @@ def current_commit():
 
 def has_pending_changes() -> bool:
     """
-    True if the working tree differs from HEAD -- code has been edited
-    since the last applied version, whether or not this running process
-    has actually picked those edits up yet (it hasn't, until it restarts).
+    True if app files differ from HEAD.
+
+    Runtime database churn (for example memory/data/.../stats.json) is
+    deliberately ignored here. The browser's "update available" banner is
+    about code/template changes that need a restart, not local state that
+    naturally changes when the RAG answers a question.
     """
     ensure_repo()
-    r = _git("status", "--porcelain", check=False)
-    return bool(r.stdout.strip())
+    return bool(_app_update_entries())
 
 
 def pending_files() -> list:
     """Filenames with uncommitted changes, for showing what an update touches."""
     ensure_repo()
-    r = _git("status", "--porcelain", check=False)
-    # Splitting stdout BEFORE stripping it, not after -- stripping the whole
-    # blob first removes the leading space off git's status code for the
-    # first line specifically (e.g. " M app.py"), which shifted a
-    # fixed-offset slice by one character and silently truncated the first
-    # filename in the list ("app.py" came out as "pp.py"). Splitting on the
-    # raw, unstripped output sidesteps that entirely.
-    out = []
-    for line in r.stdout.splitlines():
-        if line.strip():
-            out.append(line[2:].strip())
-    return out
+    return [entry["path"] for entry in _app_update_entries()]
 
 
 def status() -> dict:
@@ -123,7 +169,10 @@ def status() -> dict:
 def apply_update(message: str = None) -> dict:
     """Commit the current working tree as a new version."""
     ensure_repo()
-    _git("add", "-A")
+    files = pending_files()
+    if not files:
+        return current_commit()
+    _git("add", "--", *files)
     msg = message or "Update applied"
     _git("commit", "-m", msg)
     return current_commit()
