@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import hashlib
+import math
 import subprocess
 import requests
 from pathlib import Path
@@ -32,6 +33,16 @@ import chromadb
 # specifically to avoid a cycle), so this direction is the only one that
 # needs to exist and there's nothing to import in a loop with.
 import projects
+
+sys.path.insert(0, str(BASE_DIR / "memory"))
+try:
+    from memory_client import record_synopsis, search_synopses
+    MEMORY_AVAILABLE = True
+except Exception as e:
+    record_synopsis = None
+    search_synopses = None
+    MEMORY_AVAILABLE = False
+    print(f"  [Warning] memory-db document registry unavailable: {e}")
 
 # Optional imports
 try:
@@ -409,6 +420,7 @@ def index_file(file: Path, current_hash: str) -> int:
             for _ in chunks
         ],
     )
+    record_document_profile(rel, text, project)
     return len(chunks)
 
 
@@ -514,7 +526,69 @@ def ingest_content(filename: str, content: str, project: str = None) -> tuple:
     return rel, chunk_count
 
 # ---------------------------------------------------------------------------
-# Search — semantic + filename fallback
+# Document registry
+# ---------------------------------------------------------------------------
+
+def _first_meaningful_lines(text: str, limit: int = 10) -> list:
+    lines = []
+    for line in text.splitlines():
+        clean = " ".join(line.strip().split())
+        if clean:
+            lines.append(clean)
+        if len(lines) >= limit:
+            break
+    return lines
+
+
+def _document_profile(source: str, text: str, project: str) -> str:
+    """
+    Cheap document-level profile for memory.documents.
+
+    This is deliberately not an Ollama summary. Indexing should stay fast,
+    deterministic, and usable while Ollama is stopped. The profile gives the
+    retrieval layer document-level hooks -- filename, project, early headings,
+    and lead text -- that chunk vectors alone do not reliably preserve.
+    """
+    lines = _first_meaningful_lines(text)
+    lead = " ".join(text.split()[:220])
+    headings = [
+        line for line in lines
+        if len(line) <= 120 and (
+            line.istitle()
+            or line.isupper()
+            or line.lower().startswith(("abstract", "introduction", "summary"))
+        )
+    ][:6]
+    parts = [
+        f"source: {source}",
+        f"filename: {Path(source).name}",
+        f"project: {project}",
+    ]
+    if headings:
+        parts.append("headings: " + " | ".join(headings))
+    if lines:
+        parts.append("opening: " + " | ".join(lines[:4]))
+    if lead:
+        parts.append("lead: " + lead)
+    return "\n".join(parts)
+
+
+def record_document_profile(source: str, text: str, project: str):
+    if not MEMORY_AVAILABLE or record_synopsis is None:
+        return
+    try:
+        record_synopsis(
+            source,
+            _document_profile(source, text, project),
+            word_count=len(text.split()),
+            model="local-profile-v1",
+        )
+    except Exception as e:
+        print(f"  [Warning] could not record document profile for {source}: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Search — hybrid document registry + lexical + semantic retrieval
 # ---------------------------------------------------------------------------
 
 def _semantic_search(question: str, n_results: int = 5, project: str = None):
@@ -528,6 +602,23 @@ def _semantic_search(question: str, n_results: int = 5, project: str = None):
         kwargs["where"] = {"project": project}
     results = collection.query(**kwargs)
     return results
+
+
+def _semantic_candidates(question: str, n_results: int, project: str = None):
+    if collection.count() == 0:
+        return []
+    results = _semantic_search(question, n_results=n_results, project=project)
+    out = []
+    for rank, (doc, meta) in enumerate(
+        zip(results["documents"][0], results["metadatas"][0])
+    ):
+        out.append({
+            "document": doc,
+            "metadata": dict(meta),
+            "score": 1.0 / (rank + 1),
+            "signals": {"semantic"},
+        })
+    return out
 
 
 _STOPWORDS = {
@@ -565,85 +656,171 @@ def meaningful_words(text: str) -> list:
     return words
 
 
-def search(question: str, n_results: int = 5, project: str = None):
+def _word_count_score(text: str, words: list) -> int:
+    text_lower = text.lower()
+    return sum(text_lower.count(w) for w in words if len(w) >= 3)
+
+
+def _source_matches(source: str, words: list) -> int:
+    source_lower = source.lower()
+    filename_lower = Path(source).name.lower()
+    stem_lower = Path(source).stem.lower()
+    score = 0
+    for w in words:
+        if w in stem_lower:
+            score += 6
+        elif w in filename_lower:
+            score += 4
+        elif w in source_lower:
+            score += 2
+    return score
+
+
+def _metadata_source(meta: dict) -> str:
+    return meta.get("source", "")
+
+
+def _candidate_key(doc: str, meta: dict) -> str:
+    return f"{_metadata_source(meta)}::{doc[:120]}"
+
+
+def _add_candidate(candidates: dict, doc: str, meta: dict,
+                   score: float, signal: str):
+    key = _candidate_key(doc, meta)
+    if key not in candidates:
+        candidates[key] = {
+            "document": doc,
+            "metadata": dict(meta),
+            "score": 0.0,
+            "signals": set(),
+        }
+    candidates[key]["score"] += score
+    candidates[key]["signals"].add(signal)
+
+
+def _source_chunks(source: str) -> list:
+    try:
+        got = collection.get(where={"source": source},
+                             include=["metadatas", "documents"])
+    except Exception:
+        return []
+    rows = []
+    for doc, meta in zip(got["documents"], got["metadatas"]):
+        rows.append((doc, meta))
+    return rows
+
+
+def _registry_candidates(words: list, project: str = None) -> list:
+    if not MEMORY_AVAILABLE or search_synopses is None or not words:
+        return []
+    prefix = f"{project}/" if project else None
+    try:
+        hits = search_synopses(words, project_prefix=prefix)
+    except Exception as e:
+        print(f"  [Warning] document registry lookup failed: {e}")
+        return []
+
+    out = []
+    for hit in hits:
+        source = hit.get("source")
+        synopsis = hit.get("synopsis") or ""
+        if not source:
+            continue
+        chunks = _source_chunks(source)
+        if not chunks:
+            continue
+        ranked = sorted(
+            chunks,
+            key=lambda row: _word_count_score(row[0], words),
+            reverse=True,
+        )
+        doc, meta = ranked[0]
+        doc_with_profile = f"[Document profile]\n{synopsis}\n\n[Matched passage]\n{doc}"
+        out.append({
+            "document": doc_with_profile,
+            "metadata": dict(meta),
+            "score": 3.0 + min(_word_count_score(synopsis, words), 10) / 5,
+            "signals": {"document_registry"},
+        })
+    return out
+
+
+def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
     """
-    Combined search: checks for filename references first,
-    then falls back to pure semantic search.
-    Filename matches are prioritized and blended with semantic results.
+    Hybrid retrieval over document-level memory, lexical Chroma content, and
+    semantic Chroma vectors. This is the new internal API; search() below
+    adapts it back to the long-standing Chroma-like response shape used by
+    MCP, Claude Desktop, Codex, summarize.py, and orchestrator.py.
     """
     if collection.count() == 0:
-        return {"documents": [[]], "metadatas": [[]]}
+        return []
 
-    # Scan all metadata for filename matches
+    words = meaningful_words(question)
+    candidates = {}
     all_data = collection.get(include=["metadatas", "documents"])
 
-    query_words = meaningful_words(question)
+    for item in _registry_candidates(words, project=project):
+        _add_candidate(
+            candidates,
+            item["document"],
+            item["metadata"],
+            item["score"],
+            "document_registry",
+        )
 
-    filename_matches = []
-    content_matches = []
     for i, meta in enumerate(all_data["metadatas"]):
         if project and meta.get("project") != project:
             continue
-        source = meta.get("source", "")
-        source_stem = Path(source).stem.lower()
         doc = all_data["documents"][i]
-        doc_lower = doc.lower()
-        if any(word in source_stem for word in query_words):
-            filename_matches.append({"document": doc, "metadata": meta})
-        # A term that never appears in a filename still deserves an
-        # exact-match boost if it genuinely appears in the chunk's own
-        # text -- otherwise it gets NO keyword signal at all and rides
-        # purely on embedding similarity, which is unreliable for short
-        # proper nouns: it can rank unrelated chunks above ones that say
-        # the name outright, and can miss real mentions entirely. Length
-        # >= 3 keeps this reasonably distinctive.
-        #
-        # Matches are scored by how many distinct query words appear and
-        # how often, so a chunk that's genuinely about the term (repeated
-        # mentions, several matching words) outranks one with a single
-        # passing reference. Previously this just kept the first three
-        # hits in whatever order chromadb's get() happened to return them
-        # -- storage order, not relevance -- so a document's own chunks
-        # could get crowded out by weaker matches from other files that
-        # simply came earlier in the collection.
-        else:
-            score = 0
-            for w in query_words:
-                if len(w) >= 3:
-                    score += doc_lower.count(w)
-            if score > 0:
-                content_matches.append({"document": doc, "metadata": meta, "score": score})
+        source = meta.get("source", "")
+        source_score = _source_matches(source, words)
+        content_score = _word_count_score(doc, words)
+        if source_score:
+            _add_candidate(candidates, doc, meta, 2.0 + source_score / 4, "source")
+        if content_score:
+            _add_candidate(candidates, doc, meta,
+                           1.0 + math.log1p(content_score), "keyword")
 
-    content_matches.sort(key=lambda m: m["score"], reverse=True)
-    keyword_matches = filename_matches[:2] + content_matches[:3]
-
-    if keyword_matches:
-        # Blend keyword matches with semantic results
-        semantic = _semantic_search(question, n_results=max(1, n_results - 2),
-                                    project=project)
-        combined_docs = (
-            [m["document"] for m in keyword_matches] +
-            semantic["documents"][0]
+    semantic_limit = max(n_results * 3, 12)
+    for item in _semantic_candidates(question, semantic_limit, project=project):
+        _add_candidate(
+            candidates,
+            item["document"],
+            item["metadata"],
+            item["score"],
+            "semantic",
         )
-        combined_meta = (
-            [m["metadata"] for m in keyword_matches] +
-            semantic["metadatas"][0]
-        )
-        # Deduplicate while preserving order
-        seen = set()
-        final_docs, final_meta = [], []
-        for doc, meta in zip(combined_docs, combined_meta):
-            key = meta.get("source", "") + doc[:50]
-            if key not in seen:
-                seen.add(key)
-                final_docs.append(doc)
-                final_meta.append(meta)
-        return {
-            "documents": [final_docs[:n_results]],
-            "metadatas": [final_meta[:n_results]],
-        }
 
-    return _semantic_search(question, n_results, project=project)
+    ranked = sorted(
+        candidates.values(),
+        key=lambda c: (
+            c["score"] + 0.35 * max(0, len(c["signals"]) - 1),
+            "document_registry" in c["signals"],
+            "source" in c["signals"],
+        ),
+        reverse=True,
+    )
+    for item in ranked:
+        item["metadata"]["retrieval_signals"] = ",".join(sorted(item["signals"]))
+        item["metadata"]["retrieval_score"] = round(item["score"], 4)
+    return ranked[:n_results]
+
+
+def search(question: str, n_results: int = 5, project: str = None):
+    """
+    Compatibility wrapper around retrieve().
+
+    The return shape intentionally matches Chroma's collection.query() shape
+    because mcp_server.py, orchestrator.py, summarize.py, Claude Desktop, and
+    Codex already depend on it.
+    """
+    if collection.count() == 0:
+        return {"documents": [[]], "metadatas": [[]]}
+    results = retrieve(question, n_results=n_results, project=project)
+    return {
+        "documents": [[r["document"] for r in results]],
+        "metadatas": [[r["metadata"] for r in results]],
+    }
 
 
 # ---------------------------------------------------------------------------
