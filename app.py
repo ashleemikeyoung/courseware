@@ -18,6 +18,7 @@ import json
 import os
 import queue
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -79,18 +80,26 @@ except Exception as _e:
 
 def _delayed_restart(delay: float = 0.6):
     """
-    Replaces this process with a fresh instance of itself -- same PID, same
-    terminal, every module re-imported from disk. This is the same mechanism
-    Flask's own reloader uses internally, not something novel. The delay
-    exists so the HTTP request that triggered this gets a clean response
-    sent before the process image is replaced out from under it; anything
-    else in flight during that narrow window gets its connection reset,
-    which is an acceptable cost for a local single-user tool restarting on
-    deliberate command.
+    Start a fresh app process in the background, then exit this one.
+
+    When app.py is launched by hand from a CLI, os.execv() keeps the server
+    tied to that foreground process. The update button then feels like it
+    kills the app instead of resuming it. Popen(..., start_new_session=True)
+    is the Python equivalent of running the restart command with "&": the
+    browser gets its clean response, the old process exits, and the new one
+    keeps serving independently.
     """
     def go():
         time.sleep(delay)
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        subprocess.Popen(
+            [sys.executable] + sys.argv,
+            cwd=str(BASE_DIR),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        os._exit(0)
     threading.Thread(target=go, daemon=True).start()
 
 

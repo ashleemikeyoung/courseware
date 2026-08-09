@@ -347,6 +347,9 @@ textarea{resize:vertical;min-height:74px}
 @keyframes blink{50%{opacity:0}}
 @media (prefers-reduced-motion:reduce){.chatmsg .bubble.pending::after{animation:none}}
 .chatmsg .sources{margin-top:.6em}
+.chatmsg .sources.hidden{display:none}
+#chatGalley.context-hidden{grid-template-columns:minmax(0,1fr)}
+#chatGalley.context-hidden #chatMargin{display:none}
 .composer{
   display:flex;gap:10px;align-items:flex-end;position:sticky;bottom:0;
   background:var(--paper);padding:16px 0 4px;border-top:1px solid var(--rule);
@@ -458,6 +461,10 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <label class="toggle">
       <input type="checkbox" id="groundToggle" checked>
       <span>Ground in documents</span>
+    </label>
+    <label class="toggle">
+      <input type="checkbox" id="contextToggle">
+      <span>Show source context</span>
     </label>
     <select id="askModel" title="Model"></select>
     <button class="btn ghost small" id="btnClearChat">Clear conversation</button>
@@ -571,7 +578,7 @@ const esc = s => (s ?? "").replace(/[&<>"]/g, c =>
   ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 let STATE = { outline:null, evidence:{}, models:[], busy:false,
-              project:null, projects:[] };
+              project:null, projects:[], showContext:false };
 
 /* Every request carries the project explicitly. The server holds no session,
    so there is no way to be looking at one project and writing into another. */
@@ -931,6 +938,7 @@ function citeHtml(c){
 function wireCitations(containerEl, glossesEl){
   containerEl.addEventListener("click", e => {
     const b = e.target.closest(".cite"); if (!b) return;
+    if (containerEl.id === "chatColumn" && !STATE.showContext) return;
     containerEl.querySelectorAll(".cite.active").forEach(x => x.classList.remove("active"));
     b.classList.add("active");
     const c = b.dataset.c, ev = STATE.evidence[c];
@@ -1109,6 +1117,22 @@ function renderBench(results, drafts){
 
 STATE.chat = { messages: [], busy: false, turnSeq: 0 };
 
+function setContextVisibility(on){
+  STATE.showContext = !!on;
+  const galley = $("#chatGalley");
+  const sources = document.querySelectorAll("#chatColumn .sources");
+  if (galley) galley.classList.toggle("context-hidden", !STATE.showContext);
+  sources.forEach(s => s.classList.toggle("hidden", !STATE.showContext));
+  if (!STATE.showContext){
+    $("#chatGlosses").innerHTML = "";
+    document.querySelectorAll("#chatColumn .cite.active")
+      .forEach(x => x.classList.remove("active"));
+  }
+  try {
+    window.localStorage.setItem("ask_show_context", STATE.showContext ? "1" : "0");
+  } catch(e){}
+}
+
 function buildAskModel(){
   const sel = $("#askModel"); if (!sel) return;
   const keep = sel.value;
@@ -1138,6 +1162,7 @@ function renderChat(){
   }
   col.innerHTML = "";
   STATE.chat.messages.forEach(m => col.appendChild(chatBubble(m)));
+  setContextVisibility(STATE.showContext);
   wireCitations(col, $("#chatGlosses"));
   window.scrollTo(0, document.body.scrollHeight);
 }
@@ -1151,7 +1176,7 @@ function chatBubble(m){
     : mdToHtml(m.content || "");
   box.appendChild(bubble);
   if (m.sources && m.sources.length){
-    const s = el("div", "sources qlist");
+    const s = el("div", "sources qlist" + (STATE.showContext ? "" : " hidden"));
     m.sources.forEach(c => s.appendChild(el("span", "q", c)));
     box.appendChild(s);
   }
@@ -1184,6 +1209,12 @@ $("#btnClearChat").onclick = () => {
   if (STATE.chat.messages.length && !confirm("Clear this conversation?")) return;
   STATE.chat.messages = []; renderChat();
 };
+$("#contextToggle").onchange = e => setContextVisibility(e.target.checked);
+try {
+  STATE.showContext = window.localStorage.getItem("ask_show_context") === "1";
+} catch(e){}
+$("#contextToggle").checked = STATE.showContext;
+setContextVisibility(STATE.showContext);
 
 async function sendAsk(){
   if (STATE.chat.busy) return;
