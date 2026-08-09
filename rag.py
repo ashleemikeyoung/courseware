@@ -3,6 +3,7 @@ import sys
 import json
 import hashlib
 import math
+import re
 import subprocess
 import requests
 from pathlib import Path
@@ -36,10 +37,17 @@ import projects
 
 sys.path.insert(0, str(BASE_DIR / "memory"))
 try:
-    from memory_client import record_synopsis, search_synopses
+    from memory_client import (
+        get_synopsis,
+        record_synopsis,
+        search_citations,
+        search_synopses,
+    )
     MEMORY_AVAILABLE = True
 except Exception as e:
+    get_synopsis = None
     record_synopsis = None
+    search_citations = None
     search_synopses = None
     MEMORY_AVAILABLE = False
     print(f"  [Warning] memory-db document registry unavailable: {e}")
@@ -587,6 +595,42 @@ def record_document_profile(source: str, text: str, project: str):
         print(f"  [Warning] could not record document profile for {source}: {e}")
 
 
+def backfill_document_profiles(project: str = None, overwrite: bool = False) -> dict:
+    """
+    Populate memory.documents for files already indexed before document
+    profiles existed. This reads source files from disk and records the same
+    cheap local profile index_file() records for new/changed files.
+    """
+    summary = {"profiled": [], "skipped": [], "failed": []}
+    if not MEMORY_AVAILABLE or record_synopsis is None:
+        summary["failed"].append({
+            "source": "*",
+            "error": "memory document registry is unavailable",
+        })
+        return summary
+
+    for source in sorted(get_indexed_sources()):
+        if project and projects.project_of(source) != project:
+            continue
+        try:
+            if not overwrite and get_synopsis is not None and get_synopsis(source):
+                summary["skipped"].append(source)
+                continue
+            path = Path(DOCUMENTS_FOLDER) / source
+            text = load_file(path)
+            if not text.strip():
+                summary["failed"].append({
+                    "source": source,
+                    "error": "empty or unreadable",
+                })
+                continue
+            record_document_profile(source, text, projects.project_of(source))
+            summary["profiled"].append(source)
+        except Exception as e:
+            summary["failed"].append({"source": source, "error": str(e)})
+    return summary
+
+
 # ---------------------------------------------------------------------------
 # Search — hybrid document registry + lexical + semantic retrieval
 # ---------------------------------------------------------------------------
@@ -635,6 +679,14 @@ _STOPWORDS = {
 }
 
 
+def _terms(text: str) -> list:
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def _compact(text: str) -> str:
+    return "".join(_terms(text))
+
+
 def meaningful_words(text: str) -> list:
     """
     Words worth treating as exact-match search terms. Length alone is a bad
@@ -649,8 +701,7 @@ def meaningful_words(text: str) -> list:
     terms identically rather than drifting apart over two copies of this.
     """
     words = []
-    for w in text.lower().split():
-        clean = "".join(ch for ch in w if ch.isalnum())
+    for clean in _terms(text):
         if clean and len(clean) >= 2 and clean not in _STOPWORDS:
             words.append(clean)
     return words
@@ -661,15 +712,19 @@ def _word_count_score(text: str, words: list) -> int:
     return sum(text_lower.count(w) for w in words if len(w) >= 3)
 
 
-def _source_matches(source: str, words: list) -> int:
+def _source_matches(source: str, words: list, question: str = "") -> int:
     source_lower = source.lower()
     filename_lower = Path(source).name.lower()
     stem_lower = Path(source).stem.lower()
+    source_compact = _compact(source)
+    query_compact = _compact(question)
     score = 0
+    if query_compact and query_compact in source_compact:
+        score += 14
     for w in words:
-        if w in stem_lower:
+        if w in stem_lower or w in _compact(stem_lower):
             score += 6
-        elif w in filename_lower:
+        elif w in filename_lower or w in _compact(filename_lower):
             score += 4
         elif w in source_lower:
             score += 2
@@ -745,6 +800,69 @@ def _registry_candidates(words: list, project: str = None) -> list:
     return out
 
 
+def _citation_candidates(words: list, project: str = None) -> list:
+    if not MEMORY_AVAILABLE or search_citations is None or not words:
+        return []
+    prefix = f"{project}/" if project else None
+    try:
+        hits = search_citations(words, project_prefix=prefix)
+    except Exception as e:
+        print(f"  [Warning] citation lookup failed: {e}")
+        return []
+
+    out = []
+    seen_sources = set()
+    for hit in hits:
+        source = hit.get("source")
+        if not source or source in seen_sources:
+            continue
+        seen_sources.add(source)
+        chunks = _source_chunks(source)
+        if not chunks:
+            continue
+        citation_text = (
+            "[Verified citation record, from memory-db not chroma_db]\n"
+            f"File: {source}\n"
+            f"Title: {hit.get('title')}\n"
+            f"Author(s): {hit.get('authors')}\n"
+            f"Source: {hit.get('source_line')}"
+        )
+        ranked = sorted(
+            chunks,
+            key=lambda row: _word_count_score(row[0], words),
+            reverse=True,
+        )
+        doc, meta = ranked[0]
+        out.append({
+            "document": f"{citation_text}\n\n[Matched passage]\n{doc}",
+            "metadata": dict(meta),
+            "score": 12.0 + min(_word_count_score(citation_text, words), 12) / 3,
+            "signals": {"citation"},
+        })
+    return out
+
+
+def _diversify(ranked: list, n_results: int, max_per_source: int = 2) -> list:
+    selected = []
+    per_source = {}
+    overflow = []
+    for item in ranked:
+        source = item["metadata"].get("source", "")
+        if per_source.get(source, 0) < max_per_source:
+            selected.append(item)
+            per_source[source] = per_source.get(source, 0) + 1
+        else:
+            overflow.append(item)
+        if len(selected) >= n_results:
+            return selected
+
+    for item in overflow:
+        selected.append(item)
+        if len(selected) >= n_results:
+            break
+    return selected
+
+
 def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
     """
     Hybrid retrieval over document-level memory, lexical Chroma content, and
@@ -758,6 +876,15 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
     words = meaningful_words(question)
     candidates = {}
     all_data = collection.get(include=["metadatas", "documents"])
+
+    for item in _citation_candidates(words, project=project):
+        _add_candidate(
+            candidates,
+            item["document"],
+            item["metadata"],
+            item["score"],
+            "citation",
+        )
 
     for item in _registry_candidates(words, project=project):
         _add_candidate(
@@ -773,7 +900,7 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
             continue
         doc = all_data["documents"][i]
         source = meta.get("source", "")
-        source_score = _source_matches(source, words)
+        source_score = _source_matches(source, words, question=question)
         content_score = _word_count_score(doc, words)
         if source_score:
             _add_candidate(candidates, doc, meta, 2.0 + source_score / 4, "source")
@@ -795,15 +922,17 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
         candidates.values(),
         key=lambda c: (
             c["score"] + 0.35 * max(0, len(c["signals"]) - 1),
+            "citation" in c["signals"],
             "document_registry" in c["signals"],
             "source" in c["signals"],
         ),
         reverse=True,
     )
-    for item in ranked:
+    selected = _diversify(ranked, n_results=n_results)
+    for item in selected:
         item["metadata"]["retrieval_signals"] = ",".join(sorted(item["signals"]))
         item["metadata"]["retrieval_score"] = round(item["score"], 4)
-    return ranked[:n_results]
+    return selected
 
 
 def search(question: str, n_results: int = 5, project: str = None):

@@ -178,6 +178,48 @@ def find_citation(author: str = None, source: str = None):
         client.close()
 
 
+def search_citations(query_words: list, project_prefix: str = None):
+    """
+    Search verified citations across source path, title, authors, and source
+    line. This is intentionally lexical: citation records are short, curated
+    facts, so exact title/author words should outrank Chroma similarity.
+    """
+    words = [w.lower() for w in query_words if w and len(w) >= 2]
+    if not words:
+        return []
+
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        fields = ["source", "title", "authors", "source_line"]
+        clauses = []
+        params = []
+        for word in words:
+            like = f"%{word}%"
+            clauses.append("(" + " OR ".join(
+                [f"lower(coalesce({field}, '')) LIKE ?" for field in fields]
+            ) + ")")
+            params.extend([like] * len(fields))
+
+        sql = "SELECT * FROM citations WHERE (" + " OR ".join(clauses) + ")"
+        if project_prefix:
+            sql += " AND source LIKE ?"
+            params.append(f"{project_prefix}%")
+
+        result = client.execute(sql, params)
+        rows = [dict(zip(result.columns, row)) for row in result.rows]
+        rows.sort(
+            key=lambda row: sum(
+                (row.get(field) or "").lower().count(word)
+                for word in words
+                for field in fields
+            ),
+            reverse=True,
+        )
+        return rows
+    finally:
+        client.close()
+
+
 def flag_false_positive(turn_id: int, notes: str = None):
     """
     Mark a turn's answer as wrong, for later review. Broader than
