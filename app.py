@@ -80,19 +80,39 @@ except Exception as _e:
 
 def _delayed_restart(delay: float = 0.6):
     """
-    Start a fresh app process in the background, then exit this one.
+    Spawn a detached restart helper, then exit this process.
 
     When app.py is launched by hand from a CLI, os.execv() keeps the server
     tied to that foreground process. The update button then feels like it
-    kills the app instead of resuming it. Popen(..., start_new_session=True)
-    is the Python equivalent of running the restart command with "&": the
-    browser gets its clean response, the old process exits, and the new one
-    keeps serving independently.
+    kills the app instead of resuming it.
+
+    Starting the replacement directly from this process is racy, though:
+    the old Flask server still owns port 5111 for a moment, so the new
+    process can fail to bind and exit. The helper waits after this process
+    exits, then launches app.py detached -- the Python equivalent of:
+
+        sleep 1 && python app.py &
     """
     def go():
         time.sleep(delay)
+        payload = json.dumps({
+            "argv": [sys.executable] + sys.argv,
+            "cwd": str(BASE_DIR),
+            "wait": 1.25,
+            "log": str(BASE_DIR / "app-restart.log"),
+        })
+        helper = (
+            "import json, subprocess, time\n"
+            f"cfg = json.loads({payload!r})\n"
+            "time.sleep(cfg['wait'])\n"
+            "log = open(cfg['log'], 'ab', buffering=0)\n"
+            "subprocess.Popen(\n"
+            "    cfg['argv'], cwd=cfg['cwd'], stdin=subprocess.DEVNULL,\n"
+            "    stdout=log, stderr=subprocess.STDOUT, start_new_session=True,\n"
+            ")\n"
+        )
         subprocess.Popen(
-            [sys.executable] + sys.argv,
+            [sys.executable, "-c", helper],
             cwd=str(BASE_DIR),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
