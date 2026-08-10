@@ -30,6 +30,7 @@ CLI usage unchanged for the single-file case, plus a new --search mode:
 """
 
 import argparse
+import re
 from pathlib import Path
 
 import rag
@@ -48,6 +49,34 @@ it."""
 # ---------------------------------------------------------------------------
 # Search: which files are relevant
 # ---------------------------------------------------------------------------
+
+REFERENCE_VERB = (
+    r"(?:reference|references|referencing|referenced|mention|mentions|"
+    r"mentioned|cites?|cited|citing)"
+)
+REFERENCE_QUERY_RE = re.compile(
+    r"\b(?:documents?|files?|sources?)\b.*\b"
+    + REFERENCE_VERB
+    + r"\b(?:\s+or\s+" + REFERENCE_VERB + r"\b)*\s+(?:to\s+)?(.+?)[?.!]*$",
+    re.IGNORECASE,
+)
+
+
+def reference_query_term(term: str) -> str:
+    """
+    Extract the actual target from phrasing like
+    "documents that reference or mention Tye".
+
+    Without this, exhaustive search treats every meaningful word as an OR:
+    "documents", "reference", "mention", and "Tye". That pulls in files that
+    talk about references or documents but never mention Tye, leaving the
+    later summarizer to produce confusing "does not mention Tye" sections.
+    """
+    match = REFERENCE_QUERY_RE.search(term or "")
+    if not match:
+        return term
+    return match.group(1).strip(" \t\r\n\"'`“”‘’.?!") or term
+
 
 def find_documents(term: str, project: str = None) -> list:
     """
@@ -77,6 +106,7 @@ def find_documents(term: str, project: str = None) -> list:
     Returns source paths relative to DOCUMENTS_FOLDER, deduped, in the
     order found. resolve_path() turns one into a real file on disk.
     """
+    term = reference_query_term(term)
     seen = set()
     sources = []
 

@@ -330,6 +330,11 @@ textarea{resize:vertical;min-height:74px}
   background:var(--paper-2);border:1px solid var(--rule);border-radius:2px;
   padding:6px 10px;font-family:var(--mono);font-size:11px;color:var(--ink);
 }
+#askHistory{
+  background:var(--paper-2);border:1px solid var(--rule);border-radius:2px;
+  padding:6px 8px;font-family:var(--mono);font-size:11px;color:var(--ink);
+  max-width:16rem;
+}
 .chatmsg{margin:0 0 1.9em}
 .chatmsg .who{
   font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
@@ -359,6 +364,7 @@ textarea{resize:vertical;min-height:74px}
   flex:1;min-height:44px;max-height:14rem;resize:none;font-size:15px;line-height:1.5;
 }
 .composer .btn{flex:0 0 auto;padding:11px 22px}
+.composer select{flex:0 1 12rem;margin-bottom:0}
 table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}
 th{text-align:left;font-weight:500;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
   color:var(--ink-faint);padding:8px 10px;border-bottom:1px solid var(--ink)}
@@ -483,6 +489,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
   <div class="composer">
     <textarea id="askInput" rows="1"
       placeholder="Ask about your documents, or anything else. Shift+Enter for a new line."></textarea>
+    <select id="askHistory" title="Previous prompts"></select>
     <button class="btn" id="btnAsk">Send</button>
   </div>
 </div></section>
@@ -1126,7 +1133,65 @@ function renderBench(results, drafts){
    into one STATE.evidence map, two different turns' [C1] would otherwise be
    indistinguishable and the wrong source would surface on click. -------- */
 
-STATE.chat = { messages: [], busy: false, turnSeq: 0 };
+STATE.chat = { messages: [], busy: false, turnSeq: 0, history: [], histPos: null };
+
+function loadAskHistory(){
+  try {
+    const raw = JSON.parse(window.localStorage.getItem("ask_prompt_history") || "[]");
+    STATE.chat.history = Array.isArray(raw) ? raw.filter(Boolean).slice(0, 50) : [];
+  } catch(e){ STATE.chat.history = []; }
+  renderAskHistory();
+}
+
+function saveAskHistory(){
+  try {
+    window.localStorage.setItem(
+      "ask_prompt_history",
+      JSON.stringify(STATE.chat.history.slice(0, 50)));
+  } catch(e){}
+}
+
+function rememberAskPrompt(text){
+  const clean = (text || "").trim();
+  if (!clean) return;
+  STATE.chat.history = [clean, ...STATE.chat.history.filter(x => x !== clean)]
+    .slice(0, 50);
+  STATE.chat.histPos = null;
+  saveAskHistory();
+  renderAskHistory();
+}
+
+function renderAskHistory(){
+  const sel = $("#askHistory"); if (!sel) return;
+  sel.innerHTML = "";
+  sel.appendChild(el("option", "", "History"));
+  STATE.chat.history.forEach((item, idx) => {
+    const label = item.length > 44 ? item.slice(0, 41) + "..." : item;
+    const o = el("option", "", label); o.value = String(idx); sel.appendChild(o);
+  });
+  sel.value = "";
+}
+
+function recallAskHistory(delta){
+  if (!STATE.chat.history.length) return false;
+  const input = $("#askInput");
+  if (STATE.chat.histPos === null){
+    if (delta > 0) return false;
+    STATE.chat.histPos = 0;
+  } else {
+    STATE.chat.histPos += delta;
+  }
+  if (STATE.chat.histPos < 0) STATE.chat.histPos = 0;
+  if (STATE.chat.histPos >= STATE.chat.history.length){
+    STATE.chat.histPos = null;
+    input.value = "";
+  } else {
+    input.value = STATE.chat.history[STATE.chat.histPos];
+  }
+  autoResize(input);
+  input.selectionStart = input.selectionEnd = input.value.length;
+  return true;
+}
 
 function setContextVisibility(on){
   STATE.showContext = !!on;
@@ -1214,8 +1279,31 @@ function autoResize(ta){
 $("#askInput").addEventListener("input", e => autoResize(e.target));
 $("#askInput").addEventListener("keydown", e => {
   if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); sendAsk(); }
+  else if ((e.key === "ArrowUp" || e.key === "ArrowDown")
+      && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey){
+    const atEdge = e.key === "ArrowUp"
+      ? e.target.selectionStart === 0 && e.target.selectionEnd === 0
+      : e.target.selectionStart === e.target.value.length
+        && e.target.selectionEnd === e.target.value.length;
+    if (!e.target.value || STATE.chat.histPos !== null || atEdge){
+      if (recallAskHistory(e.key === "ArrowUp" ? -1 : 1)) e.preventDefault();
+    }
+  } else {
+    STATE.chat.histPos = null;
+  }
 });
 $("#btnAsk").onclick = sendAsk;
+$("#askHistory").onchange = e => {
+  const idx = Number(e.target.value);
+  if (!Number.isInteger(idx) || !STATE.chat.history[idx]) return;
+  const input = $("#askInput");
+  input.value = STATE.chat.history[idx];
+  STATE.chat.histPos = idx;
+  autoResize(input);
+  input.focus();
+  input.selectionStart = input.selectionEnd = input.value.length;
+  e.target.value = "";
+};
 $("#btnClearChat").onclick = () => {
   if (STATE.chat.messages.length && !confirm("Clear this conversation?")) return;
   STATE.chat.messages = []; renderChat();
@@ -1229,6 +1317,7 @@ try {
 } catch(e){}
 $("#contextToggle").checked = STATE.showContext;
 setContextVisibility(STATE.showContext);
+loadAskHistory();
 
 async function sendAsk(){
   if (STATE.chat.busy) return;
@@ -1237,6 +1326,7 @@ async function sendAsk(){
   if (!text) return;
   if (!STATE.project) return toast("Pick a project first");
 
+  rememberAskPrompt(text);
   STATE.chat.messages.push({role: "user", content: text});
   input.value = ""; autoResize(input);
   const pending = {role: "assistant", content: "", pending: true};

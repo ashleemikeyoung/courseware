@@ -2,9 +2,14 @@ import os
 import sys
 import json
 import time
+import re
 import threading
 import requests
 from pathlib import Path
+try:
+    import readline
+except ImportError:
+    readline = None
 
 from rag import (
     search,
@@ -53,8 +58,22 @@ from memory_client import (
 # redaction and letting someone believe PII protection is active when it
 # isn't. See pii.py's docstring for install instructions.
 import pii
+import projects
 
 BENCHMARK_LOG = os.getenv("BENCHMARK_LOG", "benchmark.jsonl")
+ALL_PROJECTS = "all"
+CURRENT_PROJECT_SCOPE = ALL_PROJECTS
+HISTORY_PATH = Path(os.getenv(
+    "ORCHESTRATOR_HISTORY",
+    Path.home() / ".rag_orchestrator_history",
+))
+DOCUMENT_LIST_QUERY_RE = re.compile(
+    r"\b(?:provide|give|show|list|find|which|what)\b.*"
+    r"\b(?:all|any|the)?\s*(?:documents?|files?|sources?)\b.*"
+    r"\b(?:reference|references|referencing|referenced|mention|mentions|"
+    r"mentioned|cites?|cited|citing)\b\s+(?:to\s+)?(.+?)[?.!]*$",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -81,12 +100,47 @@ def _new_session(incognito: bool = False):
         except Exception:
             pass
     try:
-        _session = start_session(project=None, machine="mac", mode="qa",
-                                 incognito=incognito)
+        _session = start_session(project=_memory_project(), machine="mac",
+                                 mode="qa", incognito=incognito)
     except Exception as e:
         print(f"  [Warning: memory-db unreachable, this session won't be logged: {e}]",
               flush=True)
         _session = None
+
+
+def _active_project() -> str:
+    """Project value to pass into retrieval; None means search all projects."""
+    return None if CURRENT_PROJECT_SCOPE == ALL_PROJECTS else CURRENT_PROJECT_SCOPE
+
+
+def _memory_project() -> str:
+    """Memory-db project label for cache/logging."""
+    return None if CURRENT_PROJECT_SCOPE == ALL_PROJECTS else CURRENT_PROJECT_SCOPE
+
+
+def _scope_label() -> str:
+    return "all projects" if CURRENT_PROJECT_SCOPE == ALL_PROJECTS else CURRENT_PROJECT_SCOPE
+
+
+def setup_input_history():
+    if readline is None:
+        return
+    try:
+        HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if HISTORY_PATH.exists():
+            readline.read_history_file(str(HISTORY_PATH))
+        readline.set_history_length(500)
+    except Exception as e:
+        print(f"  [Warning: command history unavailable: {e}]", flush=True)
+
+
+def save_input_history():
+    if readline is None:
+        return
+    try:
+        readline.write_history_file(str(HISTORY_PATH))
+    except Exception:
+        pass
 
 
 def _log_turn(question: str, answer: str, model: str, sources: list):
@@ -314,6 +368,41 @@ def ask_ollama(prompt: str, model: str, system: str = None, retries: int = 2) ->
 # RAG context
 # ---------------------------------------------------------------------------
 
+def _document_list_term(question: str) -> str:
+    match = DOCUMENT_LIST_QUERY_RE.search(question or "")
+    if not match:
+        return ""
+    return match.group(1).strip(" \t\r\n\"'`“”‘’.?!")
+
+
+def _document_list_answer(question: str, project: str = None) -> dict:
+    term = _document_list_term(question)
+    if not term:
+        return None
+
+    sources = summarize.find_documents(term, project=project)
+    if not sources:
+        scope = f" in project '{project}'" if project else ""
+        answer = f"No indexed documents{scope} reference or mention '{term}'."
+    else:
+        scope = f" in project '{project}'" if project else ""
+        lines = [
+            f"Indexed documents{scope} that reference or mention '{term}':",
+            "",
+        ]
+        lines.extend(f"- {source}" for source in sources)
+        answer = "\n".join(lines)
+
+    return {
+        "answer": answer,
+        "sources": sources,
+        "routed_to": "document_list",
+        "routing_reason": "exhaustive indexed-document scan",
+        "ollama_draft": None,
+        "synthesized_by": "none",
+    }
+
+
 def get_rag_context(question: str, project: str = None) -> tuple:
     """Pull relevant chunks from the vector database, optionally scoped to one project."""
     if collection.count() == 0:
@@ -489,6 +578,18 @@ def route_question(question: str, context: str, timer: PhaseTimer) -> dict:
 def orchestrate(user_question: str, project: str = None) -> dict:
     timer = PhaseTimer(user_question)
 
+    timer.start_phase("document_scan")
+    direct_list = _document_list_answer(user_question, project=project)
+    if direct_list is not None:
+        timer.end_phase({
+            "sources": direct_list["sources"],
+            "chunks_retrieved": 0,
+            "chunk_chars": len(direct_list["answer"]),
+        })
+        direct_list["timer"] = timer
+        log_benchmark(timer)
+        return direct_list
+
     # Step 1: RAG retrieval
     timer.start_phase("rag_retrieval")
     context, sources, rag_stats = get_rag_context(user_question, project=project)
@@ -610,6 +711,7 @@ def cmd_rescan():
 def cmd_status():
     indexed = get_indexed_sources()
     print(f"\nDatabase: {collection.count()} chunks across {len(indexed)} file(s)")
+    print(f"Scope:    {_scope_label()}")
     if indexed:
         for filename in sorted(indexed.keys()):
             print(f"  {filename}")
@@ -621,6 +723,54 @@ def cmd_status():
     print(f"Reasoning: {REASONING_MODEL}")
     print(f"General:   {GENERAL_MODEL}")
     print(f"Benchmark: {BENCHMARK_LOG}\n")
+
+
+def cmd_projects():
+    rows = projects.stats(collection)
+    print("\nProjects:")
+    print("  all  (search across all projects)")
+    for row in rows:
+        marker = "*" if row["name"] == CURRENT_PROJECT_SCOPE else " "
+        print(
+            f"{marker} {row['name']}  "
+            f"{row['files']} file(s), {row['chunks']} chunk(s)"
+        )
+    if CURRENT_PROJECT_SCOPE == ALL_PROJECTS:
+        print("* current scope: all projects")
+    else:
+        print(f"\nCurrent scope: {CURRENT_PROJECT_SCOPE}")
+    print()
+
+
+def cmd_project(arg: str = ""):
+    global CURRENT_PROJECT_SCOPE
+    name = (arg or "").strip()
+    if not name:
+        print(f"\nCurrent scope: {_scope_label()}")
+        print("Use /project <name>, /all, or /unfiled.\n")
+        return
+
+    lowered = name.lower()
+    if lowered in {"all", "*"}:
+        CURRENT_PROJECT_SCOPE = ALL_PROJECTS
+    else:
+        safe = projects.safe(name)
+        available = set(projects.discover())
+        if safe not in available:
+            print(f"\nUnknown project '{name}'. Use /projects to see available scopes.\n")
+            return
+        CURRENT_PROJECT_SCOPE = safe
+
+    _new_session(incognito=_incognito)
+    print(f"\nScope set to: {_scope_label()}\n")
+
+
+def cmd_all():
+    cmd_project("all")
+
+
+def cmd_unfiled():
+    cmd_project(projects.UNFILED)
 
 
 def cmd_clear():
@@ -700,8 +850,10 @@ def cmd_summarize(term: str):
     citation-matching heuristics just to answer "summarize the article by
     X" -- it goes straight to the real document.
     """
-    print(f"\nSearching for documents matching '{term}'...", flush=True)
-    results = summarize.summarize_search(term)
+    project = _active_project()
+    scope = f" in {_scope_label()}" if project else " across all projects"
+    print(f"\nSearching for documents matching '{term}'{scope}...", flush=True)
+    results = summarize.summarize_search(term, project=project)
     if not results:
         print(f"  No indexed documents matched '{term}'.\n")
         return
@@ -721,6 +873,9 @@ def cmd_summarize(term: str):
 COMMANDS = {
     "/rescan": cmd_rescan,
     "/status": cmd_status,
+    "/projects": cmd_projects,
+    "/all": cmd_all,
+    "/unfiled": cmd_unfiled,
     "/clear": cmd_clear,
     "/benchmark": cmd_benchmark,
     "/clearbenchmark": cmd_clear_benchmark,
@@ -733,6 +888,10 @@ HELP_TEXT = """
 Commands:
   /rescan          — scan documents folder and update the database
   /status          — show indexed files, chunk counts, and active models
+  /projects        — show available project scopes
+  /project <name>  — confine searches to one project
+  /all             — search across all projects
+  /unfiled         — search only loose files at the documents root
   /clear           — wipe the database completely
   /summarize <term> — search the index and summarize every matching
                       document straight off disk, not from retrieved chunks
@@ -751,6 +910,7 @@ Commands:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    setup_input_history()
     print("\nInitial document scan...", flush=True)
     summary = scan_documents(verbose=True)
     print(
@@ -763,6 +923,7 @@ if __name__ == "__main__":
     print(f"\nRouting via:   {ROUTING_MODEL}")
     print(f"Synthesis via: {SYNTHESIS_MODEL}")
     print(f"Benchmark log: {BENCHMARK_LOG}")
+    print(f"Initial scope: {_scope_label()}")
 
     start_file_watcher()
     _new_session(incognito=False)
@@ -775,6 +936,7 @@ if __name__ == "__main__":
             q = input("You: ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye.")
+            save_input_history()
             _close_session()
             break
 
@@ -783,6 +945,7 @@ if __name__ == "__main__":
 
         if q.lower() in ["quit", "exit"]:
             print("Goodbye.")
+            save_input_history()
             _close_session()
             break
 
@@ -802,6 +965,10 @@ if __name__ == "__main__":
             COMMANDS[q.lower()]()
             continue
 
+        if q.lower() == "/project" or q.lower().startswith("/project "):
+            cmd_project(q[len("/project"):].strip())
+            continue
+
         # Repeat-question check: show the cached answer and let the person
         # decide whether to re-run fresh, rather than silently reusing it
         # (stale context, an updated index, or a since-flagged answer could
@@ -809,7 +976,7 @@ if __name__ == "__main__":
         # time (which is the actual cost this exists to avoid).
         cached = None
         try:
-            cached = find_cached_answer(q)
+            cached = find_cached_answer(q, project=_memory_project())
         except Exception as e:
             print(f"  [Warning: could not check memory-db for a cached answer: {e}]",
                   flush=True)
@@ -821,7 +988,7 @@ if __name__ == "__main__":
             if not rerun.startswith("y"):
                 continue
 
-        result = orchestrate(q)
+        result = orchestrate(q, project=_active_project())
         answer_to_show = result["answer"]
         try:
             if pii_redaction_enabled():
