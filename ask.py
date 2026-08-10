@@ -75,6 +75,22 @@ DOCUMENT_REFERENCE_SCAN_RE = re.compile(
     r"\s+(?:to\s+|the\s+)?(.+?)[?.!]*$",
     re.IGNORECASE,
 )
+DOCUMENT_REFERENCE_REVERSE_RE = re.compile(
+    r"^\s*(?:is|are|was|were|do|does|did)?\s*(.+?)\s+"
+    r"(?:reference|references|referenced|referencing|mention|mentions|"
+    r"mentioned|cites?|cited|citing)\b.*\b(?:documents?|files?)\b",
+    re.IGNORECASE,
+)
+GENERIC_REFERENCE_TERMS = {
+    "it", "that", "this", "that article", "this article", "the article",
+    "that work", "this work", "the work", "that source", "this source",
+    "the source", "that document", "this document", "the document",
+}
+SOURCE_PATH_RE = re.compile(
+    r"\b[A-Za-z0-9_.:-]+/[^\s,;\"'`]+?\."
+    r"(?:pdf|docx|md|txt|xlsx|pptx)\b"
+)
+QUOTED_PHRASE_RE = re.compile(r'"([^"]{12,160})"|“([^”]{12,160})”')
 
 
 def _is_degenerate(text: str) -> bool:
@@ -179,6 +195,8 @@ def _trim_history(messages: list, max_words: int = 3000) -> list:
 def _document_reference_term(question: str) -> str:
     match = DOCUMENT_REFERENCE_SCAN_RE.search(question or "")
     if not match:
+        match = DOCUMENT_REFERENCE_REVERSE_RE.search(question or "")
+    if not match:
         return ""
     term = match.group(1).strip(" \t\r\n\"'`“”‘’.?!")
     # "any other documents that reference Tye" should search for the object
@@ -188,8 +206,45 @@ def _document_reference_term(question: str) -> str:
     return term
 
 
+def _reference_terms_from_context(term: str, context: str) -> list:
+    clean = " ".join((term or "").lower().split())
+    if clean and clean not in GENERIC_REFERENCE_TERMS:
+        return [term]
+
+    terms = []
+    if re.search(r"\bTye\b", context or "", re.IGNORECASE):
+        terms.append("Tye")
+
+    if not terms:
+        for match in QUOTED_PHRASE_RE.finditer(context or ""):
+            phrase = (match.group(1) or match.group(2) or "").strip()
+            if phrase:
+                terms.append(phrase)
+
+    seen, out = set(), []
+    for item in terms:
+        key = item.lower()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(item)
+    return out
+
+
+def _target_sources_from_context(context: str, project: str = None) -> set:
+    sources = set()
+    for match in SOURCE_PATH_RE.finditer(context or ""):
+        name = match.group(0).strip()
+        try:
+            source = summarize.detect_file_reference(name, project=project)
+        except Exception:
+            source = None
+        if source:
+            sources.add(source)
+    return sources
+
+
 def _document_reference_scan(question: str, registry: CitationRegistry,
-                             project: str = None) -> list:
+                             project: str = None, context: str = "") -> list:
     """
     Add an exhaustive source-list evidence item for questions like
     "what documents mention Tye?"
@@ -203,20 +258,43 @@ def _document_reference_scan(question: str, registry: CitationRegistry,
     term = _document_reference_term(question)
     if not term:
         return []
-    try:
-        sources = summarize.find_documents(term, project=project)
-    except Exception as e:
-        print(f"  [Warning: document reference scan failed: {e}]")
+    terms = _reference_terms_from_context(term, context)
+    if not terms:
         return []
-    if not sources:
+
+    matches = {}
+    for search_term in terms:
+        try:
+            sources = summarize.find_documents(search_term, project=project)
+        except Exception as e:
+            print(f"  [Warning: document reference scan failed: {e}]")
+            continue
+        for source in sources:
+            matches.setdefault(source, set()).add(search_term)
+    if not matches:
         return []
+
+    target_sources = _target_sources_from_context(context, project=project)
+    if re.search(r"\bother\b", question or "", re.IGNORECASE):
+        for source in target_sources:
+            matches.pop(source, None)
+    if not matches:
+        return []
+
+    lines = []
+    for source, matched_terms in sorted(matches.items()):
+        via = ", ".join(sorted(matched_terms))
+        lines.append(f"- {source} (matched: {via})")
+
+    used_terms = ", ".join(terms)
 
     text = (
         "[Indexed document reference scan]\n"
-        f"Search term: {term}\n"
+        f"Question term: {term}\n"
+        f"Search terms used: {used_terms}\n"
         "The following indexed documents matched by filename, extracted text, "
         "or verified citation metadata:\n"
-        + "\n".join(f"- {source}" for source in sources)
+        + "\n".join(lines)
     )
     return [registry.register("document-index", -20, -20, text)]
 
@@ -308,8 +386,12 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             prior_user_turns = [m["content"] for m in messages[:-1]
                                 if m.get("role") == "user"][-4:]
             query_text = " ".join(prior_user_turns + [last_user])
+            reference_context = " ".join(
+                m.get("content", "") for m in messages[-8:])
             evidence = (
-                _document_reference_scan(last_user, registry, project=scope)
+                _document_reference_scan(
+                    last_user, registry, project=scope,
+                    context=reference_context)
                 + gather_evidence([query_text], registry, per_query=6,
                                   window=1, project=scope)
             )
