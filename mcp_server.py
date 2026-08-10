@@ -67,8 +67,10 @@ async def list_tools() -> list[Tool]:
                 "notes, contracts, or personal files. Documents are organised into "
                 "projects, which are folders. Pass a project to keep the search "
                 "inside it, which matters when the same word means different "
-                "things in different projects. Call list_projects first if you "
-                "are not sure which one the user means."
+                "things in different projects. If the user asks about one named "
+                "file, or search results from a file look incomplete, call "
+                "read_document next to inspect the raw extracted text. Call "
+                "list_projects first if you are not sure which one the user means."
             ),
             inputSchema={
                 "type": "object",
@@ -98,11 +100,20 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Get a list of all documents currently indexed in the local RAG system, "
                 "including filenames and total chunk counts. Use this to tell the user "
-                "what files are available to search."
+                "what files are available to search, then use read_document when the "
+                "user needs the contents of a specific listed file."
             ),
             inputSchema={
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "project": {
+                        "type": "string",
+                        "description": (
+                            "Restrict the list to one project folder. Omit to "
+                            "list documents across every project."
+                        ),
+                    },
+                },
                 "required": [],
             },
         ),
@@ -200,6 +211,51 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="read_document",
+            description=(
+                "Read the raw extracted text of one indexed local document directly "
+                "from disk, using the same file extractor used by indexing. Use this "
+                "when the user names a file, asks you to inspect a document's full "
+                "contents, asks whether a saved file is blank or incomplete, or when "
+                "search_documents only returns narrow chunks such as rubrics or tables. "
+                "This is not a Chroma chunk search; it opens the source document and "
+                "returns its extracted text. For long documents, use start and "
+                "max_chars to page through the text."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "description": (
+                            "Indexed source path or filename, e.g. "
+                            "'GCU/Topic5 DQ1.docx' or 'Topic5 DQ1.docx'."
+                        ),
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": (
+                            "Restrict filename resolution to one project folder. "
+                            "Omit to resolve across every project."
+                        ),
+                    },
+                    "start": {
+                        "type": "integer",
+                        "description": "Character offset to start reading from. Default 0.",
+                        "default": 0,
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "description": (
+                            "Maximum characters to return. Default 20000, max 100000."
+                        ),
+                        "default": 20000,
+                    },
+                },
+                "required": ["source"],
+            },
+        ),
+        Tool(
             name="summarize_documents",
             description=(
                 "Search the index for documents matching a term, then read and "
@@ -260,6 +316,9 @@ async def call_tool(name: str, arguments: dict) -> CallToolResult:
 
     elif name == "ask_local":
         return await handle_ask_local(arguments or {})
+
+    elif name == "read_document":
+        return await handle_read_document(arguments or {})
 
     elif name == "summarize_documents":
         return await handle_summarize_documents(arguments or {})
@@ -503,6 +562,117 @@ async def handle_ask_local(arguments: dict) -> CallToolResult:
         return CallToolResult(
             content=[TextContent(type="text", text=f"Ask error: {str(e)}")]
         )
+
+
+def _resolve_indexed_source(source_query: str, project: str = None):
+    indexed = get_indexed_sources()
+    if project:
+        indexed = {k: v for k, v in indexed.items()
+                   if projects.project_of(k) == project}
+
+    needle = (source_query or "").strip()
+    needle_lower = needle.lower()
+    if not needle_lower:
+        return None, []
+
+    for source in indexed:
+        if source.lower() == needle_lower:
+            return source, []
+
+    exact_name = [source for source in indexed
+                  if Path(source).name.lower() == needle_lower]
+    if len(exact_name) == 1:
+        return exact_name[0], []
+    if len(exact_name) > 1:
+        return None, sorted(exact_name)
+
+    contained = [source for source in indexed if needle_lower in source.lower()]
+    if len(contained) == 1:
+        return contained[0], []
+    if len(contained) > 1:
+        return None, sorted(contained)
+
+    try:
+        import summarize
+        detected = summarize.detect_file_reference(needle, project=project)
+    except Exception:
+        detected = None
+    if detected:
+        return detected, []
+
+    return None, []
+
+
+async def handle_read_document(arguments: dict) -> CallToolResult:
+    source_query = (arguments.get("source") or "").strip()
+    project = (arguments.get("project") or "").strip() or None
+    start = max(int(arguments.get("start", 0) or 0), 0)
+    max_chars = int(arguments.get("max_chars", 20000) or 20000)
+    max_chars = min(max(max_chars, 1), 100000)
+
+    if not source_query:
+        return CallToolResult(
+            content=[TextContent(type="text", text="Error: source cannot be empty")]
+        )
+
+    source, candidates = _resolve_indexed_source(source_query, project=project)
+    if not source:
+        if candidates:
+            lines = [
+                f"More than one indexed document matched '{source_query}'.",
+                "Use one exact source path:",
+                "",
+            ]
+            lines.extend(f"  {candidate}" for candidate in candidates[:25])
+            if len(candidates) > 25:
+                lines.append(f"  ... and {len(candidates) - 25} more")
+            return CallToolResult(
+                content=[TextContent(type="text", text="\n".join(lines))]
+            )
+        scope = f" in project '{project}'" if project else ""
+        return CallToolResult(
+            content=[TextContent(
+                type="text",
+                text=f"No indexed document matched '{source_query}'{scope}.",
+            )]
+        )
+
+    try:
+        import rag as rag_module
+        import summarize
+        path = summarize.resolve_path(source)
+        text = rag_module.load_file(path) or ""
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Read error: {str(e)}")]
+        )
+
+    total_chars = len(text)
+    end = min(start + max_chars, total_chars)
+    excerpt = text[start:end]
+    truncated = end < total_chars
+    if start >= total_chars and total_chars:
+        excerpt = ""
+
+    lines = [
+        f"Source: {source}",
+        f"Path: {path}",
+        f"Characters extracted: {total_chars}",
+        f"Returned range: {start}-{end}",
+        f"Truncated: {'yes' if truncated else 'no'}",
+        "",
+        "--- Document text ---",
+        excerpt,
+    ]
+    if not text.strip():
+        lines.append(
+            "\n[No text was extracted. The file may be blank, scanned without OCR, "
+            "or in a format the extractor cannot read.]"
+        )
+
+    return CallToolResult(
+        content=[TextContent(type="text", text="\n".join(lines))]
+    )
 
 
 async def handle_summarize_documents(arguments: dict) -> CallToolResult:
