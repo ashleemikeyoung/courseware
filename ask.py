@@ -71,8 +71,8 @@ CITATION_ARTIFACT_RE = re.compile(r"\[[\w-]*C\d+\]")
 # failure, just a missed shortcut.
 SUMMARIZE_RE = re.compile(r"\bsummar\w*\b", re.IGNORECASE)
 SUMMARIZE_LIST_RE = re.compile(
-    r"\bsummar\w*\b.*\b(?:each|these|those|listed|above|all)\b.*"
-    r"\b(?:documents?|files?)\b",
+    r"(?=.*\b(?:summar\w*|read|review)\b)"
+    r"(?=.*\b(?:each|these|those|them|listed|above|all|documents?|files?)\b)",
     re.IGNORECASE,
 )
 DOCUMENT_REFERENCE_SCAN_RE = re.compile(
