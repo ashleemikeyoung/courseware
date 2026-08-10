@@ -74,6 +74,13 @@ DOCUMENT_LIST_QUERY_RE = re.compile(
     r"mentioned|cites?|cited|citing)\b\s+(?:to\s+)?(.+?)[?.!]*$",
     re.IGNORECASE,
 )
+DOCUMENT_SUMMARY_QUERY_RE = re.compile(
+    r"\b(?:summarize|summarise|summary|summaries|recap|overview|synopsis|"
+    r"digest|review)\w*\b.*\b(?:documents?|files?|sources?)\b.*"
+    r"\b(?:reference|references|referencing|referenced|mention|mentions|"
+    r"mentioned|cites?|cited|citing)\b",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +410,41 @@ def _document_list_answer(question: str, project: str = None) -> dict:
     }
 
 
+def _document_summary_answer(question: str, project: str = None) -> dict:
+    if not DOCUMENT_SUMMARY_QUERY_RE.search(question or ""):
+        return None
+
+    term = summarize.reference_query_term(question)
+    results = summarize.summarize_search(term, project=project)
+    sources = [r["source"] for r in results]
+    scope = f" in project '{project}'" if project else ""
+
+    if not results:
+        answer = f"No indexed documents{scope} reference or mention '{term}'."
+    else:
+        sections = [
+            f"Summaries of indexed documents{scope} that reference or mention '{term}':",
+        ]
+        for r in results:
+            sections.append(f"\n## {r['source']}")
+            if "error" in r:
+                sections.append(f"Could not summarize: {r['error']}")
+                continue
+            sections.append(r["summary"])
+            if r.get("truncated"):
+                sections.append(f"\n(truncated at {r['chars']} characters)")
+        answer = "\n".join(sections)
+
+    return {
+        "answer": answer,
+        "sources": sources,
+        "routed_to": "document_summary",
+        "routing_reason": "exhaustive indexed-document scan plus whole-file summaries",
+        "ollama_draft": None,
+        "synthesized_by": "none",
+    }
+
+
 def get_rag_context(question: str, project: str = None) -> tuple:
     """Pull relevant chunks from the vector database, optionally scoped to one project."""
     if collection.count() == 0:
@@ -577,6 +619,18 @@ def route_question(question: str, context: str, timer: PhaseTimer) -> dict:
 
 def orchestrate(user_question: str, project: str = None) -> dict:
     timer = PhaseTimer(user_question)
+
+    timer.start_phase("document_summary")
+    direct_summary = _document_summary_answer(user_question, project=project)
+    if direct_summary is not None:
+        timer.end_phase({
+            "sources": direct_summary["sources"],
+            "chunks_retrieved": 0,
+            "chunk_chars": len(direct_summary["answer"]),
+        })
+        direct_summary["timer"] = timer
+        log_benchmark(timer)
+        return direct_summary
 
     timer.start_phase("document_scan")
     direct_list = _document_list_answer(user_question, project=project)
