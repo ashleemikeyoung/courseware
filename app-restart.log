@@ -29,3 +29,36 @@ Press CTRL+C to quit
 127.0.0.1 - - [09/Aug/2026 19:12:16] "GET /api/update/status HTTP/1.1" 200 -
 127.0.0.1 - - [09/Aug/2026 19:12:16] "GET /api/update/status HTTP/1.1" 200 -
 127.0.0.1 - - [09/Aug/2026 19:12:16] "GET /api/update/history HTTP/1.1" 200 -
+127.0.0.1 - - [09/Aug/2026 19:12:26] "POST /api/update/apply HTTP/1.1" 200 -
+127.0.0.1 - - [09/Aug/2026 19:12:26] "GET /api/status HTTP/1.1" 200 -
+127.0.0.1 - - [09/Aug/2026 19:12:26] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [09/Aug/2026 19:12:26] "GET /static/logo-dark.png HTTP/1.1" 304 -
+127.0.0.1 - - [09/Aug/2026 19:12:26] "GET /static/fonts/Caveat-Regular.ttf HTTP/1.1" 404 -
+127.0.0.1 - - [09/Aug/2026 19:12:26] "GET /static/logo-light.png HTTP/1.1" 304 -
+127.0.0.1 - - [09/Aug/2026 19:12:26] "GET /static/logo-pink.png HTTP/1.1" 304 -
+127.0.0.1 - - [09/Aug/2026 19:12:26] "GET /static/fonts/CormorantGaramond-Medium.ttf HTTP/1.1" 404 -
+127.0.0.1 - - [09/Aug/2026 19:12:26] "GET /api/projects HTTP/1.1" 200 -
+127.0.0.1 - - [09/Aug/2026 19:12:26] "GET /api/status?project=GCU HTTP/1.1" 200 -
+127.0.0.1 - - [09/Aug/2026 19:12:26] "GET /api/plan?project=GCU HTTP/1.1" 200 -
+127.0.0.1 - - [09/Aug/2026 19:12:26] "GET /api/plans?project=GCU HTTP/1.1" 200 -
+127.0.0.1 - - [09/Aug/2026 19:12:26] "GET /api/update/status HTTP/1.1" 200 -
+127.0.0.1 - - [09/Aug/2026 19:12:26] "GET /api/update/status HTTP/1.1" 200 -
+127.0.0.1 - - [09/Aug/2026 19:12:26] "GET /api/update/history HTTP/1.1" 200 -
+/opt/anaconda3/envs/rag/lib/python3.11/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+Loading embedding model...
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 33142.56it/s]
+Database path:   /Users/ash/Development/RAG/chroma_db
+Documents path:  /Users/ash/Development/RAG/documents
+Chunks in index: 1661
+
+  Ask Ash on http://127.0.0.1:5111
+  Index: 1661 chunks across 3 project(s)
+  Drafter: gemma4:e4b
+  Ask retry guard: active
+
+ * Serving Flask app 'app'
+ * Debug mode: off
+WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on http://127.0.0.1:5111
+Press CTRL+C to quit
