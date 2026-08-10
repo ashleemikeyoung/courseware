@@ -394,6 +394,51 @@ def search_synopses(query_words: list, project_prefix: str = None):
         client.close()
 
 
+def get_document_summary(source: str, source_hash: str, model: str,
+                         max_chars: int):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        result = client.execute(
+            "SELECT source, source_hash, model, max_chars, chars, truncated, "
+            "summary, generated_at, last_used_at "
+            "FROM document_summaries "
+            "WHERE source = ? AND source_hash = ? AND model = ? AND max_chars = ? "
+            "LIMIT 1",
+            [source, source_hash, model, max_chars],
+        )
+        rows = [dict(zip(result.columns, row)) for row in result.rows]
+        if not rows:
+            return None
+        client.execute(
+            "UPDATE document_summaries SET last_used_at = datetime('now') "
+            "WHERE source = ? AND source_hash = ? AND model = ? AND max_chars = ?",
+            [source, source_hash, model, max_chars],
+        )
+        return rows[0]
+    finally:
+        client.close()
+
+
+def record_document_summary(source: str, source_hash: str, model: str,
+                            max_chars: int, chars: int, truncated: bool,
+                            summary: str):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        client.execute(
+            "INSERT INTO document_summaries "
+            "(source, source_hash, model, max_chars, chars, truncated, summary) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(source, source_hash, model, max_chars) DO UPDATE SET "
+            " chars=excluded.chars, truncated=excluded.truncated, "
+            " summary=excluded.summary, generated_at=datetime('now'), "
+            " last_used_at=datetime('now')",
+            [source, source_hash, model, max_chars, chars,
+             1 if truncated else 0, summary],
+        )
+    finally:
+        client.close()
+
+
 # ---------------------------------------------------------------------------
 # PII scans -- summary only (entity types + count), never the matched text
 # itself. See schema.sql and pii.py for why.

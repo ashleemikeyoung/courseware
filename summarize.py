@@ -37,6 +37,11 @@ import rag
 import citations
 from writer import ask_ollama_long
 from config import ASK_MODEL
+try:
+    from memory_client import get_document_summary, record_document_summary
+except Exception:
+    get_document_summary = None
+    record_document_summary = None
 
 SUMMARIZE_SYSTEM = """You are given the full extracted text of one document.
 Write a clear, well-organized summary: what the document argues or covers,
@@ -196,6 +201,45 @@ def summarize_text(text: str, model: str = None, on_token=None, echo: bool = Fal
     )
 
 
+def _source_for_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(Path(rag.DOCUMENTS_FOLDER).resolve()))
+    except ValueError:
+        return path.name
+
+
+def _cached_summary(source: str, source_hash: str, model: str, max_chars: int,
+                    on_token=None):
+    if get_document_summary is None:
+        return None
+    try:
+        row = get_document_summary(source, source_hash, model, max_chars)
+    except Exception:
+        return None
+    if not row:
+        return None
+    summary = row.get("summary") or ""
+    if on_token and summary:
+        on_token(summary)
+    return {
+        "chars": row.get("chars"),
+        "truncated": bool(row.get("truncated")),
+        "summary": summary,
+        "metrics": {"cached": True, "elapsed_s": 0},
+    }
+
+
+def _remember_summary(source: str, source_hash: str, model: str, max_chars: int,
+                      chars: int, truncated: bool, summary: str):
+    if record_document_summary is None:
+        return
+    try:
+        record_document_summary(
+            source, source_hash, model, max_chars, chars, truncated, summary)
+    except Exception:
+        pass
+
+
 def summarize_file(path, model: str = None, max_chars: int = 20000,
                    on_token=None, echo: bool = False) -> dict:
     """
@@ -210,9 +254,17 @@ def summarize_file(path, model: str = None, max_chars: int = 20000,
 
     Returns {"path", "chars", "truncated", "summary", "metrics"}.
     """
+    model = model or ASK_MODEL
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"No such file: {path}")
+
+    source = _source_for_path(path)
+    source_hash = rag.file_hash(path)
+    cached = _cached_summary(source, source_hash, model, max_chars, on_token=on_token)
+    if cached:
+        cached["path"] = str(path)
+        return cached
 
     text = rag.load_file(path)
     if not text.strip():
@@ -227,6 +279,8 @@ def summarize_file(path, model: str = None, max_chars: int = 20000,
         text = text[:max_chars]
 
     summary, metrics = summarize_text(text, model=model, on_token=on_token, echo=echo)
+    _remember_summary(
+        source, source_hash, model, max_chars, total_chars, truncated, summary)
     return {
         "path": str(path),
         "chars": total_chars,

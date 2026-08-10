@@ -186,6 +186,29 @@ CREATE TABLE IF NOT EXISTS documents (
     indexed_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Generated summaries -- reusable working memory for expensive whole-file
+-- summaries. Unlike `documents.synopsis`, these are user-facing summaries
+-- produced by summarize.py. They are keyed by source hash so editing a file
+-- automatically misses the cache and records a fresh summary.
+CREATE TABLE IF NOT EXISTS document_summaries (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    source         TEXT NOT NULL,
+    source_hash    TEXT NOT NULL,
+    model          TEXT NOT NULL,
+    max_chars      INTEGER NOT NULL,
+    chars          INTEGER,
+    truncated      INTEGER NOT NULL DEFAULT 0,
+    summary        TEXT NOT NULL,
+    generated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    last_used_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(source, source_hash, model, max_chars)
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_summaries_source
+    ON document_summaries(source);
+CREATE INDEX IF NOT EXISTS idx_document_summaries_generated
+    ON document_summaries(generated_at);
+
 
 -- ---------------------------------------------------------------------------
 -- PII scans -- deliberately a SUMMARY only. This table records what kinds
