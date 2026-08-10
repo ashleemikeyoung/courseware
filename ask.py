@@ -70,9 +70,20 @@ CITATION_ARTIFACT_RE = re.compile(r"\[[\w-]*C\d+\]")
 # just means gather_evidence()'s ordinary path runs instead -- never a hard
 # failure, just a missed shortcut.
 SUMMARIZE_RE = re.compile(r"\bsummar\w*\b", re.IGNORECASE)
+SUMMARY_ACTION_WORDS = (
+    "summarize", "summarise", "summary", "summaries", "recap", "digest",
+    "synopsis", "abstract", "overview", "brief", "condense", "read",
+    "review", "analyze", "analyse", "explain", "describe",
+)
+FOLLOWUP_REFERENCE_WORDS = (
+    "each", "these", "those", "them", "they", "listed", "above",
+    "previous", "prior", "aforementioned", "same", "all", "both",
+    "documents", "document", "files", "file", "sources", "source",
+    "items", "ones", "list",
+)
 SUMMARIZE_LIST_RE = re.compile(
-    r"(?=.*\b(?:summar\w*|read|review)\b)"
-    r"(?=.*\b(?:each|these|those|them|listed|above|all|documents?|files?)\b)",
+    r"(?=.*\b(?:" + "|".join(SUMMARY_ACTION_WORDS) + r")\w*\b)"
+    r"(?=.*\b(?:" + "|".join(FOLLOWUP_REFERENCE_WORDS) + r")\b)",
     re.IGNORECASE,
 )
 DOCUMENT_REFERENCE_SCAN_RE = re.compile(
