@@ -901,7 +901,8 @@ $("#btnDraft").onclick = async () => {
 
 /* Minimal markdown: headings, lists, bold, italic. The drafter is told to emit
    an h2 and prose, so a full parser would be more surface area than value. */
-function mdToHtml(md){
+function mdToHtml(md, opts = {}){
+  const showCitations = opts.showCitations !== false;
   const lines = md.split("\n"); let out = [], list = null;
   const inline = t => esc(t)
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
@@ -909,7 +910,7 @@ function mdToHtml(md){
     // Chat markers are prefixed per turn ("t1-C3") so citations from different
     // turns never collide once merged into one evidence map; document markers
     // stay bare ("C3"). Both shapes match here.
-    .replace(/\[([\w-]*C\d+)\]/g, (m, c) => citeHtml(c));
+    .replace(/\[([\w-]*C\d+)\]/g, (m, c) => showCitations ? citeHtml(c) : "");
   const close = () => { if (list){ out.push(`</${list}>`); list = null; } };
   for (const raw of lines){
     const l = raw.trim();
@@ -1173,7 +1174,7 @@ function chatBubble(m){
   const bubble = el("div", "bubble" + (m.pending ? " pending" : ""));
   bubble.innerHTML = m.role === "user"
     ? esc(m.content).replace(/\n/g, "<br>")
-    : mdToHtml(m.content || "");
+    : mdToHtml(m.content || "", {showCitations: STATE.showContext});
   box.appendChild(bubble);
   if (m.sources && m.sources.length){
     const s = el("div", "sources qlist" + (STATE.showContext ? "" : " hidden"));
@@ -1209,7 +1210,10 @@ $("#btnClearChat").onclick = () => {
   if (STATE.chat.messages.length && !confirm("Clear this conversation?")) return;
   STATE.chat.messages = []; renderChat();
 };
-$("#contextToggle").onchange = e => setContextVisibility(e.target.checked);
+$("#contextToggle").onchange = e => {
+  STATE.showContext = e.target.checked;
+  renderChat();
+};
 try {
   STATE.showContext = window.localStorage.getItem("ask_show_context") === "1";
 } catch(e){}
