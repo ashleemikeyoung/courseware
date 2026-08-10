@@ -1369,11 +1369,15 @@ async function checkUpdateStatus(){
   try {
     const s = await (await fetch("/api/update/status")).json();
     const bar = $("#updateBar");
-    bar.classList.toggle("on", !!s.update_available);
-    if (s.update_available){
-      const files = s.pending_files || [];
+    const files = (s.pending_files || [])
+      .map(f => String(f || "").trim())
+      .filter(Boolean);
+    bar.classList.toggle("on", !!s.update_available && files.length > 0);
+    if (s.update_available && files.length){
       $("#updateFiles").textContent = files.slice(0, 6).join(", ") +
         (files.length > 6 ? `  +${files.length - 6} more` : "");
+    } else {
+      $("#updateFiles").textContent = "";
     }
   } catch(e){}
 }
