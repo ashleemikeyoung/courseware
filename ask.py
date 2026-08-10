@@ -19,6 +19,7 @@ the retrieval query, since that is what the person is actually asking right now.
 
 import re
 import time
+from pathlib import Path
 
 from writer import (
     CitationRegistry, gather_evidence, evidence_block, ask_ollama_chat,
@@ -69,6 +70,11 @@ CITATION_ARTIFACT_RE = re.compile(r"\[[\w-]*C\d+\]")
 # just means gather_evidence()'s ordinary path runs instead -- never a hard
 # failure, just a missed shortcut.
 SUMMARIZE_RE = re.compile(r"\bsummar\w*\b", re.IGNORECASE)
+SUMMARIZE_LIST_RE = re.compile(
+    r"\bsummar\w*\b.*\b(?:each|these|those|listed|above|all)\b.*"
+    r"\b(?:documents?|files?)\b",
+    re.IGNORECASE,
+)
 DOCUMENT_REFERENCE_SCAN_RE = re.compile(
     r"\b(?:documents?|files?)\b.*\b"
     r"(?:reference|references|referencing|mention|mentions|cites?|citing)\b"
@@ -243,6 +249,77 @@ def _target_sources_from_context(context: str, project: str = None) -> set:
     return sources
 
 
+def _sources_from_context(context: str, project: str = None) -> list:
+    seen = set()
+    found = []
+
+    context_lower = (context or "").lower()
+    try:
+        all_data = summarize.rag.collection.get(include=["metadatas"])
+        for meta in all_data["metadatas"]:
+            if project and meta.get("project") != project:
+                continue
+            source = meta.get("source")
+            if not source or source in seen:
+                continue
+            source_lower = source.lower()
+            if (source_lower in context_lower
+                    or Path(source).name.lower() in context_lower):
+                seen.add(source)
+                pos = context_lower.find(source_lower)
+                if pos < 0:
+                    pos = context_lower.find(Path(source).name.lower())
+                found.append((pos, source))
+    except Exception:
+        pass
+
+    for match in SOURCE_PATH_RE.finditer(context or ""):
+        name = match.group(0).strip(" \t\r\n,.;:\"'`)]}")
+        try:
+            source = summarize.detect_file_reference(name, project=project)
+        except Exception:
+            source = None
+        if source and source not in seen:
+            seen.add(source)
+            found.append((match.start(), source))
+
+    return [source for _, source in sorted(found, key=lambda item: item[0])]
+
+
+def _summarize_context_sources(question: str, context: str, model: str,
+                               project: str = None) -> dict:
+    if not SUMMARIZE_LIST_RE.search(question or ""):
+        return None
+    sources = _sources_from_context(context, project=project)
+    if not sources:
+        return None
+
+    sections = []
+    metrics = {"files": len(sources), "elapsed_s": 0}
+    for source in sources[:10]:
+        try:
+            result = summarize.summarize_file(
+                summarize.resolve_path(source), model=model, echo=False)
+            note = (f"\n\n(truncated at {result['chars']} characters)"
+                    if result["truncated"] else "")
+            sections.append(f"## {source}\n{result['summary']}{note}")
+            metrics["elapsed_s"] += result.get("metrics", {}).get("elapsed_s", 0)
+        except (FileNotFoundError, ValueError) as e:
+            sections.append(f"## {source}\nCould not summarize: {e}")
+    if len(sources) > 10:
+        sections.append(
+            f"## Not summarized\n{len(sources) - 10} additional listed "
+            "documents were omitted to keep this request bounded.")
+
+    return {
+        "text": "\n\n".join(sections),
+        "evidence": {},
+        "grounded": True,
+        "passages_offered": 0,
+        "metrics": metrics,
+    }
+
+
 def _document_reference_scan(question: str, registry: CitationRegistry,
                              project: str = None, context: str = "") -> list:
     """
@@ -321,6 +398,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     model = model or ASK_MODEL
     scope = project or CURRENT_PROJECT
     last_user = messages[-1]["content"]
+    recent_context = " ".join(m.get("content", "") for m in messages[-8:])
 
     # A direct file reference ("summarize GCU/EBSCO-FullText-07_26_2026.pdf")
     # names one specific file, not a topic -- gather_evidence() below would
@@ -334,6 +412,11 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     # docstring), so a direct file reference gets answered identically
     # whether it's typed into the Ask tab, MCP's ask_local, or the terminal.
     if ground and last_user.strip() and SUMMARIZE_RE.search(last_user):
+        listed = _summarize_context_sources(
+            last_user, recent_context, model=model, project=scope)
+        if listed:
+            return listed
+
         source = summarize.detect_file_reference(last_user, project=scope)
         if source:
             try:
@@ -386,12 +469,10 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             prior_user_turns = [m["content"] for m in messages[:-1]
                                 if m.get("role") == "user"][-4:]
             query_text = " ".join(prior_user_turns + [last_user])
-            reference_context = " ".join(
-                m.get("content", "") for m in messages[-8:])
             evidence = (
                 _document_reference_scan(
                     last_user, registry, project=scope,
-                    context=reference_context)
+                    context=recent_context)
                 + gather_evidence([query_text], registry, per_query=6,
                                   window=1, project=scope)
             )
