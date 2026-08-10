@@ -476,6 +476,11 @@ def scan_documents(folder: str = None, verbose: bool = True) -> dict:
             summary["updated"].append(filename)
 
         else:
+            if _needs_document_profile(filename):
+                text = load_file(file)
+                if text.strip():
+                    record_document_profile(
+                        filename, text, projects.project_of(filename))
             summary["unchanged"].append(filename)
 
     for filename in indexed:
@@ -595,6 +600,16 @@ def record_document_profile(source: str, text: str, project: str):
         print(f"  [Warning] could not record document profile for {source}: {e}")
 
 
+def _needs_document_profile(source: str) -> bool:
+    if not MEMORY_AVAILABLE or get_synopsis is None:
+        return False
+    try:
+        row = get_synopsis(source)
+    except Exception:
+        return False
+    return not row or row.get("model") != "local-profile-v1"
+
+
 def backfill_document_profiles(project: str = None, overwrite: bool = False) -> dict:
     """
     Populate memory.documents for files already indexed before document
@@ -613,7 +628,8 @@ def backfill_document_profiles(project: str = None, overwrite: bool = False) -> 
         if project and projects.project_of(source) != project:
             continue
         try:
-            if not overwrite and get_synopsis is not None and get_synopsis(source):
+            if (not overwrite and get_synopsis is not None
+                    and not _needs_document_profile(source)):
                 summary["skipped"].append(source)
                 continue
             path = Path(DOCUMENTS_FOLDER) / source

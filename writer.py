@@ -40,6 +40,10 @@ import quality
 import projects
 from rag import collection, embedder, BASE_DIR
 try:
+    from rag import retrieve as hybrid_retrieve
+except ImportError:
+    hybrid_retrieve = None
+try:
     from rag import meaningful_words
 except ImportError:
     # rag.py hasn't had patch_meaningful_words.py applied yet. Fall back to
@@ -393,6 +397,50 @@ def _parse_id(chunk_id: str):
     return source, int(idx)
 
 
+def _hybrid_evidence(
+    query: str,
+    registry: CitationRegistry,
+    per_query: int,
+    project: str = None,
+) -> list:
+    """
+    Adapt rag.retrieve()'s hybrid results into writer Evidence objects.
+
+    The Ask tab and writer previously had their own Chroma-first retrieval path,
+    so improvements to rag.search()/retrieve() -- document registry hits,
+    citation lookup, filename/source matching, and source diversity -- did not
+    reach grounded chat answers. Keeping this adapter here lets the older
+    window-expansion code remain as a fallback while putting the shared hybrid
+    retriever first.
+    """
+    if hybrid_retrieve is None:
+        return []
+    try:
+        results = hybrid_retrieve(query, n_results=per_query, project=project)
+    except Exception as e:
+        print(f"  [Warning: hybrid retrieval failed: {e}]")
+        return []
+
+    evidence = []
+    for offset, item in enumerate(results):
+        meta = item.get("metadata") or {}
+        source = meta.get("source")
+        if not source:
+            continue
+        chunk_index = -1000 - offset
+        chunk_id = item.get("id") or ""
+        if "::" in chunk_id:
+            try:
+                _, chunk_index = _parse_id(chunk_id)
+            except Exception:
+                chunk_index = 0
+        text = item.get("document") or ""
+        if not text.strip():
+            continue
+        evidence.append(registry.register(source, chunk_index, chunk_index, text))
+    return evidence
+
+
 def gather_evidence(
     queries: list,
     registry: CitationRegistry,
@@ -424,8 +472,10 @@ def gather_evidence(
 
     scope = project or CURRENT_PROJECT
     hits: dict = {}
+    hybrid_first = []
 
     for q in queries:
+        hybrid_first.extend(_hybrid_evidence(q, registry, per_query, project=scope))
         emb = embedder.encode([q])[0]
         kwargs = {
             "query_embeddings": [emb.tolist()],
@@ -616,7 +666,7 @@ def gather_evidence(
         except Exception as e:
             print(f"  [Warning: citation lookup failed: {e}]")
 
-    return citation_evidence + evidence
+    return hybrid_first + citation_evidence + evidence
 
 
 def evidence_block(evidence: list, char_budget: int = 24000) -> str:

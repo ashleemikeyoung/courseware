@@ -69,6 +69,12 @@ CITATION_ARTIFACT_RE = re.compile(r"\[[\w-]*C\d+\]")
 # just means gather_evidence()'s ordinary path runs instead -- never a hard
 # failure, just a missed shortcut.
 SUMMARIZE_RE = re.compile(r"\bsummar\w*\b", re.IGNORECASE)
+DOCUMENT_REFERENCE_SCAN_RE = re.compile(
+    r"\b(?:documents?|files?)\b.*\b"
+    r"(?:reference|references|referencing|mention|mentions|cites?|citing)\b"
+    r"\s+(?:to\s+|the\s+)?(.+?)[?.!]*$",
+    re.IGNORECASE,
+)
 
 
 def _is_degenerate(text: str) -> bool:
@@ -170,6 +176,51 @@ def _trim_history(messages: list, max_words: int = 3000) -> list:
     return list(reversed(kept))
 
 
+def _document_reference_term(question: str) -> str:
+    match = DOCUMENT_REFERENCE_SCAN_RE.search(question or "")
+    if not match:
+        return ""
+    term = match.group(1).strip(" \t\r\n\"'`“”‘’.?!")
+    # "any other documents that reference Tye" should search for the object
+    # of "reference", not for the full tail if the user adds a soft qualifier.
+    term = re.sub(r"^(?:author|article|work|source)\s+", "", term,
+                  flags=re.IGNORECASE).strip()
+    return term
+
+
+def _document_reference_scan(question: str, registry: CitationRegistry,
+                             project: str = None) -> list:
+    """
+    Add an exhaustive source-list evidence item for questions like
+    "what documents mention Tye?"
+
+    Ordinary retrieval is top-k by design. This scan asks the index a different
+    question: which indexed files contain the term anywhere in filename,
+    extracted text, or curated citation metadata. That list is much safer for
+    "any other documents" questions than asking the model to infer absence from
+    a few ranked chunks.
+    """
+    term = _document_reference_term(question)
+    if not term:
+        return []
+    try:
+        sources = summarize.find_documents(term, project=project)
+    except Exception as e:
+        print(f"  [Warning: document reference scan failed: {e}]")
+        return []
+    if not sources:
+        return []
+
+    text = (
+        "[Indexed document reference scan]\n"
+        f"Search term: {term}\n"
+        "The following indexed documents matched by filename, extracted text, "
+        "or verified citation metadata:\n"
+        + "\n".join(f"- {source}" for source in sources)
+    )
+    return [registry.register("document-index", -20, -20, text)]
+
+
 def ask(messages: list, model: str = None, project: str = None, ground: bool = True,
         turn_id: str = None, on_token=None, echo: bool = False,
         num_ctx: int = 8192, num_predict: int = 1200,
@@ -257,8 +308,11 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             prior_user_turns = [m["content"] for m in messages[:-1]
                                 if m.get("role") == "user"][-4:]
             query_text = " ".join(prior_user_turns + [last_user])
-            evidence = gather_evidence([query_text], registry, per_query=6,
-                                       window=1, project=scope)
+            evidence = (
+                _document_reference_scan(last_user, registry, project=scope)
+                + gather_evidence([query_text], registry, per_query=6,
+                                  window=1, project=scope)
+            )
 
     system = CHAT_SYSTEM
     if evidence:
