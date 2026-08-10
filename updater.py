@@ -41,6 +41,7 @@ projects/*/plans/
 plans/
 output/
 benchmark.jsonl
+app-restart.log
 backups/
 backup/
 *.bak-*
@@ -70,6 +71,7 @@ RUNTIME_UPDATE_FILES = {
     ".DS_Store",
     ".env",
     ".env-bak",
+    "app-restart.log",
     "benchmark.jsonl",
     "memory/.env",
 }
