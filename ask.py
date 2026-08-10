@@ -86,6 +86,13 @@ SUMMARIZE_LIST_RE = re.compile(
     r"(?=.*\b(?:" + "|".join(FOLLOWUP_REFERENCE_WORDS) + r")\b)",
     re.IGNORECASE,
 )
+SUMMARIZE_REFERENCE_RE = re.compile(
+    r"\b(?:summarize|summarise|summary|summaries|recap|overview|synopsis|"
+    r"digest|review)\w*\b.*\b(?:documents?|files?|sources?)\b.*"
+    r"\b(?:reference|references|referencing|referenced|mention|mentions|"
+    r"mentioned|cites?|cited|citing)\b",
+    re.IGNORECASE,
+)
 DOCUMENT_REFERENCE_SCAN_RE = re.compile(
     r"\b(?:documents?|files?)\b.*\b"
     r"(?:reference|references|referencing|mention|mentions|cites?|citing)\b"
@@ -331,6 +338,47 @@ def _summarize_context_sources(question: str, context: str, model: str,
     }
 
 
+def _summarize_reference_sources(question: str, model: str,
+                                 project: str = None) -> dict:
+    if not SUMMARIZE_REFERENCE_RE.search(question or ""):
+        return None
+
+    term = summarize.reference_query_term(question)
+    results = summarize.summarize_search(term, project=project, model=model)
+    if not results:
+        return {
+            "text": f"No indexed documents reference or mention '{term}'.",
+            "evidence": {},
+            "grounded": True,
+            "passages_offered": 0,
+            "metrics": {"files": 0, "elapsed_s": 0},
+        }
+
+    sections = [
+        f"Summaries of indexed documents that reference or mention '{term}':"
+    ]
+    metrics = {"files": len(results), "elapsed_s": 0}
+    for r in results:
+        sections.append(f"\n## {r['source']}")
+        if "error" in r:
+            sections.append(f"Could not summarize: {r['error']}")
+            continue
+        sections.append(r["summary"])
+        metrics["elapsed_s"] += r.get("metrics", {}).get("elapsed_s", 0)
+        if r.get("truncated"):
+            sections.append(
+                f"\n(Only the first 20,000 of {r['chars']} extracted "
+                "characters were summarized.)")
+
+    return {
+        "text": "\n".join(sections),
+        "evidence": {},
+        "grounded": True,
+        "passages_offered": 0,
+        "metrics": metrics,
+    }
+
+
 def _document_reference_scan(question: str, registry: CitationRegistry,
                              project: str = None, context: str = "") -> list:
     """
@@ -423,6 +471,11 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     # docstring), so a direct file reference gets answered identically
     # whether it's typed into the Ask tab, MCP's ask_local, or the terminal.
     if ground and last_user.strip() and SUMMARIZE_RE.search(last_user):
+        reference_summary = _summarize_reference_sources(
+            last_user, model=model, project=scope)
+        if reference_summary:
+            return reference_summary
+
         listed = _summarize_context_sources(
             last_user, recent_context, model=model, project=scope)
         if listed:
