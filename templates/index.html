@@ -901,8 +901,18 @@ $("#btnDraft").onclick = async () => {
 
 /* Minimal markdown: headings, lists, bold, italic. The drafter is told to emit
    an h2 and prose, so a full parser would be more surface area than value. */
+function stripHiddenCitations(md){
+  return md
+    .replace(/(?:\s*(?:,|and|or)?\s*\[[\w-]*C\d+\])+/gi, "")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .replace(/,\s*([.;:!?])/g, "$1")
+    .replace(/\s+(?:and|or)\s*([.;:!?])/gi, "$1")
+    .replace(/\s{2,}/g, " ");
+}
+
 function mdToHtml(md, opts = {}){
   const showCitations = opts.showCitations !== false;
+  if (!showCitations) md = stripHiddenCitations(md);
   const lines = md.split("\n"); let out = [], list = null;
   const inline = t => esc(t)
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
