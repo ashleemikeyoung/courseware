@@ -26,6 +26,14 @@ from rag import (
 import citations
 import summarize
 
+# Reuses ask.py's pronoun-reference resolution rather than re-implementing
+# it here. This used to be a separate, hardcoded-to-"Tye" regex check (see
+# _document_list_answer below) that quietly diverged from the real fix
+# once ask.py's version was generalized -- MCP sessions (which route
+# through ask.py, not this terminal loop) got the fix, terminal sessions
+# didn't. One implementation now, so the two paths can't drift apart again.
+from ask import _reference_terms_from_context
+
 # OLLAMA_URL and every *_MODEL name come from config.py -- see that
 # module's docstring. This also fixes a latent bug: the load_dotenv() this
 # replaced was called bare, no path, which searches from the current
@@ -92,6 +100,16 @@ DOCUMENT_SUMMARY_QUERY_RE = re.compile(
 _session = None
 _incognito = False
 _last_turn_id = None   # tracks the most recently logged turn, for /flag
+
+# Process-local rolling context for pronoun resolution ("this article",
+# "that source") -- NOT memory-db logging, NOT persisted anywhere, just
+# enough recent Q&A text for _reference_terms_from_context() to resolve a
+# reference against, the same way ask.py folds in recent conversation
+# turns. This terminal loop previously had no notion of "recent context"
+# at all, which is a big part of why the old hardcoded "Tye" check existed
+# in the first place -- there was nothing else to check a reference against.
+_recent_turns: list = []
+_RECENT_TURNS_KEEP = 4
 
 
 def _new_session(incognito: bool = False):
@@ -178,10 +196,39 @@ def _close_session():
             pass
 
 
+def _record_recent_turn(question: str, answer: str):
+    """
+    Append to the rolling context buffer, skipped entirely in incognito
+    mode -- incognito means nothing about the conversation is retained
+    beyond the immediate turn, in-process buffer included, not just
+    memory-db logging.
+    """
+    if _incognito:
+        return
+    _recent_turns.append({"question": question or "", "answer": answer or ""})
+    del _recent_turns[:-_RECENT_TURNS_KEEP]
+
+
+def _recent_context_text() -> str:
+    """
+    Joined question+answer text from the last few turns, mirroring ask.py's
+    `recent_context = " ".join(m.get("content", "") for m in messages[-8:])`
+    -- same idea, just built from this loop's own (question, answer) pairs
+    instead of a shared messages list.
+    """
+    parts = []
+    for turn in _recent_turns:
+        parts.append(turn["question"])
+        parts.append(turn["answer"])
+    return " ".join(parts)
+
+
 def cmd_incognito():
     global _incognito
     _incognito = not _incognito
     _new_session(incognito=_incognito)
+    _recent_turns.clear()  # a clean slate either direction, same reasoning
+                           # as _record_recent_turn()'s own incognito check
     state = ("ON -- nothing from here forward is being logged" if _incognito
              else "OFF -- logging resumed")
     print(f"\nIncognito: {state}\n")
@@ -382,27 +429,59 @@ def _document_list_term(question: str) -> str:
     return match.group(1).strip(" \t\r\n\"'`“”‘’.?!")
 
 
-def _document_list_answer(question: str, project: str = None) -> dict:
+def _document_list_answer(question: str, project: str = None,
+                          context: str = "") -> dict:
+    """
+    "documents that reference X" -> exhaustive indexed-document scan.
+
+    The literal `term` the regex above extracts is often a pronoun ("this
+    article", "that source") rather than a real search term -- see ask.py's
+    _reference_terms_from_context() docstring for the full history (this
+    used to be a hardcoded "Tye" check here, then a generalized fix that
+    only ask.py's MCP path benefited from). Resolving it the same way here
+    keeps terminal sessions and MCP sessions behaving identically instead
+    of the terminal quietly reverting to the old broken behavior.
+    """
     term = _document_list_term(question)
     if not term:
         return None
 
-    sources = summarize.find_documents(term, project=project)
-    if not sources:
-        scope = f" in project '{project}'" if project else ""
+    terms = _reference_terms_from_context(term, context, project=project)
+    scope = f" in project '{project}'" if project else ""
+
+    if not terms:
+        answer = f"No indexed documents{scope} reference or mention '{term}'."
+        return {
+            "answer": answer,
+            "sources": [],
+            "routed_to": "document_list",
+            "routing_reason": "exhaustive indexed-document scan",
+            "ollama_draft": None,
+            "synthesized_by": "none",
+        }
+
+    matches = {}
+    for search_term in terms:
+        for source in summarize.find_documents(search_term, project=project):
+            matches.setdefault(source, set()).add(search_term)
+
+    if not matches:
         answer = f"No indexed documents{scope} reference or mention '{term}'."
     else:
-        scope = f" in project '{project}'" if project else ""
+        used_terms = ", ".join(terms)
+        resolved_note = (f" (resolved to: {used_terms})"
+                         if used_terms.lower() != term.lower() else "")
         lines = [
-            f"Indexed documents{scope} that reference or mention '{term}':",
+            f"Indexed documents{scope} that reference or mention "
+            f"'{term}'{resolved_note}:",
             "",
         ]
-        lines.extend(f"- {source}" for source in sources)
+        lines.extend(f"- {source}" for source in sorted(matches))
         answer = "\n".join(lines)
 
     return {
         "answer": answer,
-        "sources": sources,
+        "sources": sorted(matches),
         "routed_to": "document_list",
         "routing_reason": "exhaustive indexed-document scan",
         "ollama_draft": None,
@@ -633,7 +712,8 @@ def orchestrate(user_question: str, project: str = None) -> dict:
         return direct_summary
 
     timer.start_phase("document_scan")
-    direct_list = _document_list_answer(user_question, project=project)
+    direct_list = _document_list_answer(user_question, project=project,
+                                        context=_recent_context_text())
     if direct_list is not None:
         timer.end_phase({
             "sources": direct_list["sources"],
@@ -816,6 +896,9 @@ def cmd_project(arg: str = ""):
         CURRENT_PROJECT_SCOPE = safe
 
     _new_session(incognito=_incognito)
+    _recent_turns.clear()  # a reference to "this article" from the old
+                           # scope shouldn't resolve against a different
+                           # project's documents
     print(f"\nScope set to: {_scope_label()}\n")
 
 
@@ -836,6 +919,7 @@ def cmd_clear():
         db_client.delete_collection("my_documents")
         rag.collection = db_client.get_or_create_collection("my_documents")
         globals()["collection"] = rag.collection
+        _recent_turns.clear()  # old context may reference now-deleted docs
         print("Database cleared. Type /rescan to rebuild.\n")
     else:
         print("Cancelled.\n")
@@ -1040,6 +1124,7 @@ if __name__ == "__main__":
             print(f"\n--- Cached Answer ---\n{cached['answer']}")
             rerun = input("\nRe-run fresh instead? [y/N] ").strip().lower()
             if not rerun.startswith("y"):
+                _record_recent_turn(q, cached["answer"])
                 continue
 
         result = orchestrate(q, project=_active_project())
@@ -1056,6 +1141,7 @@ if __name__ == "__main__":
         # redaction is a display-time transform (see pii.py), so /flag notes
         # and future cache hits still reflect the real underlying answer.
         _log_turn(q, result["answer"], result["synthesized_by"], result["sources"])
+        _record_recent_turn(q, result["answer"])
 
         print(f"\n[Routed to: {result['routed_to']} | Synthesized by: {result['synthesized_by']}]")
 
