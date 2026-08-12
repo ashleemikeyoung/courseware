@@ -126,7 +126,10 @@ SUPPORTED_EXTENSIONS = set(filter(None, [
 # ---------------------------------------------------------------------------
 
 print("Loading embedding model...")
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+embedder = SentenceTransformer(
+    "sentence-transformers/all-MiniLM-L6-v2",
+    local_files_only=True,
+)
 
 CHROMA_PATH = str(BASE_DIR / "chroma_db")
 db_client = chromadb.PersistentClient(path=CHROMA_PATH)
