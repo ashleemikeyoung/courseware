@@ -33,6 +33,13 @@ from writer import (
 from config import ASK_MODEL
 import summarize
 
+# writer.py's import above already inserts memory/ onto sys.path (see its
+# own docstring for why), so this is safe here without repeating that setup.
+# Used by _reference_terms_from_context() to resolve a pronoun reference
+# ("this article") back to a real author via a source path already sitting
+# in the recent conversation, rather than guessing from prose alone.
+from memory_client import find_citation
+
 CHAT_SYSTEM = """You are a direct, capable assistant. Answer plainly, without
 preamble, without restating the question, and without padding for length.
 
@@ -115,6 +122,15 @@ SOURCE_PATH_RE = re.compile(
     r"(?:pdf|docx|md|txt|xlsx|pptx)\b"
 )
 QUOTED_PHRASE_RE = re.compile(r'"([^"]{12,160})"|“([^”]{12,160})”')
+# Catches "...authored by Jordyn C. Tye...", "article by Terzidou...", etc,
+# so a pronoun reference can still resolve to a name even when no file path
+# was ever quoted in the conversation -- only the author's name in prose.
+# Captures up to 3 capitalized words and the search term uses just the last
+# one (the surname), matching how citations.py/find_citation match authors.
+AUTHOR_MENTION_RE = re.compile(
+    r"\b(?:by|authored by|written by|article by|paper by)\s+"
+    r"((?:[A-Z][\w'.-]+\s*){1,3})"
+)
 
 
 def _is_degenerate(text: str) -> bool:
@@ -230,14 +246,60 @@ def _document_reference_term(question: str) -> str:
     return term
 
 
-def _reference_terms_from_context(term: str, context: str) -> list:
+def _reference_terms_from_context(term: str, context: str, project: str = None) -> list:
+    """
+    Resolve a generic pronoun reference ("this article", "that source") to
+    an actual search term. This used to be hardcoded to only recognize the
+    literal word "Tye" -- fine for the one test case that originally
+    surfaced this bug, but it meant every OTHER pronoun reference (a
+    different author, a future source) silently failed the identical way:
+    the regex-extracted term stayed "this article", the index has no file
+    literally titled "this article", and the scan came back empty even
+    though a real, indexed source was being discussed a few turns earlier.
+
+    General resolution order:
+      1. A file path already surfaced in the conversation (e.g. quoted in a
+         prior answer) -- look up its verified citation record and use the
+         author's surname. This is the strongest signal: it's not a guess
+         from prose, it's the actual source the conversation just named.
+      2. An explicit "by <Name>" / "authored by <Name>" mention in the
+         prose itself, for when the filename was never quoted but the
+         author's name was.
+      3. A quoted phrase, as before, as the last resort.
+
+    Never raises: a memory-db hiccup here should cost this fallback, not
+    the whole answer, same failure philosophy as citations.py's topup().
+    """
     clean = " ".join((term or "").lower().split())
     if clean and clean not in GENERIC_REFERENCE_TERMS:
         return [term]
 
     terms = []
-    if re.search(r"\bTye\b", context or "", re.IGNORECASE):
-        terms.append("Tye")
+
+    for match in SOURCE_PATH_RE.finditer(context or ""):
+        name = match.group(0).strip(" \t\r\n,.;:\"'`)]}")
+        try:
+            source = summarize.detect_file_reference(name, project=project)
+        except Exception:
+            source = None
+        if not source:
+            continue
+        try:
+            hits = find_citation(source=source)
+        except Exception:
+            hits = []
+        for hit in hits:
+            authors = (hit.get("authors") or "").strip()
+            if authors:
+                surname = authors.split(",")[0].split()[-1]
+                if surname:
+                    terms.append(surname)
+
+    if not terms:
+        for match in AUTHOR_MENTION_RE.finditer(context or ""):
+            name = match.group(1).strip()
+            if name:
+                terms.append(name.split()[-1])
 
     if not terms:
         for match in QUOTED_PHRASE_RE.finditer(context or ""):
@@ -394,7 +456,7 @@ def _document_reference_scan(question: str, registry: CitationRegistry,
     term = _document_reference_term(question)
     if not term:
         return []
-    terms = _reference_terms_from_context(term, context)
+    terms = _reference_terms_from_context(term, context, project=project)
     if not terms:
         return []
 
