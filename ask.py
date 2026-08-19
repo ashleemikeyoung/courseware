@@ -23,6 +23,7 @@ from pathlib import Path
 
 from writer import (
     CitationRegistry, gather_evidence, evidence_block, ask_ollama_chat,
+    ask_ollama_long,
     strip_thinking, CURRENT_PROJECT,
 )
 # The model this runs on defaults to config.py's ASK_MODEL now, rather than
@@ -64,6 +65,16 @@ library. When you are:
 If no source material is given, or none of it is relevant, answer from your
 own knowledge. Do not cite a marker under any circumstance if no source
 material was provided."""
+
+BIBLIOGRAPHY_SYSTEM = """You write concise annotated bibliography entries.
+Use only the provided document text. Do not invent authors, dates, journal
+names, findings, methods, or implications that are not present in the text.
+
+Write one polished paragraph of 90-140 words. Include the article's purpose,
+method or evidence type when available, main finding or argument, and relevance
+to the user's collection. Do not use bullets, numbered lists, markdown
+headings, or labels such as "Key Points." If the text is incomplete, say so
+briefly inside the paragraph."""
 
 MARKER_RE = re.compile(r"\[(C\d+)\]")
 # Same shape, loosened to also catch a degenerate response BEFORE prefixing,
@@ -134,6 +145,9 @@ DOCUMENT_INVENTORY_RE = re.compile(
 )
 FILENAME_LIST_RE = re.compile(
     r"\b(?:filenames?|file names?|sources?|paths?|list)\b", re.IGNORECASE
+)
+ANNOTATED_BIBLIOGRAPHY_RE = re.compile(
+    r"\b(?:annotated\s+)?bibliograph\w*\b", re.IGNORECASE
 )
 GENRE_ALIASES = {
     "article": "academic article",
@@ -352,6 +366,156 @@ def _answer_document_inventory(question: str, project: str = None):
         "grounded": True,
         "passages_offered": 0,
         "metrics": {"registry_inventory": True, "count": len(rows), "genre": genre},
+    }
+
+
+def _annotate_document(source: str, title: str, model: str,
+                       max_chars: int = 20000, echo: bool = False) -> dict:
+    """
+    Read one saved source and produce a bibliography-style annotation.
+
+    This intentionally does not reuse summarize_file()'s generic summary
+    prompt. An annotated bibliography has a different shape than a document
+    digest: purpose, method/evidence, finding/argument, and relevance in one
+    compact paragraph.
+    """
+    path = summarize.resolve_path(source)
+    if not path.exists():
+        raise FileNotFoundError(f"No such file: {path}")
+
+    text = summarize.rag.load_file(path)
+    if not text.strip():
+        raise ValueError(
+            f"Extraction found no text in {path.name} (empty, unsupported "
+            "type, or a scanned document with no OCR match)."
+        )
+
+    total_chars = len(text)
+    truncated = total_chars > max_chars
+    if truncated:
+        text = text[:max_chars]
+
+    prompt = (
+        f"Source filename: {source}\n"
+        f"Registry title/label: {title}\n\n"
+        f"Document text:\n\n{text}\n\n"
+        "Write the annotated bibliography annotation for this source."
+    )
+    annotation, metrics = ask_ollama_long(
+        prompt,
+        model,
+        BIBLIOGRAPHY_SYSTEM,
+        num_ctx=32768,
+        num_predict=220,
+        temperature=0.25,
+        think=False,
+        echo=echo,
+    )
+    annotation = re.sub(r"\s+", " ", strip_thinking(annotation)).strip()
+    return {
+        "annotation": annotation,
+        "chars": total_chars,
+        "truncated": truncated,
+        "metrics": metrics,
+    }
+
+
+def _answer_annotated_bibliography(question: str, model: str,
+                                   project: str = None, on_token=None,
+                                   echo: bool = False):
+    """
+    Generate bibliography-style annotations from the document registry.
+
+    "Generate an annotated bibliography of the articles" is a collection
+    operation over saved project files. Retrieval over chunks sees only a
+    few passages and can mistake one article for the entire requested set.
+    The registry is the source of truth for which files are the articles.
+    """
+    if not ANNOTATED_BIBLIOGRAPHY_RE.search(question or ""):
+        return None
+
+    genre = _inventory_genre(question)
+    if genre is None and re.search(r"\barticles?\b", question or "", re.I):
+        genre = "academic article"
+
+    exclude_genres = ["chat export"]
+    if genre == "academic article":
+        exclude_genres.extend([
+            "book chapter",
+            "dissertation",
+            "dissertation draft",
+            "dissertation template",
+            "research methods guide",
+        ])
+
+    try:
+        rows = search_document_uploads(
+            query=None,
+            project=project,
+            genre=genre,
+            exclude_genres=exclude_genres,
+            limit=500,
+        )
+    except Exception as e:
+        return {
+            "text": f"I couldn't query the document registry: {e}",
+            "evidence": {},
+            "grounded": False,
+            "passages_offered": 0,
+            "metrics": {"annotated_bibliography_error": str(e)},
+        }
+
+    if not rows:
+        label = genre or "document"
+        scope = f" in project {project}" if project else ""
+        return {
+            "text": f"I found 0 {label}s{scope} to annotate.",
+            "evidence": {},
+            "grounded": True,
+            "passages_offered": 0,
+            "metrics": {"annotated_bibliography": True, "count": 0},
+        }
+
+    lines = [
+        f"Annotated bibliography of {len(rows)} "
+        f"{genre or 'saved document'}"
+        f"{'' if len(rows) == 1 else 's'}:",
+        "",
+    ]
+    metrics = {
+        "annotated_bibliography": True,
+        "count": len(rows),
+        "genre": genre,
+        "elapsed_s": 0,
+    }
+    for i, row in enumerate(rows, 1):
+        source = row.get("source") or ""
+        title = row.get("label") or Path(source).stem
+        try:
+            result = _annotate_document(source, title, model=model, echo=echo)
+            annotation = result.get("annotation") or ""
+            metrics["elapsed_s"] += result.get("metrics", {}).get("elapsed_s", 0)
+            note = (
+                f" Only the first 20,000 of {result['chars']} extracted "
+                "characters were used."
+                if result.get("truncated") else ""
+            )
+        except (FileNotFoundError, ValueError) as e:
+            annotation = f"Could not generate an annotation: {e}"
+            note = ""
+
+        lines.append(f"## {i}. {title}")
+        lines.append(f"Source: {source}")
+        lines.append("")
+        lines.append(f"{annotation}{note}")
+        lines.append("")
+
+    return {
+        "text": "\n".join(lines).rstrip(),
+        "evidence": {},
+        "grounded": True,
+        "passages_offered": 0,
+        "metrics": metrics,
     }
 
 def _document_reference_term(question: str) -> str:
@@ -644,6 +808,12 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     recent_context = " ".join(m.get("content", "") for m in messages[-8:])
 
     if ground and last_user.strip():
+        bibliography = _answer_annotated_bibliography(
+            last_user, model=model, project=scope, on_token=on_token,
+            echo=echo)
+        if bibliography:
+            return bibliography
+
         inventory = _answer_document_inventory(last_user, project=scope)
         if inventory:
             return inventory
