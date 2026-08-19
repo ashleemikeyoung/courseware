@@ -19,6 +19,7 @@ the retrieval query, since that is what the person is actually asking right now.
 
 import re
 import time
+import html
 from pathlib import Path
 
 from writer import (
@@ -66,15 +67,22 @@ If no source material is given, or none of it is relevant, answer from your
 own knowledge. Do not cite a marker under any circumstance if no source
 material was provided."""
 
-BIBLIOGRAPHY_SYSTEM = """You write concise annotated bibliography entries.
+BIBLIOGRAPHY_SYSTEM = """You write APA 7 annotated bibliography entries.
 Use only the provided document text. Do not invent authors, dates, journal
 names, findings, methods, or implications that are not present in the text.
 
-Write one polished paragraph of 90-140 words. Include the article's purpose,
-method or evidence type when available, main finding or argument, and relevance
-to the user's collection. Do not use bullets, numbered lists, markdown
-headings, or labels such as "Key Points." If the text is incomplete, say so
-briefly inside the paragraph."""
+Return exactly two labeled fields:
+Reference: one APA 7 reference-list entry.
+Annotation: one polished paragraph of 90-140 words.
+
+For the reference, use APA 7 conventions: authors first, year in parentheses,
+article title in sentence case, journal/source title and volume/issue/pages
+when available, and DOI/URL when available. If required reference facts are
+missing from the text, use only what is available rather than inventing them.
+For the annotation, include the article's purpose, method or evidence type when
+available, main finding or argument, and relevance to the user's collection. Do
+not use bullets, numbered lists, markdown headings, or labels such as "Key
+Points" inside either field."""
 
 MARKER_RE = re.compile(r"\[(C\d+)\]")
 # Same shape, loosened to also catch a degenerate response BEFORE prefixing,
@@ -369,6 +377,39 @@ def _answer_document_inventory(question: str, project: str = None):
     }
 
 
+def _parse_bibliography_fields(text: str) -> dict:
+    cleaned = re.sub(r"\s+", " ", strip_thinking(text or "")).strip()
+    ref_match = re.search(
+        r"\bReference:\s*(.*?)(?:\s+Annotation:\s*|$)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    ann_match = re.search(r"\bAnnotation:\s*(.*)$", cleaned, flags=re.IGNORECASE)
+    reference = ref_match.group(1).strip() if ref_match else ""
+    annotation = ann_match.group(1).strip() if ann_match else ""
+    if not reference and cleaned:
+        parts = re.split(r"\s+(?=This article|This study|The article|The study)", cleaned, maxsplit=1)
+        reference = parts[0].strip()
+        annotation = parts[1].strip() if len(parts) > 1 else ""
+    return {"reference": reference, "annotation": annotation}
+
+
+def _citation_sort_key(row: dict) -> str:
+    source = row.get("source") or ""
+    title = row.get("label") or Path(source).stem
+    try:
+        hits = find_citation(source=source)
+    except Exception:
+        hits = []
+    if hits:
+        hit = hits[0]
+        authors = (hit.get("authors") or "").strip()
+        year = str(hit.get("publication_year") or "")
+        cited_title = (hit.get("title") or title or "").strip()
+        return f"{authors} {year} {cited_title}".lower()
+    return f"{title} {source}".lower()
+
+
 def _annotate_document(source: str, title: str, model: str,
                        max_chars: int = 20000, echo: bool = False) -> dict:
     """
@@ -411,9 +452,10 @@ def _annotate_document(source: str, title: str, model: str,
         think=False,
         echo=echo,
     )
-    annotation = re.sub(r"\s+", " ", strip_thinking(annotation)).strip()
+    fields = _parse_bibliography_fields(annotation)
     return {
-        "annotation": annotation,
+        "reference": fields["reference"],
+        "annotation": fields["annotation"],
         "chars": total_chars,
         "truncated": truncated,
         "metrics": metrics,
@@ -476,12 +518,8 @@ def _answer_annotated_bibliography(question: str, model: str,
             "metrics": {"annotated_bibliography": True, "count": 0},
         }
 
-    lines = [
-        f"Annotated bibliography of {len(rows)} "
-        f"{genre or 'saved document'}"
-        f"{'' if len(rows) == 1 else 's'}:",
-        "",
-    ]
+    rows = sorted(rows, key=_citation_sort_key)
+    lines = ["**Annotated Bibliography**", ""]
     metrics = {
         "annotated_bibliography": True,
         "count": len(rows),
@@ -493,21 +531,31 @@ def _answer_annotated_bibliography(question: str, model: str,
         title = row.get("label") or Path(source).stem
         try:
             result = _annotate_document(source, title, model=model, echo=echo)
+            reference = result.get("reference") or title
             annotation = result.get("annotation") or ""
             metrics["elapsed_s"] += result.get("metrics", {}).get("elapsed_s", 0)
             note = (
-                f" Only the first 20,000 of {result['chars']} extracted "
-                "characters were used."
+                f" [Annotation based on the first 20,000 of "
+                f"{result['chars']} extracted characters.]"
                 if result.get("truncated") else ""
             )
         except (FileNotFoundError, ValueError) as e:
+            reference = title
             annotation = f"Could not generate an annotation: {e}"
             note = ""
 
-        lines.append(f"## {i}. {title}")
-        lines.append(f"Source: {source}")
-        lines.append("")
-        lines.append(f"{annotation}{note}")
+        lines.append(
+            '<p style="padding-left: 0.5in; text-indent: -0.5in; '
+            f'margin-bottom: 0;">{html.escape(reference)}</p>'
+        )
+        lines.append(
+            '<p style="margin-left: 0.5in; margin-top: 0.5em;">'
+            f'{html.escape(annotation)}{html.escape(note)}</p>'
+        )
+        lines.append(
+            f'<p style="margin-left: 0.5in; font-size: 0.9em;">'
+            f'Source file: {html.escape(source)}</p>'
+        )
         lines.append("")
 
     return {
