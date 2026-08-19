@@ -40,6 +40,7 @@ try:
     from memory_client import (
         get_synopsis,
         record_synopsis,
+        record_document_upload_profile,
         search_citations,
         search_synopses,
     )
@@ -47,6 +48,7 @@ try:
 except Exception as e:
     get_synopsis = None
     record_synopsis = None
+    record_document_upload_profile = None
     search_citations = None
     search_synopses = None
     MEMORY_AVAILABLE = False
@@ -431,7 +433,7 @@ def index_file(file: Path, current_hash: str) -> int:
             for _ in chunks
         ],
     )
-    record_document_profile(rel, text, project)
+    record_document_profile(rel, text, project, source_hash=current_hash)
     return len(chunks)
 
 
@@ -483,7 +485,8 @@ def scan_documents(folder: str = None, verbose: bool = True) -> dict:
                 text = load_file(file)
                 if text.strip():
                     record_document_profile(
-                        filename, text, projects.project_of(filename))
+                        filename, text, projects.project_of(filename),
+                        source_hash=file_hash(file))
             summary["unchanged"].append(filename)
 
     for filename in indexed:
@@ -556,6 +559,168 @@ def _first_meaningful_lines(text: str, limit: int = 10) -> list:
     return lines
 
 
+
+def _derive_document_label(source: str, text: str) -> str:
+    lines = text.splitlines()[:100]
+    for line in lines:
+        match = re.match(r"(?:Thesis\s+)?Title\s*:\s*(.+)", line.strip(), re.I)
+        if match and len(match.group(1)) > 10:
+            return match.group(1).strip()[:180]
+    for line in lines:
+        clean = " ".join(line.strip().split())
+        if len(clean) > 20:
+            return clean[:180]
+    return Path(source).stem.replace("_", " ").replace("-", " ").strip()
+
+
+def _document_sections(text: str) -> dict:
+    keywords = [
+        "abstract", "introduction", "literature review", "method", "methods",
+        "methodology", "results", "findings", "discussion", "conclusion",
+        "recommendations", "implications", "limitations", "references",
+    ]
+    hits = {}
+    for i, line in enumerate(text.splitlines()):
+        clean = re.sub(r"[^a-z ]+", "", line.strip().lower())
+        clean = " ".join(clean.split())
+        for keyword in keywords:
+            if clean == keyword or clean.startswith(keyword + " "):
+                hits.setdefault(keyword, i)
+    return hits
+
+
+def _document_genres(source: str, text: str) -> list:
+    lower = f"{source}\n{text[:18000]}".lower()
+    suffix = Path(source).suffix.lower()
+    filename = Path(source).name.lower()
+    sections = set(_document_sections(text))
+    genres = []
+
+    def add(name: str):
+        if name not in genres:
+            genres.append(name)
+
+    # Container/export formats first. These may discuss many topics, but the
+    # file itself is not an article, legal filing, or interview protocol.
+    if any(term in lower[:4000] for term in [
+        "chat history", "conversation export", "conversation with claude",
+        "working session", "record of a research and writing session",
+    ]):
+        add("chat export")
+        return genres
+
+    if "sage research methods" in lower[:4000]:
+        add("research methods guide")
+        if "doi:" in lower[:4000] or "online isbn" in lower[:4000]:
+            add("book chapter")
+        return genres
+
+    if "dissertation template" in filename or "insert your dissertation title here" in lower[:4000]:
+        add("dissertation template")
+        return genres
+
+    coursework_terms = [
+        "topic4 dq", "topic5 dq", "topic6 dq", "topic7 dq", " dq1", " dq2",
+        "summary of the problem space", "population to be studied",
+        "variables (excluding demographics)", "discussion question",
+    ]
+    if any(term in lower[:6000] or term in filename for term in coursework_terms):
+        if "problem space" in lower[:6000] or "dissertation" in lower[:6000]:
+            add("dissertation draft")
+        else:
+            add("coursework")
+        return genres
+
+    if suffix == ".pptx" or "slide 1:" in lower or "speaker notes" in lower:
+        add("presentation")
+        return genres
+
+    if suffix in {".xlsx", ".xls"} or lower.startswith("sheet:"):
+        add("spreadsheet")
+        return genres
+
+    legal_filing_terms = [
+        "plaintiff", "defendant", "case no", "court", "pursuant to",
+        "complaint", "affidavit", "judgment", "dismissal", "certificate of service",
+    ]
+    if sum(1 for term in legal_filing_terms if term in lower) >= 3:
+        add("legal filing")
+
+    if any(term in lower for term in [
+        "settlement agreement", "quitclaim", "contract", "agreement made",
+        "executed agreement",
+    ]):
+        add("contract/agreement")
+
+    if (
+        "interview protocol" in lower[:8000]
+        or "interview questions" in lower[:8000]
+        or ("participant" in lower[:8000] and "interview" in lower[:8000])
+    ):
+        add("interview protocol")
+
+    academic_sections = {
+        "abstract", "introduction", "method", "methods", "methodology",
+        "results", "findings", "discussion", "conclusion", "references",
+    }
+    if (
+        "article" in lower[:2000]
+        and len(sections & academic_sections) >= 4
+        and ("doi:" in lower[:5000] or "journal" in lower[:5000] or "keywords" in lower[:5000])
+    ):
+        add("academic article")
+
+    if (
+        "literature review" in sections
+        or "systematic review" in lower[:8000]
+        or "scoping review" in lower[:8000]
+        or "review of the literature" in lower[:8000]
+    ):
+        add("literature review")
+
+    if suffix in {".md", ".txt"} or "meeting notes" in lower[:4000]:
+        add("notes")
+
+    return genres or ["document"]
+
+def _document_themes(text: str) -> list:
+    lower = text.lower()
+    themes = []
+
+    if any(term in lower for term in [
+        "ai adoption", "adoption of ai", "artificial intelligence adoption",
+        "generative ai adoption", "adopt generative ai", "ai usage",
+    ]):
+        themes.append("ai adoption")
+
+    if (
+        any(term in lower for term in ["training", "ease of use", "perceived usefulness"])
+        and any(term in lower for term in ["ai", "artificial intelligence", "technology", "system"])
+    ):
+        themes.append("training and usability")
+
+    if any(term in lower for term in [
+        "attorney-client privilege", "attorney client privilege",
+        "work-product privilege", "work product doctrine", "work product privilege",
+        "client confidentiality", "legal privilege", "privileged communication",
+    ]):
+        themes.append("legal privilege")
+
+    if any(term in lower for term in [
+        "methodology", "qualitative", "quantitative", "research design",
+        "interview protocol", "data collection", "sample size",
+    ]):
+        themes.append("research methods")
+
+    if any(term in lower for term in [
+        "risk governance", "ai governance", "compliance", "legal ethics",
+        "confidentiality", "privacy risk", "ethical risk", "risk management",
+    ]):
+        themes.append("risk and governance")
+
+    return themes
+
+
 def _document_profile(source: str, text: str, project: str) -> str:
     """
     Cheap document-level profile for memory.documents.
@@ -588,17 +753,35 @@ def _document_profile(source: str, text: str, project: str) -> str:
         parts.append("lead: " + lead)
     return "\n".join(parts)
 
-
-def record_document_profile(source: str, text: str, project: str):
+def record_document_profile(source: str, text: str, project: str,
+                            source_hash: str = None):
     if not MEMORY_AVAILABLE or record_synopsis is None:
         return
     try:
-        record_synopsis(
-            source,
-            _document_profile(source, text, project),
-            word_count=len(text.split()),
-            model="local-profile-v1",
-        )
+        synopsis = _document_profile(source, text, project)
+        if record_document_upload_profile is not None:
+            record_document_upload_profile(
+                source,
+                synopsis,
+                word_count=len(text.split()),
+                model="local-profile-v1",
+                source_hash=source_hash,
+                chars=len(text),
+                file_type=Path(source).suffix.lower().lstrip("."),
+                project=project,
+                label=_derive_document_label(source, text),
+                sections_found=_document_sections(text),
+                genres=_document_genres(source, text),
+                themes=_document_themes(text),
+                upload_state="project_file",
+            )
+        else:
+            record_synopsis(
+                source,
+                synopsis,
+                word_count=len(text.split()),
+                model="local-profile-v1",
+            )
     except Exception as e:
         print(f"  [Warning] could not record document profile for {source}: {e}")
 
@@ -643,7 +826,8 @@ def backfill_document_profiles(project: str = None, overwrite: bool = False) -> 
                     "error": "empty or unreadable",
                 })
                 continue
-            record_document_profile(source, text, projects.project_of(source))
+            record_document_profile(
+                source, text, projects.project_of(source), source_hash=file_hash(path))
             summary["profiled"].append(source)
         except Exception as e:
             summary["failed"].append({"source": source, "error": str(e)})

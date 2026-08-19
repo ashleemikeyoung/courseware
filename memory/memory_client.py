@@ -359,6 +359,99 @@ def record_synopsis(source: str, synopsis: str, word_count: int = None,
         client.close()
 
 
+
+def record_document_upload_profile(source: str, synopsis: str, word_count: int = None,
+                                   model: str = None, source_hash: str = None,
+                                   chars: int = None, file_type: str = None,
+                                   project: str = None, label: str = None,
+                                   sections_found: dict = None,
+                                   genres: list = None, themes: list = None,
+                                   upload_state: str = "project_file"):
+    """
+    Upsert upload-style metadata for a project document.
+
+    Any file saved under the documents root is treated like an uploaded source:
+    it gets durable document-level metadata in libSQL, while Chroma keeps the
+    chunk embeddings. JSON fields stay as text for libSQL portability.
+    """
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        client.execute(
+            "INSERT INTO documents "
+            "(source, synopsis, word_count, model, source_hash, chars, file_type, "
+            " project, label, sections_found, genres, themes, upload_state, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) "
+            "ON CONFLICT(source) DO UPDATE SET "
+            " synopsis=excluded.synopsis, word_count=excluded.word_count, "
+            " model=excluded.model, source_hash=excluded.source_hash, "
+            " chars=excluded.chars, file_type=excluded.file_type, "
+            " project=excluded.project, label=excluded.label, "
+            " sections_found=excluded.sections_found, genres=excluded.genres, "
+            " themes=excluded.themes, upload_state=excluded.upload_state, "
+            " indexed_at=datetime('now'), updated_at=datetime('now')",
+            [source, synopsis, word_count, model, source_hash, chars, file_type,
+             project, label, json.dumps(sections_found or {}),
+             json.dumps(genres or []), json.dumps(themes or []), upload_state],
+        )
+    finally:
+        client.close()
+
+
+def search_document_uploads(query: str = None, project: str = None,
+                            genre: str = None, theme: str = None,
+                            exclude_genres: list = None,
+                            limit: int = 50):
+    """Query upload-style document metadata from libSQL."""
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        clauses = []
+        params = []
+        if query:
+            like = f"%{query.lower()}%"
+            fields = ["source", "label", "synopsis", "genres", "themes"]
+            clauses.append("(" + " OR ".join(
+                f"lower(coalesce({field}, '')) LIKE ?" for field in fields
+            ) + ")")
+            params.extend([like] * len(fields))
+        if project:
+            clauses.append("project = ?")
+            params.append(project)
+        if genre:
+            clauses.append("lower(coalesce(genres, '')) LIKE ?")
+            params.append(f"%{genre.lower()}%")
+        if theme:
+            clauses.append("lower(coalesce(themes, '')) LIKE ?")
+            params.append(f"%{theme.lower()}%")
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        sql = (
+            "SELECT source, project, label, file_type, chars, word_count, "
+            "source_hash, sections_found, genres, themes, synopsis, "
+            "upload_state, indexed_at, updated_at FROM documents"
+            + where + " ORDER BY coalesce(updated_at, indexed_at) DESC LIMIT ?"
+        )
+        params.append(limit)
+        result = client.execute(sql, params)
+        rows = [dict(zip(result.columns, row)) for row in result.rows]
+        for row in rows:
+            for field, default in (("sections_found", {}), ("genres", []), ("themes", [])):
+                try:
+                    row[field] = json.loads(row[field]) if row.get(field) else default
+                except Exception:
+                    row[field] = default
+        if genre:
+            rows = [r for r in rows if genre.lower() in [g.lower() for g in r.get("genres", [])]]
+        if theme:
+            rows = [r for r in rows if theme.lower() in [t.lower() for t in r.get("themes", [])]]
+        excluded = {g.lower() for g in (exclude_genres or [])}
+        if excluded:
+            rows = [
+                r for r in rows
+                if not excluded.intersection({g.lower() for g in r.get("genres", [])})
+            ]
+        return rows
+    finally:
+        client.close()
+
 def get_synopsis(source: str):
     client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
     try:

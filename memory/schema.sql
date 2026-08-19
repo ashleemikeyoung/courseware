@@ -190,6 +190,26 @@ CREATE TABLE IF NOT EXISTS documents (
 -- summaries. Unlike `documents.synopsis`, these are user-facing summaries
 -- produced by summarize.py. They are keyed by source hash so editing a file
 -- automatically misses the cache and records a fresh summary.
+
+-- Upload-style document metadata. Any file saved under documents/<project>/ is
+-- treated as an uploaded document for indexing and discovery: durable source,
+-- extracted-text stats, label, sections, lightweight genres/themes, and state.
+-- Kept as ALTER TABLE statements so existing memory databases upgrade in place.
+ALTER TABLE documents ADD COLUMN source_hash TEXT;
+ALTER TABLE documents ADD COLUMN chars INTEGER;
+ALTER TABLE documents ADD COLUMN file_type TEXT;
+ALTER TABLE documents ADD COLUMN project TEXT;
+ALTER TABLE documents ADD COLUMN label TEXT;
+ALTER TABLE documents ADD COLUMN sections_found TEXT; -- JSON object: section -> line number
+ALTER TABLE documents ADD COLUMN genres TEXT;          -- JSON array
+ALTER TABLE documents ADD COLUMN themes TEXT;          -- JSON array
+ALTER TABLE documents ADD COLUMN upload_state TEXT NOT NULL DEFAULT 'project_file';
+ALTER TABLE documents ADD COLUMN updated_at TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project);
+CREATE INDEX IF NOT EXISTS idx_documents_label ON documents(label);
+CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at);
+
 CREATE TABLE IF NOT EXISTS document_summaries (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     source         TEXT NOT NULL,

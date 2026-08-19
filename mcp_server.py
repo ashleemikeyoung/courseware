@@ -415,6 +415,29 @@ async def list_tools() -> list[Tool]:
                 "required": ["workset"],
             },
         ),
+        Tool(
+            name="query_document_registry",
+            description=(
+                "Query libSQL document metadata for saved project files treated as uploaded documents. "
+                "Searches labels, synopses, genres, and themes without using Chroma."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Text to search for."},
+                    "project": {"type": "string", "description": "Optional project folder."},
+                    "genre": {"type": "string", "description": "Optional genre filter."},
+                    "theme": {"type": "string", "description": "Optional theme filter."},
+                    "exclude_genres": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional genres to omit, e.g. ['chat export'].",
+                    },
+                    "limit": {"type": "integer", "default": 20},
+                },
+                "required": [],
+            },
+        ),
     ]
 
 
@@ -467,9 +490,39 @@ async def call_tool(name: str, arguments: dict) -> CallToolResult:
     elif name == "synthesize_workset":
         return await handle_synthesize_workset(arguments or {})
 
+    elif name == "query_document_registry":
+        return await handle_query_document_registry(arguments or {})
+
     return CallToolResult(
         content=[TextContent(type="text", text=f"Unknown tool: {name}")]
     )
+
+
+async def handle_query_document_registry(arguments: dict) -> CallToolResult:
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "memory"))
+        from memory_client import search_document_uploads
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Could not load document registry: {e}")]
+        )
+    try:
+        rows = search_document_uploads(
+            query=(arguments.get("query") or "").strip() or None,
+            project=(arguments.get("project") or "").strip() or None,
+            genre=(arguments.get("genre") or "").strip() or None,
+            theme=(arguments.get("theme") or "").strip() or None,
+            exclude_genres=arguments.get("exclude_genres") or [],
+            limit=int(arguments.get("limit", 20) or 20),
+        )
+        return CallToolResult(
+            content=[TextContent(type="text", text=json.dumps({"documents": rows}, indent=2))]
+        )
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Document registry query error: {e}")]
+        )
 
 
 async def handle_search(arguments: dict) -> CallToolResult:
