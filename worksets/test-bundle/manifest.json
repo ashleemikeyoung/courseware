@@ -1,0 +1,30 @@
+{
+  "name": "test-bundle",
+  "description": "smoke test",
+  "docs": [
+    {
+      "doc_id": "D1",
+      "filename": "note.md",
+      "original_path": "",
+      "stored_path": "/Users/ash/Development/RAG/worksets/test-bundle/files/note.md",
+      "extracted_path": "/Users/ash/Development/RAG/worksets/test-bundle/extracted/D1.txt",
+      "label": "This is a test document about AI adoption.",
+      "chars": 95,
+      "hash": "202f8dff70bdc78826769a41e2a4f1e8",
+      "has_text_layer": null,
+      "sections_found": {
+        "abstract": 0,
+        "conclusion": 2
+      },
+      "summary": "**Summary:**\n\n*   **Topic:** AI adoption.\n*   **Abstract:** This is a test document about AI adoption.\n*   **Conclusion:** AI adoption depends on training.",
+      "summary_metrics": {
+        "model": "gemma4:e4b",
+        "response_tokens": 40,
+        "tokens_per_second": 99.4,
+        "prompt_tokens": 99,
+        "elapsed_s": 5.18
+      },
+      "error": ""
+    }
+  ]
+}

@@ -289,6 +289,132 @@ async def list_tools() -> list[Tool]:
                 "required": ["query"],
             },
         ),
+        Tool(
+            name="create_workset",
+            description=(
+                "Create or reopen a named attachment workset. A workset is a "
+                "temporary bundle of files/text for Claude-style attachment "
+                "analysis: summarize each item, then synthesize across exactly "
+                "that bundle without adding it to the permanent documents index."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Short workset name, e.g. 'august-articles'.",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional note about what this bundle is for.",
+                    },
+                },
+                "required": ["name"],
+            },
+        ),
+        Tool(
+            name="list_worksets",
+            description=(
+                "List attachment worksets and the files currently in each bundle."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="ingest_workset_file",
+            description=(
+                "Copy a local file into an attachment workset and extract its text "
+                "for full-document summarization/synthesis. Supports the same file "
+                "types as the RAG extractor, with pdftotext-first extraction for PDFs. "
+                "This does not add the file to the permanent Chroma documents index."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "workset": {
+                        "type": "string",
+                        "description": "Name of the workset to add this file to.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute path to the local file to ingest.",
+                    },
+                },
+                "required": ["workset", "path"],
+            },
+        ),
+        Tool(
+            name="ingest_workset_text",
+            description=(
+                "Add already-extracted text to an attachment workset. Use this when "
+                "the client has attachment text but not a local file path."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "workset": {
+                        "type": "string",
+                        "description": "Name of the workset to add this text to.",
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": "Display filename for the text item.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Full extracted text/content.",
+                    },
+                },
+                "required": ["workset", "filename", "content"],
+            },
+        ),
+        Tool(
+            name="summarize_workset",
+            description=(
+                "Summarize every document in an attachment workset from full extracted "
+                "text. Long documents are summarized in parts and then combined. "
+                "Summaries are saved in the workset manifest for later synthesis."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "workset": {
+                        "type": "string",
+                        "description": "Name of the workset to summarize.",
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "Regenerate summaries even if cached.",
+                        "default": False,
+                    },
+                },
+                "required": ["workset"],
+            },
+        ),
+        Tool(
+            name="synthesize_workset",
+            description=(
+                "Synthesize across all documents in an attachment workset. Produces "
+                "shared themes, tensions, unique contributions, gaps, and next steps, "
+                "citing workset document IDs like [D1]."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "workset": {
+                        "type": "string",
+                        "description": "Name of the workset to synthesize.",
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": (
+                            "Optional synthesis question or focus, e.g. 'compare "
+                            "methods and findings'."
+                        ),
+                    },
+                },
+                "required": ["workset"],
+            },
+        ),
     ]
 
 
@@ -322,6 +448,24 @@ async def call_tool(name: str, arguments: dict) -> CallToolResult:
 
     elif name == "summarize_documents":
         return await handle_summarize_documents(arguments or {})
+
+    elif name == "create_workset":
+        return await handle_create_workset(arguments or {})
+
+    elif name == "list_worksets":
+        return await handle_list_worksets()
+
+    elif name == "ingest_workset_file":
+        return await handle_ingest_workset_file(arguments or {})
+
+    elif name == "ingest_workset_text":
+        return await handle_ingest_workset_text(arguments or {})
+
+    elif name == "summarize_workset":
+        return await handle_summarize_workset(arguments or {})
+
+    elif name == "synthesize_workset":
+        return await handle_synthesize_workset(arguments or {})
 
     return CallToolResult(
         content=[TextContent(type="text", text=f"Unknown tool: {name}")]
@@ -736,6 +880,149 @@ async def handle_summarize_documents(arguments: dict) -> CallToolResult:
     return CallToolResult(
         content=[TextContent(type="text", text="\n".join(parts))]
     )
+
+
+def _json_result(payload: dict) -> CallToolResult:
+    return CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(payload, indent=2))]
+    )
+
+
+def _load_worksets():
+    try:
+        import worksets
+        return worksets, None
+    except Exception as e:
+        return None, CallToolResult(
+            content=[TextContent(type="text", text=f"Could not load worksets.py: {e}")]
+        )
+
+
+async def handle_create_workset(arguments: dict) -> CallToolResult:
+    worksets, error = _load_worksets()
+    if error:
+        return error
+    name = (arguments.get("name") or "").strip()
+    description = (arguments.get("description") or "").strip()
+    if not name:
+        return CallToolResult(
+            content=[TextContent(type="text", text="Error: name cannot be empty")]
+        )
+    try:
+        return _json_result(worksets.create_workset(name, description=description))
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Create workset error: {e}")]
+        )
+
+
+async def handle_list_worksets() -> CallToolResult:
+    worksets, error = _load_worksets()
+    if error:
+        return error
+    try:
+        rows = worksets.list_worksets()
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"List worksets error: {e}")]
+        )
+    if not rows:
+        return CallToolResult(
+            content=[TextContent(type="text", text="No worksets found.")]
+        )
+    return _json_result({"worksets": rows})
+
+
+async def handle_ingest_workset_file(arguments: dict) -> CallToolResult:
+    worksets, error = _load_worksets()
+    if error:
+        return error
+    name = (arguments.get("workset") or "").strip()
+    path = (arguments.get("path") or "").strip()
+    if not name or not path:
+        return CallToolResult(
+            content=[TextContent(type="text", text="Error: workset and path are required.")]
+        )
+    try:
+        doc = worksets.ingest_file(name, path)
+        return _json_result({"ingested": doc})
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Workset file ingest error: {e}")]
+        )
+
+
+async def handle_ingest_workset_text(arguments: dict) -> CallToolResult:
+    worksets, error = _load_worksets()
+    if error:
+        return error
+    name = (arguments.get("workset") or "").strip()
+    filename = (arguments.get("filename") or "").strip()
+    content = arguments.get("content") or ""
+    if not name or not filename:
+        return CallToolResult(
+            content=[TextContent(type="text", text="Error: workset and filename are required.")]
+        )
+    if not content.strip():
+        return CallToolResult(
+            content=[TextContent(type="text", text="Error: content cannot be empty.")]
+        )
+    try:
+        doc = worksets.ingest_text(name, filename, content)
+        return _json_result({"ingested": doc})
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Workset text ingest error: {e}")]
+        )
+
+
+async def handle_summarize_workset(arguments: dict) -> CallToolResult:
+    worksets, error = _load_worksets()
+    if error:
+        return error
+    name = (arguments.get("workset") or "").strip()
+    force = bool(arguments.get("force", False))
+    if not name:
+        return CallToolResult(
+            content=[TextContent(type="text", text="Error: workset cannot be empty.")]
+        )
+    try:
+        result = worksets.summarize_workset(name, force=force)
+        return _json_result(result)
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Summarize workset error: {e}")]
+        )
+
+
+async def handle_synthesize_workset(arguments: dict) -> CallToolResult:
+    worksets, error = _load_worksets()
+    if error:
+        return error
+    name = (arguments.get("workset") or "").strip()
+    question = (arguments.get("question") or "").strip()
+    if not name:
+        return CallToolResult(
+            content=[TextContent(type="text", text="Error: workset cannot be empty.")]
+        )
+    try:
+        result = worksets.synthesize_workset(name, question=question)
+        lines = [
+            f"Workset: {result['name']}",
+            "",
+            result["synthesis"],
+            "",
+            "Documents:",
+        ]
+        for doc in result["documents"]:
+            lines.append(f"  [{doc['doc_id']}] {doc['label']} ({doc['filename']})")
+        return CallToolResult(
+            content=[TextContent(type="text", text="\n".join(lines))]
+        )
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Synthesize workset error: {e}")]
+        )
 
 
 # ---------------------------------------------------------------------------
