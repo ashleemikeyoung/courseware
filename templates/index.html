@@ -344,6 +344,16 @@ textarea{resize:vertical;min-height:74px}
 .chatmsg .bubble{white-space:pre-wrap}
 .chatmsg .bubble p{margin:0 0 1em}
 .chatmsg .bubble p:last-child{margin-bottom:0}
+.chatmsg .bubble.bibliography p{margin:0 0 .9em}
+.chatmsg .bubble.bibliography p:first-child{
+  font-weight:700;margin-bottom:1.25em;
+}
+.chatmsg .bubble.bibliography p:nth-child(2n+2){
+  padding-left:1.5rem;text-indent:-1.5rem;margin-top:1.15em;margin-bottom:.45em;
+}
+.chatmsg .bubble.bibliography p:nth-child(2n+3){
+  margin-left:1.5rem;margin-bottom:1.25em;
+}
 .chatmsg .bubble.pending::after{
   content:"";display:inline-block;width:.5em;height:1em;margin-left:2px;
   background:var(--ink-faint);vertical-align:text-bottom;
@@ -1247,6 +1257,8 @@ function chatBubble(m){
   const box = el("div", "chatmsg " + m.role);
   box.appendChild(el("div", "who", m.role === "user" ? "you" : "assistant"));
   const bubble = el("div", "bubble" + (m.pending ? " pending" : ""));
+  bubble.classList.toggle("bibliography",
+    m.role === "assistant" && isAnnotatedBibliography(m.content || ""));
   bubble.innerHTML = m.role === "user"
     ? esc(m.content).replace(/\n/g, "<br>")
     : mdToHtml(m.content || "", {showCitations: STATE.showContext});
@@ -1268,8 +1280,13 @@ function appendToLastBubble(text){
   const last = col.lastElementChild;
   const bubble = last && last.querySelector(".bubble");
   if (!bubble) return renderChat();
-  bubble.textContent = text;
+  bubble.classList.toggle("bibliography", isAnnotatedBibliography(text));
+  bubble.innerHTML = mdToHtml(text || "", {showCitations: STATE.showContext});
   window.scrollTo(0, document.body.scrollHeight);
+}
+
+function isAnnotatedBibliography(text){
+  return /^\s*(?:\*\*)?Annotated Bibliography\b/i.test(text || "");
 }
 
 function autoResize(ta){
