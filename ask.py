@@ -38,7 +38,7 @@ import summarize
 # Used by _reference_terms_from_context() to resolve a pronoun reference
 # ("this article") back to a real author via a source path already sitting
 # in the recent conversation, rather than guessing from prose alone.
-from memory_client import find_citation
+from memory_client import find_citation, search_document_uploads
 
 CHAT_SYSTEM = """You are a direct, capable assistant. Answer plainly, without
 preamble, without restating the question, and without padding for length.
@@ -127,6 +127,43 @@ QUOTED_PHRASE_RE = re.compile(r'"([^"]{12,160})"|“([^”]{12,160})”')
 # was ever quoted in the conversation -- only the author's name in prose.
 # Captures up to 3 capitalized words and the search term uses just the last
 # one (the surname), matching how citations.py/find_citation match authors.
+DOCUMENT_INVENTORY_RE = re.compile(
+    r"\b(?:how many|list|what|which|show)\b.*"
+    r"\b(?:articles?|documents?|files?|sources?|book chapters?|presentations?)\b",
+    re.IGNORECASE,
+)
+FILENAME_LIST_RE = re.compile(
+    r"\b(?:filenames?|file names?|sources?|paths?|list)\b", re.IGNORECASE
+)
+GENRE_ALIASES = {
+    "article": "academic article",
+    "articles": "academic article",
+    "academic article": "academic article",
+    "academic articles": "academic article",
+    "book chapter": "book chapter",
+    "book chapters": "book chapter",
+    "presentation": "presentation",
+    "presentations": "presentation",
+    "chat export": "chat export",
+    "chat exports": "chat export",
+    "coursework": "coursework",
+    "dissertation draft": "dissertation draft",
+    "dissertation drafts": "dissertation draft",
+    "dissertation": "dissertation",
+    "dissertations": "dissertation",
+    "thesis": "dissertation",
+    "legal filing": "legal filing",
+    "legal filings": "legal filing",
+    "contract": "contract/agreement",
+    "contracts": "contract/agreement",
+    "agreement": "contract/agreement",
+    "agreements": "contract/agreement",
+    "interview protocol": "interview protocol",
+    "interview protocols": "interview protocol",
+    "research methods guide": "research methods guide",
+    "research methods guides": "research methods guide",
+}
+
 AUTHOR_MENTION_RE = re.compile(
     r"\b(?:by|authored by|written by|article by|paper by)\s+"
     r"((?:[A-Z][\w'.-]+\s*){1,3})"
@@ -231,6 +268,91 @@ def _trim_history(messages: list, max_words: int = 3000) -> list:
         total += w
     return list(reversed(kept))
 
+
+
+def _inventory_genre(question: str) -> str:
+    q = " ".join((question or "").lower().split())
+    for phrase in sorted(GENRE_ALIASES, key=len, reverse=True):
+        if re.search(r"\b" + re.escape(phrase) + r"\b", q):
+            return GENRE_ALIASES[phrase]
+    if re.search(r"\bfiles?\b|\bdocuments?\b|\bsources?\b", q):
+        return None
+    return None
+
+
+def _answer_document_inventory(question: str, project: str = None):
+    """
+    Answer count/list questions from libSQL document metadata.
+
+    Questions like "How many articles are there and what are their filenames?"
+    are inventory questions, not content-retrieval questions. Chunk retrieval
+    can find a paper that says "71 articles were reviewed" and miss the local
+    file list entirely; the registry is the source of truth for saved files.
+    """
+    if not DOCUMENT_INVENTORY_RE.search(question or ""):
+        return None
+
+    genre = _inventory_genre(question)
+    # Avoid treating an in-article phrase like "articles screened" as an
+    # inventory request unless the user asks for filenames/list/count shape.
+    if genre and not (FILENAME_LIST_RE.search(question or "") or re.search(r"\bhow many\b", question or "", re.I)):
+        return None
+
+    exclude_genres = ["chat export"]
+    if genre == "academic article":
+        exclude_genres.extend([
+            "book chapter",
+            "dissertation",
+            "dissertation draft",
+            "dissertation template",
+            "research methods guide",
+        ])
+
+    try:
+        rows = search_document_uploads(
+            query=None,
+            project=project,
+            genre=genre,
+            exclude_genres=exclude_genres,
+            limit=500,
+        )
+    except Exception as e:
+        return {
+            "text": f"I couldn't query the document registry: {e}",
+            "evidence": {},
+            "grounded": False,
+            "passages_offered": 0,
+            "metrics": {"registry_inventory_error": str(e)},
+        }
+
+    label = genre or "saved document"
+    plural = label if label.endswith("s") else label + "s"
+    if not rows:
+        scope = f" in project {project}" if project else ""
+        return {
+            "text": f"I found 0 {plural}{scope} in the document registry.",
+            "evidence": {},
+            "grounded": True,
+            "passages_offered": 0,
+            "metrics": {"registry_inventory": True, "count": 0},
+        }
+
+    lines = [f"I found {len(rows)} {plural}:", ""]
+    for row in rows:
+        source = row.get("source") or ""
+        title = row.get("label") or Path(source).name
+        genres = ", ".join(row.get("genres") or [])
+        suffix = f" — {title}" if title and title != Path(source).name else ""
+        meta = f" ({genres})" if genres and not genre else ""
+        lines.append(f"- {source}{suffix}{meta}")
+
+    return {
+        "text": "\n".join(lines),
+        "evidence": {},
+        "grounded": True,
+        "passages_offered": 0,
+        "metrics": {"registry_inventory": True, "count": len(rows), "genre": genre},
+    }
 
 def _document_reference_term(question: str) -> str:
     match = DOCUMENT_REFERENCE_SCAN_RE.search(question or "")
@@ -520,6 +642,11 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     scope = project or CURRENT_PROJECT
     last_user = messages[-1]["content"]
     recent_context = " ".join(m.get("content", "") for m in messages[-8:])
+
+    if ground and last_user.strip():
+        inventory = _answer_document_inventory(last_user, project=scope)
+        if inventory:
+            return inventory
 
     # A direct file reference ("summarize GCU/EBSCO-FullText-07_26_2026.pdf")
     # names one specific file, not a topic -- gather_evidence() below would

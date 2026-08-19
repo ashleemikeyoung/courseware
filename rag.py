@@ -619,6 +619,55 @@ def _document_genres(source: str, text: str) -> list:
         add("dissertation template")
         return genres
 
+    dissertation_markers = [
+        "a dissertation presented to",
+        "a dissertation submitted",
+        "doctoral dissertation",
+        "doctor of philosophy",
+        "degree of doctor",
+        "dissertation committee",
+        "proquest dissertations",
+    ]
+    if (
+        "dissertation" in filename
+        or any(term in lower[:10000] for term in dissertation_markers)
+    ):
+        add("dissertation")
+        return genres
+
+    research_book_filename_terms = [
+        "an-applied-guide-to-research-designs",
+        "an-introduction-to-qualitative-research",
+        "constructing-social-research",
+        "doing-quantitative-research",
+        "introducing-qualitative-research",
+        "qualitative-data-analysis",
+        "qualitative-data-collection-tools",
+        "quantitative-research-in-education",
+        "research-methods-and-statistics",
+        "research-with-children",
+        "social-research-theory-methods",
+        "understanding-and-evaluating-research",
+        "qualitativeresearchag",
+        "sharanb.merriam",
+    ]
+    research_book_head_markers = [
+        "library of congress cataloging",
+        "all rights reserved. may not be reproduced",
+        "sage publications",
+        "sage research methods",
+        "isbn",
+    ]
+    if suffix == ".pdf" and (
+        any(term in filename for term in research_book_filename_terms)
+        or (
+            sum(1 for term in research_book_head_markers if term in lower[:8000]) >= 2
+            and "research" in lower[:8000]
+        )
+    ):
+        add("research methods guide")
+        return genres
+
     coursework_terms = [
         "topic4 dq", "topic5 dq", "topic6 dq", "topic7 dq", " dq1", " dq2",
         "summary of the problem space", "population to be studied",
@@ -639,17 +688,41 @@ def _document_genres(source: str, text: str) -> list:
         add("spreadsheet")
         return genres
 
+    academic_sections = {
+        "abstract", "introduction", "method", "methods", "methodology",
+        "results", "findings", "discussion", "conclusion", "references",
+    }
+    head = lower[:8000]
+    article_filename = bool(re.match(r"^\d+-\d+-\d+-", filename))
+    article_filename = article_filename or any(token in filename for token in [
+        "ebsco-fulltext", "s2.0-", "feduc-", "societies-", "jmir_",
+        "determinants_of", "div-class-title", "sc-96", "ej",
+    ])
+    scholarly_markers = [
+        "doi:", "journal", " vol.", " volume ", " issue ", "abstract",
+        "keywords", "received", "accepted", "publication year", "publisher information",
+        "type original research", "original research", "article",
+    ]
+    marker_hits = sum(1 for marker in scholarly_markers if marker in head)
+    if suffix == ".pdf" and (
+        (article_filename and marker_hits >= 1)
+        or marker_hits >= 3
+        or len(sections & academic_sections) >= 5
+    ):
+        add("academic article")
+
     legal_filing_terms = [
         "plaintiff", "defendant", "case no", "court", "pursuant to",
         "complaint", "affidavit", "judgment", "dismissal", "certificate of service",
     ]
-    if sum(1 for term in legal_filing_terms if term in lower) >= 3:
+    if "academic article" not in genres and sum(1 for term in legal_filing_terms if term in head) >= 3:
         add("legal filing")
 
-    if any(term in lower for term in [
+    agreement_head_terms = [
         "settlement agreement", "quitclaim", "contract", "agreement made",
-        "executed agreement",
-    ]):
+        "executed agreement", "this agreement", "release and settlement",
+    ]
+    if "academic article" not in genres and any(term in head for term in agreement_head_terms):
         add("contract/agreement")
 
     if (
@@ -658,17 +731,6 @@ def _document_genres(source: str, text: str) -> list:
         or ("participant" in lower[:8000] and "interview" in lower[:8000])
     ):
         add("interview protocol")
-
-    academic_sections = {
-        "abstract", "introduction", "method", "methods", "methodology",
-        "results", "findings", "discussion", "conclusion", "references",
-    }
-    if (
-        "article" in lower[:2000]
-        and len(sections & academic_sections) >= 4
-        and ("doi:" in lower[:5000] or "journal" in lower[:5000] or "keywords" in lower[:5000])
-    ):
-        add("academic article")
 
     if (
         "literature review" in sections
