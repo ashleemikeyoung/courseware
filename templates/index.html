@@ -927,7 +927,7 @@ function stripHiddenCitations(md){
     .replace(/\s+([,.;:!?])/g, "$1")
     .replace(/,\s*([.;:!?])/g, "$1")
     .replace(/\s+(?:and|or)\s*([.;:!?])/gi, "$1")
-    .replace(/\s{2,}/g, " ");
+    .replace(/[ \t]{2,}/g, " ");
 }
 
 function mdToHtml(md, opts = {}){
