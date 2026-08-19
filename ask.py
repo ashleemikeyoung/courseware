@@ -75,7 +75,7 @@ names, findings, methods, or implications that are not present in the text.
 
 Return exactly two labeled fields:
 Reference: one APA 7 reference-list entry.
-Annotation: one polished paragraph of 90-140 words.
+Annotation: one polished paragraph of 75-125 words.
 
 For the reference, use APA 7 conventions: authors first, year in parentheses,
 article title in sentence case, journal/source title and volume/issue/pages
@@ -84,7 +84,7 @@ missing from the text, use only what is available rather than inventing them.
 For the annotation, include the article's purpose, method or evidence type when
 available, main finding or argument, and relevance to the user's collection. Do
 not use bullets, numbered lists, markdown headings, or labels such as "Key
-Points" inside either field."""
+Points" inside either field. End the annotation with a complete sentence."""
 
 MARKER_RE = re.compile(r"\[(C\d+)\]")
 # Same shape, loosened to also catch a degenerate response BEFORE prefixing,
@@ -420,7 +420,7 @@ def _citation_sort_key(row: dict) -> str:
 
 
 def _annotate_document(source: str, title: str, model: str,
-                       max_chars: int = 20000, style: str = "apa7",
+                       max_chars: int = 20000, style: str = "apa7-v2",
                        echo: bool = False) -> dict:
     """
     Read one saved source and produce a bibliography-style annotation.
@@ -472,16 +472,18 @@ def _annotate_document(source: str, title: str, model: str,
         model,
         BIBLIOGRAPHY_SYSTEM,
         num_ctx=32768,
-        num_predict=220,
+        num_predict=420,
         temperature=0.25,
         think=False,
         echo=echo,
     )
     fields = _parse_bibliography_fields(annotation)
+    complete = bool(re.search(r"[.!?][\"')\]]*$", fields["annotation"]))
     try:
-        record_bibliography_entry(
-            source, source_hash, model, style, max_chars, total_chars,
-            truncated, fields["reference"], fields["annotation"])
+        if complete:
+            record_bibliography_entry(
+                source, source_hash, model, style, max_chars, total_chars,
+                truncated, fields["reference"], fields["annotation"])
     except Exception:
         pass
     return {
