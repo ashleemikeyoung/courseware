@@ -39,7 +39,10 @@ import summarize
 # Used by _reference_terms_from_context() to resolve a pronoun reference
 # ("this article") back to a real author via a source path already sitting
 # in the recent conversation, rather than guessing from prose alone.
-from memory_client import find_citation, search_document_uploads
+from memory_client import (
+    find_citation, search_document_uploads,
+    get_bibliography_entry, record_bibliography_entry,
+)
 
 CHAT_SYSTEM = """You are a direct, capable assistant. Answer plainly, without
 preamble, without restating the question, and without padding for length.
@@ -417,7 +420,8 @@ def _citation_sort_key(row: dict) -> str:
 
 
 def _annotate_document(source: str, title: str, model: str,
-                       max_chars: int = 20000, echo: bool = False) -> dict:
+                       max_chars: int = 20000, style: str = "apa7",
+                       echo: bool = False) -> dict:
     """
     Read one saved source and produce a bibliography-style annotation.
 
@@ -429,6 +433,21 @@ def _annotate_document(source: str, title: str, model: str,
     path = summarize.resolve_path(source)
     if not path.exists():
         raise FileNotFoundError(f"No such file: {path}")
+
+    source_hash = summarize.rag.file_hash(path)
+    try:
+        cached = get_bibliography_entry(
+            source, source_hash, model, style, max_chars)
+    except Exception:
+        cached = None
+    if cached:
+        return {
+            "reference": cached.get("reference") or "",
+            "annotation": cached.get("annotation") or "",
+            "chars": cached.get("chars"),
+            "truncated": bool(cached.get("truncated")),
+            "metrics": {"cached": True, "elapsed_s": 0},
+        }
 
     text = summarize.rag.load_file(path)
     if not text.strip():
@@ -459,6 +478,12 @@ def _annotate_document(source: str, title: str, model: str,
         echo=echo,
     )
     fields = _parse_bibliography_fields(annotation)
+    try:
+        record_bibliography_entry(
+            source, source_hash, model, style, max_chars, total_chars,
+            truncated, fields["reference"], fields["annotation"])
+    except Exception:
+        pass
     return {
         "reference": fields["reference"],
         "annotation": fields["annotation"],
@@ -538,6 +563,8 @@ def _answer_annotated_bibliography(question: str, model: str,
         "count": len(rows),
         "genre": genre,
         "elapsed_s": 0,
+        "cached": 0,
+        "generated": 0,
     }
     for i, row in enumerate(rows, 1):
         source = row.get("source") or ""
@@ -547,6 +574,10 @@ def _answer_annotated_bibliography(question: str, model: str,
             reference = result.get("reference") or title
             annotation = result.get("annotation") or ""
             metrics["elapsed_s"] += result.get("metrics", {}).get("elapsed_s", 0)
+            if result.get("metrics", {}).get("cached"):
+                metrics["cached"] += 1
+            else:
+                metrics["generated"] += 1
         except (FileNotFoundError, ValueError) as e:
             reference = title
             annotation = f"Could not generate an annotation: {e}"
@@ -554,7 +585,8 @@ def _answer_annotated_bibliography(question: str, model: str,
         lines.append(reference)
         lines.append("")
         lines.append(annotation)
-        lines.append("")
+        if i < len(rows):
+            lines.extend(["", "---", ""])
 
     return {
         "text": "\n".join(lines).rstrip(),

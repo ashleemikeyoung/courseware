@@ -354,6 +354,9 @@ textarea{resize:vertical;min-height:74px}
 .chatmsg .bubble.bibliography p:nth-child(2n+3){
   margin-left:1.5rem;margin-bottom:1.25em;
 }
+.chatmsg .bubble.bibliography hr{
+  border:0;border-top:1px solid var(--rule);margin:1.35em 0;
+}
 .chatmsg .bubble.pending::after{
   content:"";display:inline-block;width:.5em;height:1em;margin-left:2px;
   background:var(--ink-faint);vertical-align:text-bottom;
@@ -943,7 +946,8 @@ function mdToHtml(md, opts = {}){
     const l = raw.trim();
     if (!l) { close(); continue; }
     let m;
-    if ((m = l.match(/^#{2,4}\s+(.*)/))) { close(); out.push(`<h2>${inline(m[1])}</h2>`); }
+    if (/^---+$/.test(l)) { close(); out.push("<hr>"); }
+    else if ((m = l.match(/^#{2,4}\s+(.*)/))) { close(); out.push(`<h2>${inline(m[1])}</h2>`); }
     else if ((m = l.match(/^[-*]\s+(.*)/))) {
       if (list !== "ul"){ close(); out.push("<ul>"); list = "ul"; }
       out.push(`<li>${inline(m[1])}</li>`);

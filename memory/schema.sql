@@ -229,6 +229,27 @@ CREATE INDEX IF NOT EXISTS idx_document_summaries_source
 CREATE INDEX IF NOT EXISTS idx_document_summaries_generated
     ON document_summaries(generated_at);
 
+CREATE TABLE IF NOT EXISTS bibliography_entries (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    source         TEXT NOT NULL,
+    source_hash    TEXT NOT NULL,
+    model          TEXT NOT NULL,
+    style          TEXT NOT NULL,
+    max_chars      INTEGER NOT NULL,
+    chars          INTEGER,
+    truncated      INTEGER NOT NULL DEFAULT 0,
+    reference      TEXT NOT NULL,
+    annotation     TEXT NOT NULL,
+    generated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    last_used_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(source, source_hash, model, style, max_chars)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bibliography_entries_source
+    ON bibliography_entries(source);
+CREATE INDEX IF NOT EXISTS idx_bibliography_entries_generated
+    ON bibliography_entries(generated_at);
+
 
 -- ---------------------------------------------------------------------------
 -- PII scans -- deliberately a SUMMARY only. This table records what kinds
