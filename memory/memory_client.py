@@ -366,6 +366,8 @@ def record_document_upload_profile(source: str, synopsis: str, word_count: int =
                                    project: str = None, label: str = None,
                                    sections_found: dict = None,
                                    genres: list = None, themes: list = None,
+                                   authors: list = None,
+                                   subject_terms: list = None,
                                    upload_state: str = "project_file"):
     """
     Upsert upload-style metadata for a project document.
@@ -376,23 +378,49 @@ def record_document_upload_profile(source: str, synopsis: str, word_count: int =
     """
     client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
     try:
-        client.execute(
-            "INSERT INTO documents "
-            "(source, synopsis, word_count, model, source_hash, chars, file_type, "
-            " project, label, sections_found, genres, themes, upload_state, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) "
-            "ON CONFLICT(source) DO UPDATE SET "
-            " synopsis=excluded.synopsis, word_count=excluded.word_count, "
-            " model=excluded.model, source_hash=excluded.source_hash, "
-            " chars=excluded.chars, file_type=excluded.file_type, "
-            " project=excluded.project, label=excluded.label, "
-            " sections_found=excluded.sections_found, genres=excluded.genres, "
-            " themes=excluded.themes, upload_state=excluded.upload_state, "
-            " indexed_at=datetime('now'), updated_at=datetime('now')",
-            [source, synopsis, word_count, model, source_hash, chars, file_type,
-             project, label, json.dumps(sections_found or {}),
-             json.dumps(genres or []), json.dumps(themes or []), upload_state],
-        )
+        try:
+            client.execute(
+                "INSERT INTO documents "
+                "(source, synopsis, word_count, model, source_hash, chars, file_type, "
+                " project, label, sections_found, genres, themes, authors, "
+                " subject_terms, upload_state, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) "
+                "ON CONFLICT(source) DO UPDATE SET "
+                " synopsis=excluded.synopsis, word_count=excluded.word_count, "
+                " model=excluded.model, source_hash=excluded.source_hash, "
+                " chars=excluded.chars, file_type=excluded.file_type, "
+                " project=excluded.project, label=excluded.label, "
+                " sections_found=excluded.sections_found, genres=excluded.genres, "
+                " themes=excluded.themes, authors=excluded.authors, "
+                " subject_terms=excluded.subject_terms, "
+                " upload_state=excluded.upload_state, "
+                " indexed_at=datetime('now'), updated_at=datetime('now')",
+                [source, synopsis, word_count, model, source_hash, chars, file_type,
+                 project, label, json.dumps(sections_found or {}),
+                 json.dumps(genres or []), json.dumps(themes or []),
+                 json.dumps(authors or []), json.dumps(subject_terms or []),
+                 upload_state],
+            )
+        except Exception as e:
+            if "no such column" not in str(e).lower():
+                raise
+            client.execute(
+                "INSERT INTO documents "
+                "(source, synopsis, word_count, model, source_hash, chars, file_type, "
+                " project, label, sections_found, genres, themes, upload_state, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) "
+                "ON CONFLICT(source) DO UPDATE SET "
+                " synopsis=excluded.synopsis, word_count=excluded.word_count, "
+                " model=excluded.model, source_hash=excluded.source_hash, "
+                " chars=excluded.chars, file_type=excluded.file_type, "
+                " project=excluded.project, label=excluded.label, "
+                " sections_found=excluded.sections_found, genres=excluded.genres, "
+                " themes=excluded.themes, upload_state=excluded.upload_state, "
+                " indexed_at=datetime('now'), updated_at=datetime('now')",
+                [source, synopsis, word_count, model, source_hash, chars, file_type,
+                 project, label, json.dumps(sections_found or {}),
+                 json.dumps(genres or []), json.dumps(themes or []), upload_state],
+            )
     finally:
         client.close()
 
@@ -406,9 +434,13 @@ def search_document_uploads(query: str = None, project: str = None,
     try:
         clauses = []
         params = []
+        has_new_metadata_columns = True
         if query:
             like = f"%{query.lower()}%"
-            fields = ["source", "label", "synopsis", "genres", "themes"]
+            fields = [
+                "source", "label", "synopsis", "genres", "themes",
+                "authors", "subject_terms",
+            ]
             clauses.append("(" + " OR ".join(
                 f"lower(coalesce({field}, '')) LIKE ?" for field in fields
             ) + ")")
@@ -426,14 +458,54 @@ def search_document_uploads(query: str = None, project: str = None,
         sql = (
             "SELECT source, project, label, file_type, chars, word_count, "
             "source_hash, sections_found, genres, themes, synopsis, "
-            "upload_state, indexed_at, updated_at FROM documents"
+            "authors, subject_terms, upload_state, indexed_at, updated_at "
+            "FROM documents"
             + where + " ORDER BY coalesce(updated_at, indexed_at) DESC LIMIT ?"
         )
         params.append(limit)
-        result = client.execute(sql, params)
+        try:
+            result = client.execute(sql, params)
+        except Exception as e:
+            if "no such column" not in str(e).lower():
+                raise
+            has_new_metadata_columns = False
+            clauses = []
+            params = []
+            if query:
+                like = f"%{query.lower()}%"
+                fields = ["source", "label", "synopsis", "genres", "themes"]
+                clauses.append("(" + " OR ".join(
+                    f"lower(coalesce({field}, '')) LIKE ?" for field in fields
+                ) + ")")
+                params.extend([like] * len(fields))
+            if project:
+                clauses.append("project = ?")
+                params.append(project)
+            if genre:
+                clauses.append("lower(coalesce(genres, '')) LIKE ?")
+                params.append(f"%{genre.lower()}%")
+            if theme:
+                clauses.append("lower(coalesce(themes, '')) LIKE ?")
+                params.append(f"%{theme.lower()}%")
+            where = " WHERE " + " AND ".join(clauses) if clauses else ""
+            sql = (
+                "SELECT source, project, label, file_type, chars, word_count, "
+                "source_hash, sections_found, genres, themes, synopsis, "
+                "upload_state, indexed_at, updated_at FROM documents"
+                + where + " ORDER BY coalesce(updated_at, indexed_at) DESC LIMIT ?"
+            )
+            params.append(limit)
+            result = client.execute(sql, params)
         rows = [dict(zip(result.columns, row)) for row in result.rows]
         for row in rows:
-            for field, default in (("sections_found", {}), ("genres", []), ("themes", [])):
+            json_fields = [
+                ("sections_found", {}),
+                ("genres", []),
+                ("themes", []),
+            ]
+            if has_new_metadata_columns:
+                json_fields.extend([("authors", []), ("subject_terms", [])])
+            for field, default in json_fields:
                 try:
                     row[field] = json.loads(row[field]) if row.get(field) else default
                 except Exception:

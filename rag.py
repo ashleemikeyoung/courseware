@@ -394,6 +394,7 @@ def remove_source(filename: str):
 
 _IGNORED_DIRS = {".git", ".obsidian", "__pycache__", "node_modules",
                  ".venv", "venv", ".trash", ".writer"}
+DOCUMENT_PROFILE_MODEL = "local-profile-v2"
 
 
 def _project_of(rel_path: str) -> str:
@@ -559,15 +560,124 @@ def _first_meaningful_lines(text: str, limit: int = 10) -> list:
     return lines
 
 
+def _clean_metadata_value(value: str) -> str:
+    return re.sub(r"\s+", " ", value or "").strip(" \t\r\n:;,")
+
+
+def _meaningful_header_lines(text: str, limit: int = 120) -> list:
+    lines = []
+    for line in text.splitlines():
+        clean = _clean_metadata_value(line)
+        if clean:
+            lines.append(clean)
+        if len(lines) >= limit:
+            break
+    return lines
+
+
+def _labeled_block(lines: list, label: str, stop_labels: set = None) -> list:
+    stop_labels = {s.lower() for s in (stop_labels or set())}
+    label_lower = label.lower()
+    out = []
+    in_block = False
+    for line in lines:
+        normalized = line.lower().strip(":")
+        if normalized == label_lower:
+            in_block = True
+            continue
+        if in_block and normalized in stop_labels:
+            break
+        if in_block:
+            out.append(line)
+    return out
+
+
+def _split_people(value: str) -> list:
+    value = re.sub(r"\b(?:and|&)\b", ";", value or "", flags=re.I)
+    value = re.sub(r"\s*\d+\s*(?=;|,|$)", "", value)
+    parts = re.split(r";|\n", value)
+    authors = []
+    for part in parts:
+        clean = _clean_metadata_value(part)
+        if not clean:
+            continue
+        if re.search(r"\b(university|department|faculty|school|journal|vol\.|issue|publisher|email)\b", clean, re.I):
+            continue
+        if clean.lower() in {"authors", "author", "source", "article"}:
+            continue
+        if clean not in authors:
+            authors.append(clean)
+    return authors
+
+
+def _looks_like_author_line(line: str) -> bool:
+    if len(line) > 90:
+        return False
+    if re.search(r"\b(university|department|faculty|school|journal|abstract|email|received|accepted|doi)\b", line, re.I):
+        return False
+    tokens = [t for t in re.split(r"\s+", line) if t]
+    if not 2 <= len(tokens) <= 6:
+        return False
+    return sum(bool(re.match(r"^[A-Z][A-Za-z'.-]+,?$", t)) for t in tokens) >= 2
+
+
+def _document_authors(text: str) -> list:
+    lines = _meaningful_header_lines(text)
+    stop_labels = {
+        "source", "publisher information", "publication year",
+        "subject terms", "subject geographic", "description", "abstract",
+    }
+    labeled = _labeled_block(lines, "Authors", stop_labels)
+    if labeled:
+        return _split_people("\n".join(labeled))
+
+    for i, line in enumerate(lines[:60]):
+        if line.lower() != "article":
+            continue
+        title_seen = False
+        for candidate in lines[i + 1:i + 8]:
+            if candidate.lower() in {"abstract", "keywords"}:
+                break
+            if len(candidate) > 30 and not title_seen:
+                title_seen = True
+                continue
+            if title_seen and _looks_like_author_line(candidate):
+                return _split_people(candidate)
+
+    for i, line in enumerate(lines[:50]):
+        if line.lower().startswith(("abstract", "keywords", "introduction")):
+            break
+        if _looks_like_author_line(line):
+            previous = " ".join(lines[max(0, i - 3):i]).lower()
+            if any(marker in previous for marker in ["doi:", "article", "journal"]):
+                return _split_people(line)
+    return []
+
 
 def _derive_document_label(source: str, text: str) -> str:
-    lines = text.splitlines()[:100]
-    for line in lines:
+    lines = _meaningful_header_lines(text)
+    stop_labels = {"authors", "author", "source", "abstract", "description"}
+    title_block = _labeled_block(lines, "Title", stop_labels)
+    if title_block:
+        title = _clean_metadata_value(" ".join(title_block))
+        if len(title) > 10:
+            return title[:180]
+    for line in lines[:100]:
         match = re.match(r"(?:Thesis\s+)?Title\s*:\s*(.+)", line.strip(), re.I)
         if match and len(match.group(1)) > 10:
             return match.group(1).strip()[:180]
+    for i, line in enumerate(lines[:50]):
+        if line.lower() == "article":
+            title_lines = []
+            for candidate in lines[i + 1:i + 5]:
+                if _looks_like_author_line(candidate):
+                    break
+                title_lines.append(candidate)
+            title = _clean_metadata_value(" ".join(title_lines))
+            if len(title) > 20:
+                return title[:180]
     for line in lines:
-        clean = " ".join(line.strip().split())
+        clean = _clean_metadata_value(line)
         if len(clean) > 20:
             return clean[:180]
     return Path(source).stem.replace("_", " ").replace("-", " ").strip()
@@ -783,6 +893,23 @@ def _document_themes(text: str) -> list:
     return themes
 
 
+def _document_subject_terms(text: str) -> list:
+    lines = _meaningful_header_lines(text)
+    stop_labels = {"description", "abstract", "source", "publisher information"}
+    subjects = _labeled_block(lines, "Subject Terms", stop_labels)
+    keywords = []
+    for line in lines[:120]:
+        match = re.match(r"keywords?\s*:?\s*(.+)", line, re.I)
+        if match:
+            keywords.extend(re.split(r";|,", match.group(1)))
+    terms = []
+    for term in subjects + keywords:
+        clean = _clean_metadata_value(term)
+        if clean and clean not in terms:
+            terms.append(clean)
+    return terms[:12]
+
+
 def _document_profile(source: str, text: str, project: str) -> str:
     """
     Cheap document-level profile for memory.documents.
@@ -794,6 +921,11 @@ def _document_profile(source: str, text: str, project: str) -> str:
     """
     lines = _first_meaningful_lines(text)
     lead = " ".join(text.split()[:220])
+    label = _derive_document_label(source, text)
+    genres = _document_genres(source, text)
+    themes = _document_themes(text)
+    authors = _document_authors(text)
+    subject_terms = _document_subject_terms(text)
     headings = [
         line for line in lines
         if len(line) <= 120 and (
@@ -806,7 +938,15 @@ def _document_profile(source: str, text: str, project: str) -> str:
         f"source: {source}",
         f"filename: {Path(source).name}",
         f"project: {project}",
+        f"document_type: {', '.join(genres)}",
+        f"title_or_label: {label}",
     ]
+    if authors:
+        parts.append("authors: " + "; ".join(authors))
+    if subject_terms:
+        parts.append("subject_terms: " + "; ".join(subject_terms))
+    if themes:
+        parts.append("themes: " + "; ".join(themes))
     if headings:
         parts.append("headings: " + " | ".join(headings))
     if lines:
@@ -826,7 +966,7 @@ def record_document_profile(source: str, text: str, project: str,
                 source,
                 synopsis,
                 word_count=len(text.split()),
-                model="local-profile-v1",
+                model=DOCUMENT_PROFILE_MODEL,
                 source_hash=source_hash,
                 chars=len(text),
                 file_type=Path(source).suffix.lower().lstrip("."),
@@ -835,6 +975,8 @@ def record_document_profile(source: str, text: str, project: str,
                 sections_found=_document_sections(text),
                 genres=_document_genres(source, text),
                 themes=_document_themes(text),
+                authors=_document_authors(text),
+                subject_terms=_document_subject_terms(text),
                 upload_state="project_file",
             )
         else:
@@ -842,7 +984,7 @@ def record_document_profile(source: str, text: str, project: str,
                 source,
                 synopsis,
                 word_count=len(text.split()),
-                model="local-profile-v1",
+                model=DOCUMENT_PROFILE_MODEL,
             )
     except Exception as e:
         print(f"  [Warning] could not record document profile for {source}: {e}")
@@ -855,7 +997,7 @@ def _needs_document_profile(source: str) -> bool:
         row = get_synopsis(source)
     except Exception:
         return False
-    return not row or row.get("model") != "local-profile-v1"
+    return not row or row.get("model") != DOCUMENT_PROFILE_MODEL
 
 
 def backfill_document_profiles(project: str = None, overwrite: bool = False) -> dict:

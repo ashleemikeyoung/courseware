@@ -203,6 +203,8 @@ ALTER TABLE documents ADD COLUMN label TEXT;
 ALTER TABLE documents ADD COLUMN sections_found TEXT; -- JSON object: section -> line number
 ALTER TABLE documents ADD COLUMN genres TEXT;          -- JSON array
 ALTER TABLE documents ADD COLUMN themes TEXT;          -- JSON array
+ALTER TABLE documents ADD COLUMN authors TEXT;         -- JSON array
+ALTER TABLE documents ADD COLUMN subject_terms TEXT;   -- JSON array
 ALTER TABLE documents ADD COLUMN upload_state TEXT NOT NULL DEFAULT 'project_file';
 ALTER TABLE documents ADD COLUMN updated_at TEXT;
 

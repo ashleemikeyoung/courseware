@@ -17,6 +17,7 @@ worse than citing nothing. When it's on, only the latest user turn is used as
 the retrieval query, since that is what the person is actually asking right now.
 """
 
+import json
 import re
 import time
 from pathlib import Path
@@ -41,6 +42,7 @@ import summarize
 # in the recent conversation, rather than guessing from prose alone.
 from memory_client import (
     find_citation, search_document_uploads,
+    get_synopsis,
     get_bibliography_entry, record_bibliography_entry,
 )
 
@@ -191,6 +193,11 @@ GENRE_ALIASES = {
 AUTHOR_MENTION_RE = re.compile(
     r"\b(?:by|authored by|written by|article by|paper by)\s+"
     r"((?:[A-Z][\w'.-]+\s*){1,3})"
+)
+DOCUMENT_METADATA_RE = re.compile(
+    r"\b(?:authors?|who\s+(?:wrote|authored)|written\s+by|document\s+types?|"
+    r"what\s+kind|genres?|subject(?:\s+matter)?|topics?|themes?|metadata)\b",
+    re.IGNORECASE,
 )
 
 
@@ -383,6 +390,109 @@ def _answer_document_inventory(question: str, project: str = None):
         "grounded": True,
         "passages_offered": 0,
         "metrics": {"registry_inventory": True, "count": len(rows), "genre": genre},
+    }
+
+
+def _json_list(value) -> list:
+    if isinstance(value, list):
+        return value
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _profile_field(synopsis: str, field: str) -> list:
+    match = re.search(rf"^{re.escape(field)}:\s*(.+)$", synopsis or "", re.I | re.M)
+    if not match:
+        return []
+    return [part.strip() for part in re.split(r";|,", match.group(1)) if part.strip()]
+
+
+def _unescape_markdown_path(text: str) -> str:
+    return re.sub(r"\\([_./:-])", r"\1", text or "")
+
+
+def _row_for_source(source: str, project: str = None) -> dict:
+    try:
+        rows = search_document_uploads(project=project, limit=1000)
+    except Exception:
+        rows = []
+    for row in rows:
+        if row.get("source") == source:
+            return row
+    try:
+        row = get_synopsis(source)
+    except Exception:
+        row = None
+    return row or {"source": source}
+
+
+def _citation_for_source(source: str) -> dict:
+    try:
+        hits = find_citation(source=source)
+    except Exception:
+        hits = []
+    return hits[0] if hits else {}
+
+
+def _answer_document_metadata(question: str, context: str, project: str = None):
+    if not DOCUMENT_METADATA_RE.search(question or ""):
+        return None
+
+    sources = _sources_from_context(
+        (question or "") + "\n" + (context or ""), project=project)
+    if not sources:
+        return None
+
+    wants_author = re.search(r"\b(authors?|who\s+(?:wrote|authored)|written\s+by)\b", question, re.I)
+    wants_type = re.search(r"\b(document\s+types?|what\s+kind|genres?)\b", question, re.I)
+    wants_subject = re.search(r"\b(subject(?:\s+matter)?|topics?|themes?)\b", question, re.I)
+    if not any([wants_author, wants_type, wants_subject]):
+        wants_author = wants_type = wants_subject = True
+
+    lines = []
+    for source in sources[:12]:
+        row = _row_for_source(source, project=project)
+        citation = _citation_for_source(source)
+        synopsis = row.get("synopsis") or ""
+        title = citation.get("title") or row.get("label") or Path(source).name
+        authors = (
+            _json_list(row.get("authors"))
+            or _profile_field(synopsis, "authors")
+            or ([citation.get("authors")] if citation.get("authors") else [])
+        )
+        genres = _json_list(row.get("genres")) or _profile_field(synopsis, "document_type")
+        subjects = (
+            _json_list(row.get("subject_terms"))
+            or _json_list(row.get("themes"))
+            or _profile_field(synopsis, "subject_terms")
+            or _profile_field(synopsis, "themes")
+        )
+
+        facts = []
+        if wants_author:
+            facts.append("author(s): " + ("; ".join(authors) if authors else "not found in the registry"))
+        if wants_type:
+            file_type = row.get("file_type")
+            type_text = ", ".join(genres) if genres else "document"
+            if file_type:
+                type_text += f" ({file_type})"
+            facts.append("type/genre: " + type_text)
+        if wants_subject:
+            facts.append("subject matter: " + ("; ".join(subjects) if subjects else "not found in the registry"))
+
+        lines.append(f"- {source} — {title}: " + "; ".join(facts))
+
+    return {
+        "text": "\n".join(lines),
+        "evidence": {},
+        "grounded": True,
+        "passages_offered": 0,
+        "metrics": {"document_metadata": True, "count": len(sources[:12])},
     }
 
 
@@ -661,7 +771,8 @@ def _reference_terms_from_context(term: str, context: str, project: str = None) 
     terms = []
 
     for match in SOURCE_PATH_RE.finditer(context or ""):
-        name = match.group(0).strip(" \t\r\n,.;:\"'`)]}")
+        name = _unescape_markdown_path(
+            match.group(0).strip(" \t\r\n,.;:\"'`)]}"))
         try:
             source = summarize.detect_file_reference(name, project=project)
         except Exception:
@@ -703,7 +814,7 @@ def _reference_terms_from_context(term: str, context: str, project: str = None) 
 def _target_sources_from_context(context: str, project: str = None) -> set:
     sources = set()
     for match in SOURCE_PATH_RE.finditer(context or ""):
-        name = match.group(0).strip()
+        name = _unescape_markdown_path(match.group(0).strip())
         try:
             source = summarize.detect_file_reference(name, project=project)
         except Exception:
@@ -717,7 +828,7 @@ def _sources_from_context(context: str, project: str = None) -> list:
     seen = set()
     found = []
 
-    context_lower = (context or "").lower()
+    context_lower = _unescape_markdown_path(context or "").lower()
     try:
         all_data = summarize.rag.collection.get(include=["metadatas"])
         for meta in all_data["metadatas"]:
@@ -738,7 +849,8 @@ def _sources_from_context(context: str, project: str = None) -> list:
         pass
 
     for match in SOURCE_PATH_RE.finditer(context or ""):
-        name = match.group(0).strip(" \t\r\n,.;:\"'`)]}")
+        name = _unescape_markdown_path(
+            match.group(0).strip(" \t\r\n,.;:\"'`)]}"))
         try:
             source = summarize.detect_file_reference(name, project=project)
         except Exception:
@@ -915,6 +1027,11 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
         inventory = _answer_document_inventory(last_user, project=scope)
         if inventory:
             return inventory
+
+        metadata = _answer_document_metadata(
+            last_user, recent_context, project=scope)
+        if metadata:
+            return metadata
 
     # A direct file reference ("summarize GCU/EBSCO-FullText-07_26_2026.pdf")
     # names one specific file, not a topic -- gather_evidence() below would
