@@ -19,7 +19,6 @@ the retrieval query, since that is what the person is actually asking right now.
 
 import re
 import time
-import html
 from pathlib import Path
 
 from writer import (
@@ -324,10 +323,17 @@ def _answer_document_inventory(question: str, project: str = None):
     if genre == "academic article":
         exclude_genres.extend([
             "book chapter",
+            "contract/agreement",
+            "coursework",
             "dissertation",
             "dissertation draft",
             "dissertation template",
+            "interview protocol",
+            "legal filing",
+            "notes",
+            "presentation",
             "research methods guide",
+            "spreadsheet",
         ])
 
     try:
@@ -484,10 +490,17 @@ def _answer_annotated_bibliography(question: str, model: str,
     if genre == "academic article":
         exclude_genres.extend([
             "book chapter",
+            "contract/agreement",
+            "coursework",
             "dissertation",
             "dissertation draft",
             "dissertation template",
+            "interview protocol",
+            "legal filing",
+            "notes",
+            "presentation",
             "research methods guide",
+            "spreadsheet",
         ])
 
     try:
@@ -534,28 +547,13 @@ def _answer_annotated_bibliography(question: str, model: str,
             reference = result.get("reference") or title
             annotation = result.get("annotation") or ""
             metrics["elapsed_s"] += result.get("metrics", {}).get("elapsed_s", 0)
-            note = (
-                f" [Annotation based on the first 20,000 of "
-                f"{result['chars']} extracted characters.]"
-                if result.get("truncated") else ""
-            )
         except (FileNotFoundError, ValueError) as e:
             reference = title
             annotation = f"Could not generate an annotation: {e}"
-            note = ""
 
-        lines.append(
-            '<p style="padding-left: 0.5in; text-indent: -0.5in; '
-            f'margin-bottom: 0;">{html.escape(reference)}</p>'
-        )
-        lines.append(
-            '<p style="margin-left: 0.5in; margin-top: 0.5em;">'
-            f'{html.escape(annotation)}{html.escape(note)}</p>'
-        )
-        lines.append(
-            f'<p style="margin-left: 0.5in; font-size: 0.9em;">'
-            f'Source file: {html.escape(source)}</p>'
-        )
+        lines.append(reference)
+        lines.append("")
+        lines.append(annotation)
         lines.append("")
 
     return {
