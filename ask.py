@@ -419,6 +419,14 @@ def _citation_sort_key(row: dict) -> str:
     return f"{title} {source}".lower()
 
 
+def _reference_sort_key(reference: str) -> str:
+    key = re.sub(r"<[^>]+>", "", reference or "")
+    key = re.sub(r"\*+", "", key)
+    key = re.sub(r"\s+", " ", key).strip().lower()
+    key = re.sub(r"^[\"'“”‘’]+", "", key)
+    return key
+
+
 def _annotate_document(source: str, title: str, model: str,
                        max_chars: int = 20000, style: str = "apa7-v2",
                        echo: bool = False) -> dict:
@@ -558,8 +566,6 @@ def _answer_annotated_bibliography(question: str, model: str,
             "metrics": {"annotated_bibliography": True, "count": 0},
         }
 
-    rows = sorted(rows, key=_citation_sort_key)
-    lines = ["**Annotated Bibliography**", ""]
     metrics = {
         "annotated_bibliography": True,
         "count": len(rows),
@@ -568,7 +574,8 @@ def _answer_annotated_bibliography(question: str, model: str,
         "cached": 0,
         "generated": 0,
     }
-    for i, row in enumerate(rows, 1):
+    entries = []
+    for row in rows:
         source = row.get("source") or ""
         title = row.get("label") or Path(source).stem
         try:
@@ -584,10 +591,21 @@ def _answer_annotated_bibliography(question: str, model: str,
             reference = title
             annotation = f"Could not generate an annotation: {e}"
 
+        entries.append({
+            "reference": reference,
+            "annotation": annotation,
+            "source": source,
+        })
+
+    entries = sorted(entries, key=lambda entry: _reference_sort_key(entry["reference"]))
+    lines = ["**Annotated Bibliography**", ""]
+    for i, entry in enumerate(entries, 1):
+        reference = entry["reference"]
+        annotation = entry["annotation"]
         lines.append(reference)
         lines.append("")
         lines.append(annotation)
-        if i < len(rows):
+        if i < len(entries):
             lines.extend(["", "---", ""])
 
     return {
