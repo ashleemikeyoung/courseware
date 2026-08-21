@@ -303,6 +303,39 @@ def record_retrieval_gap(query: str, expected_source: str, notes: str = None):
         client.close()
 
 
+def record_query_quality(project: str, question: str, intent: str = None,
+                         define: dict = None, measure: dict = None,
+                         analyze: dict = None, improve: dict = None,
+                         control: dict = None):
+    """
+    Log one Define/Measure/Analyze/Improve/Control event for the query path.
+
+    This is intentionally separate from draft quality scoring. Query quality is
+    about whether the system chose the right source-of-truth path and escalated
+    when confidence was weak, not whether generated prose was stylish.
+    """
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        client.execute(
+            "INSERT INTO query_quality_events "
+            "(project, question, intent, define_json, measure_json, "
+            " analyze_json, improve_json, control_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                project,
+                question,
+                intent,
+                json.dumps(define or {}),
+                json.dumps(measure or {}),
+                json.dumps(analyze or {}),
+                json.dumps(improve or {}),
+                json.dumps(control or {}),
+            ],
+        )
+    finally:
+        client.close()
+
+
 # ---------------------------------------------------------------------------
 # Settings -- persistent admin toggles, checked live by any process (see
 # schema.sql for why this can't just be a .env var: separate processes

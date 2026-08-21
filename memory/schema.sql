@@ -212,6 +212,22 @@ CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project);
 CREATE INDEX IF NOT EXISTS idx_documents_label ON documents(label);
 CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at);
 
+CREATE TABLE IF NOT EXISTS query_quality_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    recorded_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    project       TEXT,
+    question      TEXT NOT NULL,
+    intent        TEXT,
+    define_json   TEXT,
+    measure_json  TEXT,
+    analyze_json  TEXT,
+    improve_json  TEXT,
+    control_json  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_query_quality_project_time
+    ON query_quality_events(project, recorded_at);
+
 CREATE TABLE IF NOT EXISTS document_summaries (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     source         TEXT NOT NULL,

@@ -1172,6 +1172,125 @@ def _source_chunks(source: str) -> list:
     return rows
 
 
+def _file_excerpt(text: str, words: list, radius: int = 420) -> str:
+    lower = text.lower()
+    positions = [lower.find(w) for w in words if len(w) >= 3 and lower.find(w) >= 0]
+    if not positions:
+        return " ".join(text.split()[:120])
+    pos = min(positions)
+    start = max(0, pos - radius)
+    end = min(len(text), pos + radius)
+    excerpt = text[start:end]
+    return " ".join(excerpt.split())
+
+
+def _document_row_text(row: dict) -> str:
+    def as_list(value):
+        if isinstance(value, list):
+            return value
+        if not value:
+            return []
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else []
+        except Exception:
+            return []
+
+    parts = [
+        row.get("source") or "",
+        row.get("label") or "",
+        row.get("synopsis") or "",
+        " ".join(as_list(row.get("genres"))),
+        " ".join(as_list(row.get("themes"))),
+        " ".join(as_list(row.get("authors"))),
+        " ".join(as_list(row.get("subject_terms"))),
+    ]
+    return " ".join(parts)
+
+
+def _json_list(value) -> list:
+    if isinstance(value, list):
+        return value
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, list) else []
+    except Exception:
+        return []
+
+
+def mine_document_store(question: str, project: str = None,
+                        limit: int = 8, max_chars_per_file: int = 120000) -> list:
+    """
+    Source-of-truth fallback over the actual document store.
+
+    Chroma is a passage index. The document store is the file-server truth.
+    When a result is thin or ambiguous, this scans the stored files directly
+    and returns source-level matches plus extracted snippets.
+    """
+    words = meaningful_words(question)
+    if not words:
+        return []
+
+    rows_by_source = {}
+    if MEMORY_AVAILABLE and get_synopsis is not None:
+        for source in get_indexed_sources():
+            if project and projects.project_of(source) != project:
+                continue
+            try:
+                row = get_synopsis(source) or {}
+            except Exception:
+                row = {}
+            rows_by_source[source] = row
+
+    matches = []
+    root = Path(DOCUMENTS_FOLDER)
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            continue
+        try:
+            source = str(path.resolve().relative_to(root.resolve()))
+        except ValueError:
+            source = path.name
+        if project and projects.project_of(source) != project:
+            continue
+        if any(part in _IGNORED_DIRS or part.startswith(".")
+               for part in Path(source).parts[:-1]):
+            continue
+
+        row = rows_by_source.get(source) or {}
+        metadata_text = _document_row_text(row)
+        try:
+            text = load_file(path)
+        except Exception as e:
+            print(f"  [Warning] source mining could not read {source}: {e}")
+            continue
+        if not text.strip():
+            continue
+
+        searchable = f"{metadata_text}\n{text[:max_chars_per_file]}".lower()
+        score = _word_count_score(searchable, words)
+        score += _source_matches(source, words, question=question)
+        if score <= 0:
+            continue
+        matches.append({
+            "source": source,
+            "score": score,
+            "label": row.get("label") or _derive_document_label(source, text),
+            "genres": _json_list(row.get("genres")) or _document_genres(source, text),
+            "authors": _json_list(row.get("authors")) or _document_authors(text),
+            "subject_terms": (
+                _json_list(row.get("subject_terms"))
+                or _document_subject_terms(text)
+            ),
+            "snippet": _file_excerpt(text[:max_chars_per_file], words),
+        })
+
+    matches.sort(key=lambda item: item["score"], reverse=True)
+    return matches[:limit]
+
+
 def _registry_candidates(words: list, project: str = None) -> list:
     if not MEMORY_AVAILABLE or search_synopses is None or not words:
         return []

@@ -44,6 +44,7 @@ from memory_client import (
     find_citation, search_document_uploads,
     get_synopsis,
     get_bibliography_entry, record_bibliography_entry,
+    record_query_quality,
 )
 
 CHAT_SYSTEM = """You are a direct, capable assistant. Answer plainly, without
@@ -199,6 +200,41 @@ DOCUMENT_METADATA_RE = re.compile(
     r"what\s+kind|genres?|subject(?:\s+matter)?|topics?|themes?|metadata)\b",
     re.IGNORECASE,
 )
+CONTENT_SEARCH_RE = re.compile(
+    r"\b(?:which|what|find|show|identify)\b.*"
+    r"\b(?:article|articles|document|documents|source|sources|file|files)\b",
+    re.IGNORECASE,
+)
+CONTENT_QUESTION_RE = re.compile(
+    r"\b(?:argues?|covers?|discuss(?:es)?|says?|explain|summarize|summary|"
+    r"compare|contrast|synthesize|analyze)\b",
+    re.IGNORECASE,
+)
+SOURCE_FOLLOWUP_RE = re.compile(
+    r"\b(?:which|what)\s+(?:source|document|file|article)\s+"
+    r"(?:is|was|would\s+be)?\s*(?:that|this|it)\b",
+    re.IGNORECASE,
+)
+SOURCE_FOLLOWUP_HINT_RE = re.compile(
+    r"(?:additionally|also|another|other|that|this)\s+[^.!?]*"
+    r"(?:source|article|document|file)[^.!?]*[.!?]?",
+    re.IGNORECASE,
+)
+SOURCE_LOOKUP_STOPWORDS = {
+    "about", "above", "additional", "additionally", "also", "another",
+    "appears", "article", "articles", "because", "being", "could", "discuss",
+    "discusses", "discussing", "document", "documents", "file", "files",
+    "following", "found", "from", "into", "legal", "like", "mentions",
+    "one", "other", "provides", "settings", "several", "source", "sources",
+    "specific", "specifically", "that", "their", "there", "these", "this",
+    "those", "use", "uses", "using", "which", "with",
+}
+DOCUMENT_TRUTH_INTENTS = {
+    "document_inventory",
+    "document_identity",
+    "document_metadata",
+    "cross_document_search",
+}
 
 
 def _is_degenerate(text: str) -> bool:
@@ -300,6 +336,144 @@ def _trim_history(messages: list, max_words: int = 3000) -> list:
     return list(reversed(kept))
 
 
+def _plan_query(question: str, context: str = "") -> dict:
+    q = question or ""
+    if SOURCE_FOLLOWUP_RE.search(q):
+        intent = "document_identity"
+        primary = "document_registry"
+    elif ANNOTATED_BIBLIOGRAPHY_RE.search(q):
+        intent = "synthesis"
+        primary = "document_registry"
+    elif DOCUMENT_INVENTORY_RE.search(q) and (
+        FILENAME_LIST_RE.search(q) or re.search(r"\bhow many\b", q, re.I)
+    ):
+        intent = "document_inventory"
+        primary = "document_registry"
+    elif DOCUMENT_METADATA_RE.search(q):
+        intent = "document_metadata"
+        primary = "document_registry"
+    elif SUMMARIZE_RE.search(q) and _has_known_source_reference(q, context):
+        intent = "document_content"
+        primary = "document_store"
+    elif CONTENT_SEARCH_RE.search(q):
+        intent = "cross_document_search"
+        primary = "document_store"
+    elif CONTENT_QUESTION_RE.search(q):
+        intent = "document_content"
+        primary = "document_store"
+    else:
+        intent = "general_qa"
+        primary = "hybrid_retrieval"
+
+    return {
+        "intent": intent,
+        "primary_source": primary,
+        "define": {
+            "intent": intent,
+            "source_of_truth": "document_store",
+            "primary_source": primary,
+            "question": q,
+        },
+        "control": {
+            "document_store_first": intent in DOCUMENT_TRUTH_INTENTS,
+            "mine_sources_on_insufficient_result": True,
+            "chroma_role": "passage_index_not_source_of_truth",
+        },
+    }
+
+
+def _has_known_source_reference(question: str, context: str = "") -> bool:
+    try:
+        return bool(
+            summarize.detect_file_reference(question)
+            or _sources_from_context(context)
+        )
+    except Exception:
+        return False
+
+
+def _quality_finish(result: dict, question: str, plan: dict, project: str = None,
+                    evidence: list = None, improvements: list = None,
+                    analysis: dict = None) -> dict:
+    evidence = evidence or []
+    metrics = dict(result.get("metrics") or {})
+    sources = sorted({
+        ev.source for ev in evidence
+        if getattr(ev, "source", None) and ev.source != "document-index"
+    })
+    metric_sources = metrics.get("sources") or []
+    if not sources and metric_sources:
+        sources = sorted(metric_sources)
+    source_count = len(sources) or int(metrics.get("count") or 0)
+    measure = {
+        "grounded": bool(result.get("grounded")),
+        "passages_offered": result.get("passages_offered", 0),
+        "source_count": source_count,
+        "sources": sources[:20],
+    }
+    analyze = {
+        "route": metrics.get("route", plan.get("primary_source")),
+        "insufficient_result": (
+            bool(result.get("grounded")) and source_count == 0
+            and result.get("passages_offered", 0) == 0
+        ),
+    }
+    if analysis:
+        analyze.update(analysis)
+    improve = {
+        "actions": improvements or [],
+    }
+    control = dict(plan.get("control") or {})
+    try:
+        record_query_quality(
+            project=project,
+            question=question,
+            intent=plan.get("intent"),
+            define=plan.get("define"),
+            measure=measure,
+            analyze=analyze,
+            improve=improve,
+            control=control,
+        )
+    except Exception:
+        pass
+
+    metrics["dmaic"] = {
+        "define": plan.get("define"),
+        "measure": measure,
+        "analyze": analyze,
+        "improve": improve,
+        "control": control,
+    }
+    result["metrics"] = metrics
+    return result
+
+
+def _source_mining_evidence(question: str, registry: CitationRegistry,
+                            project: str = None, limit: int = 6) -> list:
+    try:
+        matches = summarize.rag.mine_document_store(
+            question, project=project, limit=limit)
+    except Exception as e:
+        print(f"  [Warning: document-store mining failed: {e}]")
+        return []
+    evidence = []
+    for match in matches:
+        source = match.get("source") or "document-store"
+        details = [
+            "[Document store source-mining match]",
+            f"Source: {source}",
+            f"Title/label: {match.get('label') or ''}",
+            f"Genre(s): {', '.join(match.get('genres') or [])}",
+            f"Author(s): {'; '.join(match.get('authors') or [])}",
+            f"Subject terms: {'; '.join(match.get('subject_terms') or [])}",
+            f"Match score: {match.get('score')}",
+            f"Snippet: {match.get('snippet') or ''}",
+        ]
+        evidence.append(registry.register(source, -30, -30, "\n".join(details)))
+    return evidence
+
+
 
 def _inventory_genre(question: str) -> str:
     q = " ".join((question or "").lower().split())
@@ -321,6 +495,8 @@ def _answer_document_inventory(question: str, project: str = None):
     file list entirely; the registry is the source of truth for saved files.
     """
     if not DOCUMENT_INVENTORY_RE.search(question or ""):
+        return None
+    if SOURCE_FOLLOWUP_RE.search(question or ""):
         return None
 
     genre = _inventory_genre(question)
@@ -393,6 +569,78 @@ def _answer_document_inventory(question: str, project: str = None):
     }
 
 
+def _answer_document_store_search(question: str, project: str = None):
+    if not CONTENT_SEARCH_RE.search(question or ""):
+        return None
+    if FILENAME_LIST_RE.search(question or "") or re.search(r"\bhow many\b", question or "", re.I):
+        return None
+
+    try:
+        matches = summarize.rag.mine_document_store(
+            question, project=project, limit=8)
+    except Exception as e:
+        return {
+            "text": f"I couldn't mine the document store: {e}",
+            "evidence": {},
+            "grounded": False,
+            "passages_offered": 0,
+            "metrics": {"document_store_search_error": str(e)},
+        }
+
+    if re.search(r"\bacademic\s+articles?\b|\barticles?\b", question or "", re.I):
+        matches = [
+            match for match in matches
+            if "academic article" in [g.lower() for g in match.get("genres", [])]
+        ]
+    if re.search(r"\blegal\b|\blaw\b|\blawyers?\b|\battorneys?\b", question or "", re.I):
+        legal_terms = re.compile(
+            r"\b(legal|law|lawyer|lawyers|attorney|attorneys|client|"
+            r"privilege|confidentiality|jurimetrics)\b",
+            re.IGNORECASE,
+        )
+        matches = [
+            match for match in matches
+            if legal_terms.search(" ".join([
+                match.get("source") or "",
+                match.get("label") or "",
+                " ".join(match.get("subject_terms") or []),
+                match.get("snippet") or "",
+            ]))
+        ]
+
+    if not matches:
+        scope = f" in project {project}" if project else ""
+        return {
+            "text": f"I did not find a matching source in the document store{scope}.",
+            "evidence": {},
+            "grounded": True,
+            "passages_offered": 0,
+            "metrics": {"document_store_search": True, "count": 0},
+        }
+
+    lines = ["The strongest document-store matches are:", ""]
+    for match in matches[:5]:
+        source = match.get("source") or ""
+        title = match.get("label") or Path(source).name
+        genres = ", ".join(match.get("genres") or [])
+        authors = "; ".join(match.get("authors") or [])
+        detail = f" ({genres})" if genres else ""
+        author_detail = f" — {authors}" if authors else ""
+        lines.append(f"- {source} — {title}{author_detail}{detail}")
+
+    return {
+        "text": "\n".join(lines),
+        "evidence": {},
+        "grounded": True,
+        "passages_offered": 0,
+        "metrics": {
+            "document_store_search": True,
+            "count": len(matches[:5]),
+            "sources": [m.get("source") for m in matches[:5] if m.get("source")],
+        },
+    }
+
+
 def _json_list(value) -> list:
     if isinstance(value, list):
         return value
@@ -414,6 +662,109 @@ def _profile_field(synopsis: str, field: str) -> list:
 
 def _unescape_markdown_path(text: str) -> str:
     return re.sub(r"\\([_./:-])", r"\1", text or "")
+
+
+def _lookup_words(text: str) -> list:
+    words = re.findall(r"[A-Za-z][A-Za-z0-9'-]{3,}", text or "")
+    out = []
+    seen = set()
+    for word in words:
+        key = word.lower().strip("'")
+        if key in SOURCE_LOOKUP_STOPWORDS or key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out
+
+
+def _source_lookup_text(row: dict) -> str:
+    parts = [
+        row.get("source") or "",
+        row.get("label") or "",
+        row.get("synopsis") or "",
+        " ".join(row.get("genres") or []),
+        " ".join(row.get("themes") or []),
+        " ".join(row.get("authors") or []),
+        " ".join(row.get("subject_terms") or []),
+    ]
+    try:
+        citation = _citation_for_source(row.get("source") or "")
+    except Exception:
+        citation = {}
+    parts.extend([
+        citation.get("title") or "",
+        citation.get("authors") or "",
+        citation.get("source_line") or "",
+    ])
+    return " ".join(parts).lower()
+
+
+def _source_followup_query(context: str) -> str:
+    matches = SOURCE_FOLLOWUP_HINT_RE.findall(context or "")
+    if matches:
+        return matches[-1]
+    sentences = re.findall(r"[^.!?]+[.!?]?", context or "")
+    return sentences[-1] if sentences else (context or "")
+
+
+def _answer_source_followup(question: str, context: str, project: str = None):
+    if not SOURCE_FOLLOWUP_RE.search(question or ""):
+        return None
+
+    sources = _sources_from_context(context or "", project=project)
+    if len(sources) == 1:
+        row = _row_for_source(sources[0], project=project)
+        title = row.get("label") or Path(sources[0]).name
+        return {
+            "text": f"The source is {sources[0]} — {title}.",
+            "evidence": {},
+            "grounded": True,
+            "passages_offered": 0,
+            "metrics": {
+                "source_followup": True,
+                "count": 1,
+                "sources": [sources[0]],
+            },
+        }
+
+    query_text = _source_followup_query(context or "")
+    words = _lookup_words(query_text)
+    if not words:
+        return None
+
+    try:
+        rows = search_document_uploads(project=project, limit=1000)
+    except Exception:
+        rows = []
+    ranked = []
+    for row in rows:
+        haystack = _source_lookup_text(row)
+        score = sum(3 if word in (row.get("label") or "").lower() else 1
+                    for word in words if word in haystack)
+        if score:
+            ranked.append((score, row))
+    if not ranked:
+        return None
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    best_score, best = ranked[0]
+    if len(ranked) > 1 and ranked[1][0] == best_score:
+        return None
+
+    source = best.get("source") or ""
+    title = best.get("label") or Path(source).name
+    return {
+        "text": f"The source is {source} — {title}.",
+        "evidence": {},
+        "grounded": True,
+        "passages_offered": 0,
+        "metrics": {
+            "source_followup": True,
+            "count": 1,
+            "score": best_score,
+            "sources": [source] if source else [],
+        },
+    }
 
 
 def _row_for_source(source: str, project: str = None) -> dict:
@@ -1016,22 +1367,48 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     scope = project or CURRENT_PROJECT
     last_user = messages[-1]["content"]
     recent_context = " ".join(m.get("content", "") for m in messages[-8:])
+    plan = _plan_query(last_user, recent_context)
 
     if ground and last_user.strip():
         bibliography = _answer_annotated_bibliography(
             last_user, model=model, project=scope, on_token=on_token,
             echo=echo)
         if bibliography:
-            return bibliography
+            bibliography["metrics"]["route"] = "document_registry"
+            return _quality_finish(
+                bibliography, last_user, plan, project=scope,
+                improvements=["used_document_registry_for_bibliography"])
+
+        source_followup = _answer_source_followup(
+            last_user, recent_context, project=scope)
+        if source_followup:
+            source_followup["metrics"]["route"] = "document_registry"
+            return _quality_finish(
+                source_followup, last_user, plan, project=scope,
+                improvements=["resolved_followup_against_structured_context"])
 
         inventory = _answer_document_inventory(last_user, project=scope)
         if inventory:
-            return inventory
+            inventory["metrics"]["route"] = "document_registry"
+            return _quality_finish(
+                inventory, last_user, plan, project=scope,
+                improvements=["used_document_registry_for_inventory"])
 
         metadata = _answer_document_metadata(
             last_user, recent_context, project=scope)
         if metadata:
-            return metadata
+            metadata["metrics"]["route"] = "document_registry"
+            return _quality_finish(
+                metadata, last_user, plan, project=scope,
+                improvements=["used_document_registry_for_metadata"])
+
+        store_search = _answer_document_store_search(
+            last_user, project=scope)
+        if store_search:
+            store_search["metrics"]["route"] = "document_store"
+            return _quality_finish(
+                store_search, last_user, plan, project=scope,
+                improvements=["mined_document_store_before_chroma"])
 
     # A direct file reference ("summarize GCU/EBSCO-FullText-07_26_2026.pdf")
     # names one specific file, not a topic -- gather_evidence() below would
@@ -1048,12 +1425,18 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
         reference_summary = _summarize_reference_sources(
             last_user, model=model, project=scope)
         if reference_summary:
-            return reference_summary
+            reference_summary["metrics"]["route"] = "document_store"
+            return _quality_finish(
+                reference_summary, last_user, plan, project=scope,
+                improvements=["summarized_documents_matching_reference"])
 
         listed = _summarize_context_sources(
             last_user, recent_context, model=model, project=scope)
         if listed:
-            return listed
+            listed["metrics"]["route"] = "document_store"
+            return _quality_finish(
+                listed, last_user, plan, project=scope,
+                improvements=["summarized_context_sources_directly"])
 
         source = summarize.detect_file_reference(last_user, project=scope)
         if source:
@@ -1064,13 +1447,17 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 text = result["summary"]
                 if result["truncated"]:
                     text += f"\n\n(truncated at {result['chars']} characters)"
-                return {
+                direct = {
                     "text": text,
                     "evidence": {},
                     "grounded": True,
                     "passages_offered": 0,
                     "metrics": result["metrics"],
                 }
+                direct["metrics"]["route"] = "document_store"
+                return _quality_finish(
+                    direct, last_user, plan, project=scope,
+                    improvements=["read_named_source_directly"])
             except (FileNotFoundError, ValueError):
                 # Named file couldn't actually be read (extraction failure,
                 # since detect_file_reference() only matches sources that
@@ -1081,6 +1468,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
 
     registry = CitationRegistry()
     evidence = []
+    improvements = []
 
     if ground:
         if last_user.strip():
@@ -1114,6 +1502,20 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 + gather_evidence([query_text], registry, per_query=6,
                                   window=1, project=scope)
             )
+            source_count = len({
+                ev.source for ev in evidence
+                if ev.source and ev.source != "document-index"
+            })
+            needs_source_mining = (
+                plan["intent"] in {"cross_document_search", "document_content"}
+                and (not evidence or source_count < 1)
+            )
+            if needs_source_mining:
+                mined = _source_mining_evidence(
+                    query_text, registry, project=scope)
+                if mined:
+                    evidence = mined + evidence
+                    improvements.append("mined_document_store_after_thin_retrieval")
 
     system = CHAT_SYSTEM
     if evidence:
@@ -1158,6 +1560,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
         retry_text = strip_thinking(retry_text)
         if not _is_degenerate(retry_text):
             text, metrics = retry_text, retry_metrics
+            improvements.append("retried_degenerate_generation")
         else:
             text = ("That didn't come out right, the model repeated citation "
                     "markers instead of answering. Try asking again, maybe "
@@ -1170,8 +1573,12 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
 
     text, evidence_out = _prefix_markers(text, registry, turn_id)
 
-    return {"text": text, "evidence": evidence_out, "grounded": bool(evidence),
-            "passages_offered": len(evidence), "metrics": metrics}
+    result = {"text": text, "evidence": evidence_out, "grounded": bool(evidence),
+              "passages_offered": len(evidence), "metrics": metrics}
+    result["metrics"]["route"] = plan.get("primary_source")
+    return _quality_finish(
+        result, last_user, plan, project=scope, evidence=evidence,
+        improvements=improvements)
 
 
 def _prefix_markers(text: str, registry: CitationRegistry, turn_id: str = None):
