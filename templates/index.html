@@ -65,16 +65,23 @@
   --shadow:rgba(46,30,36,.08);
 }
 
-/* GRASS — inspired by macOS Terminal's Grass profile: deep green glass,
-   bright phosphor ink, and a little amber for proof marks. */
+/* GRASS — bright macOS Terminal Grass-style palette. */
 [data-theme="grass"]{
-  --paper:#001b0b; --paper-2:#052814; --paper-3:#0b3a1f;
-  --ink:#d8ffd3; --ink-soft:#9ddf9a; --ink-faint:#78b976;
-  --rule:#1e5a31; --rule-soft:#164525;
-  --red:#ffb36b; --red-wash:#3b2410;
-  --blue:#68d372; --blue-wash:#10371b;
-  --green:#9df08f;
-  --shadow:rgba(0,0,0,.45);
+  --paper:#65e550; --paper-2:#58cf45; --paper-3:#4fbd3f;
+  --ink:#d5d24c; --ink-soft:#d5d24c; --ink-faint:#d5d24c;
+  --rule:#3b9b31; --rule-soft:#48b63b;
+  --red:#b64926; --red-wash:#2f1209;
+  --blue:#0200a9; --blue-wash:#52c74c;
+  --green:#0200a9;
+  --shadow:rgba(0,0,0,.18);
+}
+
+[data-theme="grass"] .chatmsg.assistant .bubble,
+[data-theme="grass"] .stream,
+[data-theme="grass"] #sumWrap .slab > div:not(.eyebrow),
+[data-theme="grass"] #docWrap .column,
+[data-theme="grass"] #docWrapBench .column{
+  color:#0200a9;
 }
 
 :root{
@@ -184,7 +191,7 @@ nav button:focus-visible,.btn:focus-visible,.cite:focus-visible{
 .sw-light{background:#edefe9;border-color:#c9cec3}
 .sw-dark{background:#16181a;border-color:#343a3c}
 .sw-pink{background:#faeef0;border-color:#e0c3cb}
-.sw-grass{background:#001b0b;border-color:#68d372}
+.sw-grass{background:#000000;border-color:#65e550}
 .statusbit{
   font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;
   padding:11px 16px;color:var(--ink-faint);border-left:1px solid var(--rule);
