@@ -149,11 +149,17 @@ def active(payload=None):
     if payload:
         name = payload.get("project")
     name = name or request.args.get("project")
+    if name == projects.ALL:
+        return projects.ALL
     return writer.set_project(name or projects.UNFILED)
 
 
 def plan_file():
     return writer.plan_path()
+
+
+def _specific_project_required():
+    return jsonify({"error": "choose a specific project for this action"}), 400
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +249,7 @@ def index():
 
 @app.get("/api/status")
 def status():
-    active()
+    proj = active()
     have = writer.available_models()
     roles = [
         ("outliner", writer.OUTLINE_MODEL, "OLLAMA_OUTLINE_MODEL"),
@@ -265,10 +271,10 @@ def status():
         # picked up by a restart.
         "ask_retry_guard": hasattr(ask, "_is_degenerate"),
         "ask_history_sanitizer": hasattr(ask, "_sanitize_history"),
-        "project": writer.CURRENT_PROJECT,
+        "project": proj,
         "projects": projects.stats(collection),
-        "output": str(writer.output_dir()),
-        "has_plan": plan_file().exists(),
+        "output": None if proj == projects.ALL else str(writer.output_dir()),
+        "has_plan": False if proj == projects.ALL else plan_file().exists(),
     })
 
 
@@ -344,7 +350,8 @@ def api_tuning():
                 ".DS_Store,.git,.obsidian,.trash,.venv,.writer,__pycache__,node_modules,venv",
             ),
         },
-        "misses": list_retrieval_misses(project=proj, limit=50),
+        "misses": list_retrieval_misses(
+            project=None if proj == projects.ALL else proj, limit=50),
     })
 
 
@@ -470,7 +477,8 @@ def api_tuning_misses():
 
 @app.get("/api/plan")
 def get_plan():
-    active()
+    if active() == projects.ALL:
+        return jsonify({"outline": None})
     PLAN = plan_file()
     if not PLAN.exists():
         return jsonify({"outline": None})
@@ -479,7 +487,8 @@ def get_plan():
 
 @app.post("/api/plan")
 def save_plan():
-    active(request.json)
+    if active(request.json) == projects.ALL:
+        return _specific_project_required()
     PLAN = plan_file()
     outline = request.json.get("outline")
     PLAN.write_text(json.dumps(outline, indent=2))
@@ -493,7 +502,8 @@ def delete_plan():
     plus whatever editing you did to it, which is too much to lose to a
     misclick. The slate looks clean either way.
     """
-    active()
+    if active() == projects.ALL:
+        return _specific_project_required()
     PLAN = plan_file()
     if not PLAN.exists():
         return jsonify({"deleted": False})
@@ -513,7 +523,8 @@ def delete_plan():
 
 @app.get("/api/plans")
 def list_plans():
-    active()
+    if active() == projects.ALL:
+        return jsonify({"plans": []})
     archive = writer.project_paths()["plans"]
     if not archive.exists():
         return jsonify({"plans": []})
@@ -531,7 +542,8 @@ def list_plans():
 
 @app.post("/api/plans/<name>/restore")
 def restore_plan(name):
-    active()
+    if active() == projects.ALL:
+        return _specific_project_required()
     PLAN = plan_file()
     src = writer.project_paths()["plans"] / Path(name).name
     if not src.exists():
@@ -544,6 +556,8 @@ def restore_plan(name):
 @app.post("/api/outline")
 def make_outline():
     proj = active(request.json)
+    if proj == projects.ALL:
+        return _specific_project_required()
     topic = (request.json.get("topic") or "").strip()
     brief = (request.json.get("brief") or "").strip()
     if not topic:
@@ -638,6 +652,8 @@ def api_summarize():
 @app.post("/api/draft")
 def draft():
     proj = active(request.json)
+    if proj == projects.ALL:
+        return _specific_project_required()
     outline = request.json.get("outline")
     if not outline or not outline.get("sections"):
         return jsonify({"error": "outline with at least one section required"}), 400

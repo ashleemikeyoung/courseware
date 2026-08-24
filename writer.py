@@ -470,7 +470,7 @@ def gather_evidence(
     if collection.count() == 0:
         return []
 
-    scope = project or CURRENT_PROJECT
+    scope = None if project == projects.ALL else (project or CURRENT_PROJECT)
     hits: dict = {}
     hybrid_first = []
 

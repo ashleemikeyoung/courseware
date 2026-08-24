@@ -783,6 +783,8 @@ def search_document_uploads(query: str = None, project: str = None,
                             exclude_genres: list = None,
                             limit: int = 50):
     """Query upload-style document metadata from libSQL."""
+    if project == "__all__":
+        project = None
     client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
     try:
         clauses = []

@@ -669,6 +669,10 @@ def _project_of(rel_path: str) -> str:
     return parts[0] if len(parts) > 1 else "unfiled"
 
 
+def _project_scope(project: str):
+    return None if project in (None, "", projects.ALL) else project
+
+
 def index_file(file: Path, current_hash: str) -> int:
     text = load_file(file)
     if not text.strip():
@@ -1347,6 +1351,7 @@ def backfill_document_profiles(project: str = None, overwrite: bool = False) -> 
         })
         return summary
 
+    project = _project_scope(project)
     for source in sorted(get_indexed_sources()):
         if project and projects.project_of(source) != project:
             continue
@@ -1389,6 +1394,7 @@ def _semantic_search(question: str, n_results: int = 5, project: str = None):
 
 
 def _semantic_candidates(question: str, n_results: int, project: str = None):
+    project = _project_scope(project)
     if collection.count() == 0:
         return []
     results = _semantic_search(question, n_results=n_results, project=project)
@@ -1407,6 +1413,7 @@ def _semantic_candidates(question: str, n_results: int, project: str = None):
 
 
 def _fulltext_candidates(question: str, n_results: int, project: str = None):
+    project = _project_scope(project)
     if collection.count() == 0 or not hasattr(collection, "text_search"):
         return []
     rows = collection.text_search(
@@ -1709,6 +1716,7 @@ def mine_document_store(question: str, project: str = None,
     When a result is thin or ambiguous, this scans the stored files directly
     and returns source-level matches plus extracted snippets.
     """
+    project = _project_scope(project)
     words = meaningful_words(question)
     required_domain_groups = _query_required_domain_groups(question)
     if not words and not required_domain_groups:
@@ -1775,6 +1783,7 @@ def mine_document_store(question: str, project: str = None,
 
 
 def _registry_candidates(words: list, project: str = None) -> list:
+    project = _project_scope(project)
     if not MEMORY_AVAILABLE or search_synopses is None or not words:
         return []
     prefix = f"{project}/" if project else None
@@ -1810,6 +1819,7 @@ def _registry_candidates(words: list, project: str = None) -> list:
 
 
 def _citation_candidates(words: list, project: str = None) -> list:
+    project = _project_scope(project)
     if not MEMORY_AVAILABLE or search_citations is None or not words:
         return []
     prefix = f"{project}/" if project else None
@@ -1879,6 +1889,7 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
     adapts it back to the long-standing Chroma-like response shape used by
     MCP, Claude Desktop, Codex, summarize.py, and orchestrator.py.
     """
+    project = _project_scope(project)
     if collection.count() == 0:
         return []
 

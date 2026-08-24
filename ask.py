@@ -33,6 +33,7 @@ from writer import (
 # two places quietly agreeing on the same borrowed default instead of ask.py
 # declaring its own). Callers can still override with an explicit model.
 from config import ASK_MODEL
+import projects
 import summarize
 
 # writer.py's import above already inserts memory/ onto sys.path (see its
@@ -1364,7 +1365,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
         raise ValueError("messages must end with a user turn")
 
     model = model or ASK_MODEL
-    scope = project or CURRENT_PROJECT
+    scope = projects.ALL if project == projects.ALL else (project or CURRENT_PROJECT)
     last_user = messages[-1]["content"]
     recent_context = " ".join(m.get("content", "") for m in messages[-8:])
     plan = _plan_query(last_user, recent_context)

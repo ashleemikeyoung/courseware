@@ -76,6 +76,17 @@
   --shadow:rgba(0,0,0,.35);
 }
 
+/* OCEAN — deep terminal blue with crisp white foreground. */
+[data-theme="ocean"]{
+  --paper:#224fbc; --paper-2:#1d45a6; --paper-3:#173b90;
+  --ink:#ffffff; --ink-soft:#eaf0ff; --ink-faint:#d5e1ff;
+  --rule:#6f8ee0; --rule-soft:#4f72cf;
+  --red:#ffd0c2; --red-wash:#18387f;
+  --blue:#ffffff; --blue-wash:#2d5fd0;
+  --green:#ffffff;
+  --shadow:rgba(0,0,0,.32);
+}
+
 :root{
   --serif:Charter,"Bitstream Charter","Iowan Old Style",Georgia,serif;
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
@@ -132,7 +143,8 @@ button,input,textarea,select{font:inherit;color:inherit}
 :root:not([data-theme]) .mark:nth-of-type(1),
 [data-theme="dark"]  .mark:nth-of-type(2),
 [data-theme="pink"]  .mark:nth-of-type(3),
-[data-theme="grass"] .mark:nth-of-type(4){display:block}
+[data-theme="grass"] .mark:nth-of-type(4),
+[data-theme="ocean"] .mark:nth-of-type(5){display:block}
 /* The wordmark carries the brand, so this only has to name the tool. Set on
    the baseline of the logo rather than centred, so the two align optically.
    Caveat at a slightly larger size than the mono default used to be --
@@ -184,6 +196,7 @@ nav button:focus-visible,.btn:focus-visible,.cite:focus-visible{
 .sw-dark{background:#16181a;border-color:#343a3c}
 .sw-pink{background:#faeef0;border-color:#e0c3cb}
 .sw-grass{background:#000000;border-color:#65e550}
+.sw-ocean{background:#224fbc;border-color:#ffffff}
 .statusbit{
   font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;
   padding:11px 16px;color:var(--ink-faint);border-left:1px solid var(--rule);
@@ -448,6 +461,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <img class="mark" src="/static/logo-dark.png" alt="" aria-hidden="true">
     <img class="mark" src="/static/logo-pink.png" alt="" aria-hidden="true">
     <img class="mark" src="/static/logo-grass.png" alt="" aria-hidden="true">
+    <img class="mark" src="/static/logo-ocean.png" alt="" aria-hidden="true">
     <span class="wordmark-sub">ask ash</span>
   </div>
   <div class="projpick">
@@ -455,7 +469,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <button id="btnNewProj" title="New project">+</button>
   </div>
   <nav id="nav">
-    <button data-tab="setup" aria-selected="true">Setup</button>
+    <button data-tab="setup" aria-selected="true">Status</button>
     <button data-tab="ask" aria-selected="false">Ask</button>
     <button data-tab="summarize" aria-selected="false">Summarize</button>
     <button data-tab="outline" aria-selected="false">Outline</button>
@@ -469,6 +483,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <button class="sw-dark"  data-theme-set="dark"  title="Dark"  aria-pressed="false"></button>
     <button class="sw-pink"  data-theme-set="pink"  title="Ballet pink" aria-pressed="false"></button>
     <button class="sw-grass" data-theme-set="grass" title="Grass" aria-pressed="false"></button>
+    <button class="sw-ocean" data-theme-set="ocean" title="Ocean" aria-pressed="false"></button>
   </div>
   <div class="statusbit" id="statusbit">connecting</div>
 </div>
@@ -481,11 +496,11 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 
 <!-- SETUP -->
 <section class="panel on" id="p-setup"><div class="wrap">
-  <p class="eyebrow">Before you start</p>
-  <h1>What the machine has to work with</h1>
-  <p class="lede">Projects are folders under your documents root. Retrieval,
-    outlines, drafts, and comparisons all stay inside the project you have
-    selected. Everything runs on this computer.</p>
+  <p class="eyebrow">Local status</p>
+  <h1>Projects and index health</h1>
+  <p class="lede">This is a status page. Your projects are source folders under
+    the documents root; use this page to confirm what is indexed, rescan files,
+    and check the local model setup.</p>
   <div class="grid3" id="setupgrid"></div>
   <div class="slab" style="margin-bottom:20px">
     <p class="eyebrow" style="margin-bottom:12px">Model roles</p>
@@ -1940,7 +1955,8 @@ async function loadProjects(keep){
     STATE.project = null; return;
   }
   j.projects.forEach(p => {
-    const o = el("option", "", `${p.name}  ${p.chunks.toLocaleString()} chunks`);
+    const label = p.label || p.name;
+    const o = el("option", "", `${label}  ${p.chunks.toLocaleString()} chunks`);
     o.value = p.name; sel.appendChild(o);
   });
   const saved = keep || localStorage_get();
@@ -1963,6 +1979,11 @@ async function switchProject(name){
   $("#chatGlosses").innerHTML = ""; renderChat();
   $("#draftlog").style.display = "none"; $("#outlog").style.display = "none";
   await loadStatus();
+  if (STATE.project === "__all__"){
+    STATE.outline = null; renderOutline();
+    toast("Searching all projects");
+    return;
+  }
   const j = await (await fetch(qp("/api/plan"))).json();
   STATE.outline = j.outline; renderOutline();
   if (j.outline) $("#topic").value = j.outline.title || "";
@@ -1991,10 +2012,14 @@ $("#btnNewProj").onclick = async () => {
   checkUpdateStatus();
   setInterval(checkUpdateStatus, 15000);
   if (STATE.project){
-    const j = await (await fetch(qp("/api/plan"))).json();
-    if (j.outline){ STATE.outline = j.outline; renderOutline();
-      $("#topic").value = j.outline.title || ""; }
-    else renderOutline();
+    if (STATE.project !== "__all__"){
+      const j = await (await fetch(qp("/api/plan"))).json();
+      if (j.outline){ STATE.outline = j.outline; renderOutline();
+        $("#topic").value = j.outline.title || ""; }
+      else renderOutline();
+    } else {
+      renderOutline();
+    }
     show("ask");
   }
 })();

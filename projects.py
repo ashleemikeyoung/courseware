@@ -40,6 +40,7 @@ PROJECTS_ROOT = Path(os.getenv("PROJECTS_FOLDER", BASE_DIR / "projects"))
 
 # Files sitting loose at the documents root, belonging to no folder.
 UNFILED = "unfiled"
+ALL = "__all__"
 
 DEFAULT_IGNORED = {
     ".git", ".obsidian", "__pycache__", ".DS_Store", "node_modules",
@@ -115,11 +116,13 @@ def project_of(rel_path: str) -> str:
 
 def source_root(name: str) -> Path:
     """Where a project's documents live."""
-    return DOCUMENTS_ROOT if name == UNFILED else DOCUMENTS_ROOT / name
+    return DOCUMENTS_ROOT if name in {UNFILED, ALL} else DOCUMENTS_ROOT / name
 
 
 def safe(name: str) -> str:
     """Folder names come from disk, but they also arrive over HTTP. Sanitize."""
+    if name == ALL:
+        return ALL
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", (name or "").strip()).strip("-.")
     return cleaned or UNFILED
 
@@ -160,13 +163,31 @@ def stats(collection=None) -> list:
     ignored = ignored_dirs()
 
     by_project = {}
+    total_chunks = 0
     if collection is not None and collection.count():
         got = collection.get(include=["metadatas"])
         for meta in got["metadatas"]:
             proj = meta.get("project") or project_of(meta.get("source", ""))
             by_project[proj] = by_project.get(proj, 0) + 1
+            total_chunks += 1
 
     out = []
+    all_files = [
+        f for f in DOCUMENTS_ROOT.rglob("*")
+        if f.is_file() and f.suffix.lower() in extensions
+        and not any(part in ignored or part.startswith(".")
+                    for part in f.relative_to(DOCUMENTS_ROOT).parts[:-1])
+    ] if DOCUMENTS_ROOT.exists() else []
+    out.append({
+        "name": ALL,
+        "label": "All projects",
+        "files": len(all_files),
+        "chunks": total_chunks,
+        "documents": 0,
+        "has_plan": False,
+        "path": str(DOCUMENTS_ROOT),
+    })
+
     for name in discover():
         root = source_root(name)
         if name == UNFILED:
@@ -181,6 +202,7 @@ def stats(collection=None) -> list:
         p = paths(name)
         out.append({
             "name": name,
+            "label": name,
             "files": len(files),
             "chunks": by_project.get(name, 0),
             "documents": len(list(p["output"].glob("*.md"))) if p["output"].exists() else 0,

@@ -26,6 +26,7 @@ implementation of its own.
 
 import sys
 from pathlib import Path
+import projects
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "memory"))
 from memory_client import find_citation
@@ -47,6 +48,8 @@ def topup(query: str, seen_sources: set, project: str = None) -> list:
     the whole search/answer. Callers that want to surface the failure can
     check for a "_warning" key in the (otherwise empty) returned list.
     """
+    if project == projects.ALL:
+        project = None
     hits = []
     seen = set(seen_sources)
     checked = set()

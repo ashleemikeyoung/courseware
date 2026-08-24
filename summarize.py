@@ -35,6 +35,7 @@ from pathlib import Path
 
 import rag
 import citations
+import projects
 from writer import ask_ollama_long
 from config import ASK_MODEL
 try:
@@ -111,6 +112,7 @@ def find_documents(term: str, project: str = None) -> list:
     Returns source paths relative to DOCUMENTS_FOLDER, deduped, in the
     order found. resolve_path() turns one into a real file on disk.
     """
+    project = None if project == projects.ALL else project
     term = reference_query_term(term)
     seen = set()
     sources = []
@@ -164,6 +166,7 @@ def detect_file_reference(text: str, project: str = None) -> str:
     BEFORE retrieval, so a direct file reference skips chunk-based
     grounding entirely in favor of reading the real file.
     """
+    project = None if project == projects.ALL else project
     if rag.collection.count() == 0:
         return None
     all_data = rag.collection.get(include=["metadatas"])
