@@ -16,7 +16,6 @@ from rag import (
     scan_documents,
     get_indexed_sources,
     collection,
-    db_client,
     DOCUMENTS_FOLDER,
     SCAN_INTERVAL,
     file_hash,
@@ -915,10 +914,8 @@ def cmd_clear():
         "This will delete the entire database. Type 'yes' to confirm: "
     ).strip()
     if confirm.lower() == "yes":
-        import rag
-        db_client.delete_collection("my_documents")
-        rag.collection = db_client.get_or_create_collection("my_documents")
-        globals()["collection"] = rag.collection
+        ids = collection.get()["ids"]
+        collection.delete(ids=ids)
         _recent_turns.clear()  # old context may reference now-deleted docs
         print("Database cleared. Type /rescan to rebuild.\n")
     else:

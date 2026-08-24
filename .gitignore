@@ -3,6 +3,7 @@ __pycache__/
 .env
 .env-bak
 chroma_db/
+lancedb/
 documents/
 projects/*/output/
 projects/*/plans/

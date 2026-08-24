@@ -14,10 +14,11 @@ well-tested tool for exactly this job, not something worth reinventing
 alongside it.
 
 Only files that matter for what the running server actually executes get
-tracked. Data and local state -- documents/, chroma_db/, projects/*/output,
+tracked. Data and local state -- documents/, chroma_db/, lancedb/,
+projects/*/output,
 plans/, .env, __pycache__ -- are excluded via .gitignore, since none of
 that is code: committing .env would leak secrets into history, and
-committing chroma_db or documents would just be enormous, constantly
+committing vector indexes or documents would just be enormous, constantly
 churning, and pointless to "roll back."
 
 Nothing here has any opinion about process restarts -- that's app.py's job
@@ -35,6 +36,7 @@ __pycache__/
 .env
 .env-bak
 chroma_db/
+lancedb/
 documents/
 projects/*/output/
 projects/*/plans/
@@ -56,6 +58,7 @@ memory/keys/
 
 RUNTIME_UPDATE_PREFIXES = (
     "chroma_db/",
+    "lancedb/",
     "documents/",
     "memory/data/",
     "memory/keys/",
@@ -194,7 +197,7 @@ def history(n: int = 20) -> list:
 def rollback(commit_hash: str):
     """
     Hard reset tracked files to a previous commit. Never touches anything
-    git doesn't track -- documents/, chroma_db/, .env, and every other
+    git doesn't track -- documents/, chroma_db/, lancedb/, .env, and every other
     ignored path are completely unaffected, since git only ever manages
     what it's tracking.
     """

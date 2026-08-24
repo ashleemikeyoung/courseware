@@ -27,7 +27,6 @@ from config import BASE_DIR, OLLAMA_URL, VISION_MODEL
 
 from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
-import chromadb
 
 # Safe at module level: projects.py has no top-level import of rag.py (its
 # one dependency on SUPPORTED_EXTENSIONS, in stats(), is a local import
@@ -124,8 +123,142 @@ SUPPORTED_EXTENSIONS = set(filter(None, [
 ]))
 
 # ---------------------------------------------------------------------------
-# Embedding model and database — all paths absolute
+# Embedding model and vector database — all paths absolute
 # ---------------------------------------------------------------------------
+
+class LanceCollection:
+    """
+    Small Chroma-shaped compatibility wrapper over LanceDB.
+
+    The rest of the app still expects collection.count/get/add/delete/query.
+    Keeping those methods here lets us change storage without rewriting every
+    retrieval path at once.
+    """
+    def __init__(self, path: str, name: str, dimension: int):
+        try:
+            import lancedb
+            import pyarrow as pa
+        except ImportError as e:
+            raise RuntimeError(
+                "LanceDB is required for this RAG index. Install it in the "
+                "rag environment with: pip install lancedb"
+            ) from e
+
+        self.path = path
+        self.name = name
+        self.dimension = dimension
+        self.db = lancedb.connect(path)
+
+        if name in self.db.table_names():
+            self.table = self.db.open_table(name)
+        else:
+            schema = pa.schema([
+                pa.field("id", pa.string()),
+                pa.field("vector", pa.list_(pa.float32(), dimension)),
+                pa.field("document", pa.string()),
+                pa.field("source", pa.string()),
+                pa.field("project", pa.string()),
+                pa.field("filename", pa.string()),
+                pa.field("file_hash", pa.string()),
+                pa.field("metadata_json", pa.string()),
+            ])
+            self.table = self.db.create_table(name, schema=schema)
+
+    def count(self) -> int:
+        return self.table.count_rows()
+
+    def _quote(self, value: str) -> str:
+        return "'" + str(value).replace("'", "''") + "'"
+
+    def _where_expr(self, where: dict = None) -> str:
+        if not where:
+            return ""
+        parts = []
+        for key, value in where.items():
+            if key not in {"id", "source", "project", "filename", "file_hash"}:
+                continue
+            parts.append(f"{key} = {self._quote(value)}")
+        return " AND ".join(parts)
+
+    def _metadata_from_row(self, row: dict) -> dict:
+        try:
+            meta = json.loads(row.get("metadata_json") or "{}")
+        except Exception:
+            meta = {}
+        for key in ("source", "project", "filename", "file_hash"):
+            if row.get(key) is not None:
+                meta[key] = row.get(key)
+        return meta
+
+    def _rows(self, ids: list = None, where: dict = None) -> list:
+        if self.count() == 0:
+            return []
+        expr = self._where_expr(where)
+        if ids:
+            id_expr = "id IN (" + ", ".join(self._quote(i) for i in ids) + ")"
+            expr = f"{expr} AND {id_expr}" if expr else id_expr
+        query = self.table
+        if expr:
+            query = query.search().where(expr)
+        else:
+            query = query.search()
+        return query.limit(self.count()).to_list()
+
+    def get(self, ids: list = None, where: dict = None, include: list = None) -> dict:
+        include = include or []
+        rows = self._rows(ids=ids, where=where)
+        result = {"ids": [row["id"] for row in rows]}
+        if "documents" in include:
+            result["documents"] = [row.get("document") or "" for row in rows]
+        if "metadatas" in include:
+            result["metadatas"] = [self._metadata_from_row(row) for row in rows]
+        return result
+
+    def add(self, ids: list, embeddings: list, documents: list, metadatas: list):
+        if not ids:
+            return
+        self.delete(ids=ids)
+        rows = []
+        for cid, vector, doc, meta in zip(ids, embeddings, documents, metadatas):
+            meta = dict(meta or {})
+            rows.append({
+                "id": cid,
+                "vector": vector,
+                "document": doc,
+                "source": meta.get("source"),
+                "project": meta.get("project"),
+                "filename": meta.get("filename"),
+                "file_hash": meta.get("file_hash"),
+                "metadata_json": json.dumps(meta),
+            })
+        self.table.add(rows)
+
+    def delete(self, ids: list):
+        if not ids or self.count() == 0:
+            return
+        for i in range(0, len(ids), 500):
+            batch = ids[i:i + 500]
+            expr = "id IN (" + ", ".join(self._quote(cid) for cid in batch) + ")"
+            self.table.delete(expr)
+
+    def query(self, query_embeddings: list, n_results: int = 5,
+              where: dict = None, **kwargs) -> dict:
+        if self.count() == 0:
+            return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
+
+        expr = self._where_expr(where)
+        out = {"ids": [], "documents": [], "metadatas": [], "distances": []}
+        limit = min(n_results, self.count())
+        for vector in query_embeddings:
+            q = self.table.search(vector).limit(limit)
+            if expr:
+                q = q.where(expr, prefilter=True)
+            rows = q.to_list()
+            out["ids"].append([row["id"] for row in rows])
+            out["documents"].append([row.get("document") or "" for row in rows])
+            out["metadatas"].append([self._metadata_from_row(row) for row in rows])
+            out["distances"].append([row.get("_distance") for row in rows])
+        return out
 
 print("Loading embedding model...")
 embedder = SentenceTransformer(
@@ -133,11 +266,10 @@ embedder = SentenceTransformer(
     local_files_only=True,
 )
 
-CHROMA_PATH = str(BASE_DIR / "chroma_db")
-db_client = chromadb.PersistentClient(path=CHROMA_PATH)
-collection = db_client.get_or_create_collection("my_documents")
+VECTOR_DB_PATH = str(BASE_DIR / "lancedb")
+collection = LanceCollection(VECTOR_DB_PATH, "my_documents", 384)
 
-print(f"Database path:   {CHROMA_PATH}")
+print(f"Vector DB path:  {VECTOR_DB_PATH}")
 print(f"Documents path:  {DOCUMENTS_FOLDER}")
 print(f"Chunks in index: {collection.count()}")
 
