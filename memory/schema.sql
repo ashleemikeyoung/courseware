@@ -166,6 +166,51 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- ---------------------------------------------------------------------------
+-- Search criteria -- runtime-maintained retrieval policy.
+--
+-- These rows hold the terms and groups that shape search behavior: stopwords,
+-- low-signal query terms, domain triggers, and required domain terms. Keeping
+-- them here means retrieval can be tuned without editing rag.py or restarting
+-- every process. group_name links related criteria, e.g. "healthcare" trigger
+-- terms and "healthcare" required-match terms.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS search_criteria (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    criteria_type  TEXT NOT NULL, -- stopword | low_signal | domain_trigger | domain_term
+    group_name     TEXT NOT NULL DEFAULT '',
+    term           TEXT NOT NULL,
+    weight         REAL NOT NULL DEFAULT 1.0,
+    enabled        INTEGER NOT NULL DEFAULT 1,
+    notes          TEXT,
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(criteria_type, group_name, term)
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_criteria_type_group
+    ON search_criteria(criteria_type, group_name, enabled);
+
+-- Flexible miss reports captured from the tuning UI. Unlike retrieval_gaps,
+-- these do not require the expected source to already be a verified citation;
+-- they are raw examples for later search tuning, tests, or re-indexing.
+CREATE TABLE IF NOT EXISTS retrieval_misses (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    recorded_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    project          TEXT,
+    query            TEXT NOT NULL,
+    expected_source  TEXT,
+    actual_source    TEXT,
+    notes            TEXT,
+    status           TEXT NOT NULL DEFAULT 'open'
+);
+
+CREATE INDEX IF NOT EXISTS idx_retrieval_misses_project_time
+    ON retrieval_misses(project, recorded_at);
+
+CREATE INDEX IF NOT EXISTS idx_retrieval_misses_status
+    ON retrieval_misses(status);
+
 
 -- ---------------------------------------------------------------------------
 -- Documents -- one row per indexed source, holding an LLM-generated

@@ -5,6 +5,7 @@ import hashlib
 import math
 import re
 import subprocess
+import time
 import requests
 from pathlib import Path
 
@@ -42,6 +43,8 @@ try:
         record_document_upload_profile,
         search_citations,
         search_synopses,
+        get_search_criteria,
+        get_setting,
     )
     MEMORY_AVAILABLE = True
 except Exception as e:
@@ -50,6 +53,8 @@ except Exception as e:
     record_document_upload_profile = None
     search_citations = None
     search_synopses = None
+    get_search_criteria = None
+    get_setting = None
     MEMORY_AVAILABLE = False
     print(f"  [Warning] memory-db document registry unavailable: {e}")
 
@@ -566,7 +571,21 @@ def load_file(file: Path) -> str:
 # Chunking
 # ---------------------------------------------------------------------------
 
-def chunk_text(text, chunk_size=500, overlap=100):
+def _memory_int_setting(key: str, default: int) -> int:
+    if not MEMORY_AVAILABLE or get_setting is None:
+        return default
+    try:
+        return int(get_setting(key, str(default)))
+    except Exception as e:
+        print(f"  [Warning] memory setting {key} unavailable: {e}")
+        return default
+
+
+def chunk_text(text, chunk_size=None, overlap=None):
+    chunk_size = int(chunk_size or _memory_int_setting("rag_chunk_size", 500))
+    overlap = int(overlap if overlap is not None
+                  else _memory_int_setting("rag_chunk_overlap", 100))
+    overlap = max(0, min(overlap, chunk_size - 1))
     words = text.split()
     chunks = []
     start = 0
@@ -1326,18 +1345,55 @@ def _fulltext_candidates(question: str, n_results: int, project: str = None):
     return out
 
 
-_STOPWORDS = {
-    "a", "an", "the", "and", "or", "but", "if", "of", "in", "on", "at",
-    "to", "for", "with", "from", "by", "as", "is", "are", "was", "were",
-    "be", "been", "being", "do", "does", "did", "done", "has", "have",
-    "had", "having", "not", "no", "so", "than", "then", "this", "that",
-    "these", "those", "it", "its", "it's", "you", "your", "yours", "he",
-    "she", "they", "we", "i", "me", "my", "him", "her", "them", "us",
-    "our", "their", "who", "what", "when", "where",
-    "why", "how", "which", "can", "could", "should", "would", "will",
-    "shall", "about", "into", "over", "under", "again", "also", "just",
-    "up", "out", "off", "all", "any", "some", "such", "own",
+_BASIC_STOPWORDS_FALLBACK = {
+    "a", "an", "the", "and", "or", "but", "of", "in", "on", "at", "to",
+    "for", "with", "from", "by", "as", "is", "are", "was", "were", "be",
+    "been", "being", "do", "does", "did", "has", "have", "had", "not",
+    "this", "that", "these", "those", "it", "its", "you", "your", "who",
+    "what", "when", "where", "why", "how", "which", "about",
 }
+_SEARCH_CRITERIA_CACHE = {"loaded_at": 0.0, "rows": []}
+_SEARCH_CRITERIA_TTL_SECONDS = 30
+
+
+def _search_criteria_rows() -> list:
+    if not MEMORY_AVAILABLE or get_search_criteria is None:
+        return []
+    now = time.time()
+    if now - _SEARCH_CRITERIA_CACHE["loaded_at"] < _SEARCH_CRITERIA_TTL_SECONDS:
+        return list(_SEARCH_CRITERIA_CACHE["rows"])
+    try:
+        rows = get_search_criteria(enabled_only=True)
+        _SEARCH_CRITERIA_CACHE["loaded_at"] = now
+        _SEARCH_CRITERIA_CACHE["rows"] = rows
+        return list(rows)
+    except Exception as e:
+        print(f"  [Warning] search criteria unavailable from memory-db: {e}")
+        return list(_SEARCH_CRITERIA_CACHE["rows"])
+
+
+def _criteria_terms(criteria_type: str) -> set:
+    return {
+        (row.get("term") or "").lower()
+        for row in _search_criteria_rows()
+        if row.get("criteria_type") == criteria_type and row.get("term")
+    }
+
+
+def _domain_groups_from_criteria() -> dict:
+    groups = {}
+    for row in _search_criteria_rows():
+        group = row.get("group_name") or ""
+        term = (row.get("term") or "").lower()
+        ctype = row.get("criteria_type")
+        if not group or not term or ctype not in {"domain_trigger", "domain_term"}:
+            continue
+        groups.setdefault(group, {"triggers": set(), "terms": set()})
+        if ctype == "domain_trigger":
+            groups[group]["triggers"].add(term)
+        elif ctype == "domain_term":
+            groups[group]["terms"].add(term)
+    return groups
 
 
 def _terms(text: str) -> list:
@@ -1362,8 +1418,11 @@ def meaningful_words(text: str) -> list:
     terms identically rather than drifting apart over two copies of this.
     """
     words = []
+    stopwords = _criteria_terms("stopword") or _BASIC_STOPWORDS_FALLBACK
+    low_signal = _criteria_terms("low_signal")
     for clean in _terms(text):
-        if clean and len(clean) >= 2 and clean not in _STOPWORDS:
+        if (clean and len(clean) >= 2 and clean not in stopwords
+                and clean not in low_signal):
             words.append(clean)
     return words
 
@@ -1371,6 +1430,22 @@ def meaningful_words(text: str) -> list:
 def _word_count_score(text: str, words: list) -> int:
     text_lower = text.lower()
     return sum(text_lower.count(w) for w in words if len(w) >= 3)
+
+
+def _query_required_domain_groups(question: str) -> list:
+    q_terms = set(_terms(question or ""))
+    required = []
+    for group in _domain_groups_from_criteria().values():
+        if q_terms & group["triggers"]:
+            required.append(group["terms"])
+    return required
+
+
+def _matches_required_domain_groups(text: str, required_groups: list) -> bool:
+    if not required_groups:
+        return True
+    haystack = (text or "").lower()
+    return all(any(term in haystack for term in group) for group in required_groups)
 
 
 def _source_matches(source: str, words: list, question: str = "") -> int:
@@ -1383,6 +1458,8 @@ def _source_matches(source: str, words: list, question: str = "") -> int:
     if query_compact and query_compact in source_compact:
         score += 14
     for w in words:
+        if len(w) < 3:
+            continue
         if w in stem_lower or w in _compact(stem_lower):
             score += 6
         elif w in filename_lower or w in _compact(filename_lower):
@@ -1487,7 +1564,8 @@ def mine_document_store(question: str, project: str = None,
     and returns source-level matches plus extracted snippets.
     """
     words = meaningful_words(question)
-    if not words:
+    required_domain_groups = _query_required_domain_groups(question)
+    if not words and not required_domain_groups:
         return []
 
     rows_by_source = {}
@@ -1526,7 +1604,9 @@ def mine_document_store(question: str, project: str = None,
         if not text.strip():
             continue
 
-        searchable = f"{metadata_text}\n{text[:max_chars_per_file]}".lower()
+        searchable = f"{metadata_text}\n{source}\n{text[:max_chars_per_file]}".lower()
+        if not _matches_required_domain_groups(searchable, required_domain_groups):
+            continue
         score = _word_count_score(searchable, words)
         score += _source_matches(source, words, question=question)
         if score <= 0:
@@ -1657,6 +1737,7 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
         return []
 
     words = meaningful_words(question)
+    required_domain_groups = _query_required_domain_groups(question)
     candidates = {}
     all_data = collection.get(include=["metadatas", "documents"])
 
@@ -1696,6 +1777,15 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
         cid = all_data["ids"][i]
         doc = all_data["documents"][i]
         source = meta.get("source", "")
+        candidate_text = " ".join([
+            source,
+            meta.get("filename") or "",
+            meta.get("source_stem") or "",
+            doc,
+        ])
+        if not _matches_required_domain_groups(
+            candidate_text, required_domain_groups):
+            continue
         source_score = _source_matches(source, words, question=question)
         content_score = _word_count_score(doc, words)
         if source_score:
@@ -1717,7 +1807,18 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
         )
 
     ranked = sorted(
-        candidates.values(),
+        [
+            c for c in candidates.values()
+            if _matches_required_domain_groups(
+                " ".join([
+                    c["metadata"].get("source") or "",
+                    c["metadata"].get("filename") or "",
+                    c["metadata"].get("source_stem") or "",
+                    c["document"] or "",
+                ]),
+                required_domain_groups,
+            )
+        ],
         key=lambda c: (
             c["score"] + 0.35 * max(0, len(c["signals"]) - 1),
             "citation" in c["signals"],

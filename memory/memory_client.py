@@ -371,6 +371,191 @@ def pii_redaction_enabled() -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Search criteria -- retrieval policy maintained in libSQL.
+# ---------------------------------------------------------------------------
+
+DEFAULT_SEARCH_CRITERIA = [
+    *[
+        {"criteria_type": "stopword", "term": term}
+        for term in [
+            "a", "an", "the", "and", "or", "but", "if", "of", "in", "on",
+            "at", "to", "for", "with", "from", "by", "as", "is", "are",
+            "was", "were", "be", "been", "being", "do", "does", "did",
+            "done", "has", "have", "had", "having", "not", "no", "so",
+            "than", "then", "this", "that", "these", "those", "it", "its",
+            "it's", "you", "your", "yours", "he", "she", "they", "we", "i",
+            "me", "my", "him", "her", "them", "us", "our", "their", "who",
+            "what", "when", "where", "why", "how", "which", "can", "could",
+            "should", "would", "will", "shall", "about", "into", "over",
+            "under", "again", "also", "just", "up", "out", "off", "all",
+            "any", "some", "such", "own", "article", "articles", "document",
+            "documents", "file", "files", "source", "sources", "talk",
+            "talks", "discuss", "discusses", "deal", "deals", "using",
+            "use", "uses",
+        ]
+    ],
+    *[
+        {"criteria_type": "low_signal", "term": term}
+        for term in [
+            "ai", "genai", "generative", "artificial", "intelligence",
+            "implication", "implications", "impact", "impacts", "effect",
+            "effects",
+        ]
+    ],
+    *[
+        {"criteria_type": "domain_trigger", "group_name": "healthcare", "term": term}
+        for term in [
+            "healthcare", "health", "medical", "clinical", "patient",
+            "patients", "hospital", "hospitals", "medicine",
+        ]
+    ],
+    *[
+        {"criteria_type": "domain_term", "group_name": "healthcare", "term": term}
+        for term in [
+            "healthcare", "health care", "medical", "clinical", "patient",
+            "patients", "hospital", "hospitals", "medicine", "physician",
+            "physicians", "nurse", "nurses", "care delivery",
+        ]
+    ],
+    *[
+        {"criteria_type": "domain_trigger", "group_name": "legal", "term": term}
+        for term in [
+            "legal", "law", "lawyer", "lawyers", "attorney", "attorneys",
+            "privilege", "confidentiality",
+        ]
+    ],
+    *[
+        {"criteria_type": "domain_term", "group_name": "legal", "term": term}
+        for term in [
+            "legal", "law", "lawyer", "lawyers", "attorney", "attorneys",
+            "privilege", "confidentiality", "jurimetrics", "court",
+        ]
+    ],
+    *[
+        {"criteria_type": "domain_trigger", "group_name": "education", "term": term}
+        for term in [
+            "education", "educational", "student", "students", "teacher",
+            "teachers", "school", "schools", "university",
+        ]
+    ],
+    *[
+        {"criteria_type": "domain_term", "group_name": "education", "term": term}
+        for term in [
+            "education", "educational", "student", "students", "teacher",
+            "teachers", "school", "schools", "university", "learning",
+            "academic",
+        ]
+    ],
+]
+
+
+def upsert_search_criterion(criteria_type: str, term: str, group_name: str = "",
+                            weight: float = 1.0, enabled: bool = True,
+                            notes: str = None):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        client.execute(
+            "INSERT INTO search_criteria "
+            "(criteria_type, group_name, term, weight, enabled, notes) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(criteria_type, group_name, term) DO UPDATE SET "
+            "weight=excluded.weight, enabled=excluded.enabled, "
+            "notes=excluded.notes, updated_at=datetime('now')",
+            [criteria_type, group_name or "", term.lower(), weight,
+             1 if enabled else 0, notes],
+        )
+    finally:
+        client.close()
+
+
+def seed_default_search_criteria() -> int:
+    inserted = 0
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        for row in DEFAULT_SEARCH_CRITERIA:
+            result = client.execute(
+                "INSERT OR IGNORE INTO search_criteria "
+                "(criteria_type, group_name, term, weight, enabled, notes) "
+                "VALUES (?, ?, ?, ?, 1, ?)",
+                [
+                    row["criteria_type"],
+                    row.get("group_name", ""),
+                    row["term"].lower(),
+                    row.get("weight", 1.0),
+                    "seeded_default",
+                ],
+            )
+            if getattr(result, "rows_affected", 0):
+                inserted += result.rows_affected
+        return inserted
+    finally:
+        client.close()
+
+
+def get_search_criteria(criteria_type: str = None, enabled_only: bool = True):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        sql = (
+            "SELECT id, criteria_type, group_name, term, weight, enabled, notes, "
+            "updated_at FROM search_criteria"
+        )
+        clauses = []
+        params = []
+        if criteria_type:
+            clauses.append("criteria_type = ?")
+            params.append(criteria_type)
+        if enabled_only:
+            clauses.append("enabled = 1")
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY criteria_type, group_name, term"
+        result = client.execute(sql, params)
+        return [dict(zip(result.columns, row)) for row in result.rows]
+    finally:
+        client.close()
+
+
+def record_retrieval_miss(project: str, query: str, expected_source: str = None,
+                          actual_source: str = None, notes: str = None,
+                          status: str = "open"):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        result = client.execute(
+            "INSERT INTO retrieval_misses "
+            "(project, query, expected_source, actual_source, notes, status) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [project, query, expected_source, actual_source, notes, status],
+        )
+        return result.last_insert_rowid
+    finally:
+        client.close()
+
+
+def list_retrieval_misses(project: str = None, status: str = None,
+                          limit: int = 50):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        clauses = []
+        params = []
+        if project:
+            clauses.append("project = ?")
+            params.append(project)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        result = client.execute(
+            "SELECT id, recorded_at, project, query, expected_source, "
+            "actual_source, notes, status FROM retrieval_misses"
+            + where + " ORDER BY recorded_at DESC LIMIT ?",
+            params + [limit],
+        )
+        return [dict(zip(result.columns, row)) for row in result.rows]
+    finally:
+        client.close()
+
+
+# ---------------------------------------------------------------------------
 # Documents -- ingest-time synopses. See schema.sql for the "context aware
 # storage" reasoning: chroma_db stays chunk-level, this is document-level,
 # consulted alongside chroma's own search rather than instead of it.

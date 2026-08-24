@@ -65,6 +65,18 @@
   --shadow:rgba(46,30,36,.08);
 }
 
+/* GRASS — inspired by macOS Terminal's Grass profile: deep green glass,
+   bright phosphor ink, and a little amber for proof marks. */
+[data-theme="grass"]{
+  --paper:#001b0b; --paper-2:#052814; --paper-3:#0b3a1f;
+  --ink:#d8ffd3; --ink-soft:#9ddf9a; --ink-faint:#78b976;
+  --rule:#1e5a31; --rule-soft:#164525;
+  --red:#ffb36b; --red-wash:#3b2410;
+  --blue:#68d372; --blue-wash:#10371b;
+  --green:#9df08f;
+  --shadow:rgba(0,0,0,.45);
+}
+
 :root{
   --serif:Charter,"Bitstream Charter","Iowan Old Style",Georgia,serif;
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
@@ -120,7 +132,8 @@ button,input,textarea,select{font:inherit;color:inherit}
 [data-theme="light"] .mark:nth-of-type(1),
 :root:not([data-theme]) .mark:nth-of-type(1),
 [data-theme="dark"]  .mark:nth-of-type(2),
-[data-theme="pink"]  .mark:nth-of-type(3){display:block}
+[data-theme="pink"]  .mark:nth-of-type(3),
+[data-theme="grass"] .mark:nth-of-type(4){display:block}
 /* The wordmark carries the brand, so this only has to name the tool. Set on
    the baseline of the logo rather than centred, so the two align optically.
    Caveat at a slightly larger size than the mono default used to be --
@@ -171,6 +184,7 @@ nav button:focus-visible,.btn:focus-visible,.cite:focus-visible{
 .sw-light{background:#edefe9;border-color:#c9cec3}
 .sw-dark{background:#16181a;border-color:#343a3c}
 .sw-pink{background:#faeef0;border-color:#e0c3cb}
+.sw-grass{background:#001b0b;border-color:#68d372}
 .statusbit{
   font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;
   padding:11px 16px;color:var(--ink-faint);border-left:1px solid var(--rule);
@@ -222,15 +236,20 @@ h2{font-size:1.2rem;font-weight:600;margin:0 0 4px}
 
 label{display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;
   text-transform:uppercase;color:var(--ink-faint);margin:0 0 6px}
-input[type=text],textarea{
+input[type=text],input[type=number],textarea{
   width:100%;background:var(--paper-2);border:1px solid var(--rule);
   padding:10px 12px;border-radius:2px;font-family:var(--serif);
 }
-input[type=text]:focus,textarea:focus{outline:0;border-color:var(--blue);
+input[type=text]:focus,input[type=number]:focus,textarea:focus{outline:0;border-color:var(--blue);
   background:var(--paper)}
 textarea{resize:vertical;min-height:74px}
 .field{margin-bottom:18px}
 .row{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap}
+.field select{
+  width:100%;background:var(--paper-2);border:1px solid var(--rule);
+  padding:10px 12px;border-radius:2px;font-family:var(--serif);
+}
+.field select:focus{outline:0;border-color:var(--blue);background:var(--paper)}
 
 /* --- setup grid --------------------------------------------------------- */
 .slab{border:1px solid var(--rule);background:var(--paper-2);padding:18px 20px;border-radius:2px}
@@ -400,9 +419,23 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 .pick label.cloud{color:var(--red);border-style:dashed}
 .empty{font-family:var(--mono);font-size:12px;color:var(--ink-faint);
   border:1px dashed var(--rule);padding:26px;text-align:center;border-radius:2px}
+.tunegrid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(17rem,.9fr);
+  gap:18px;align-items:start}
+.filterbar{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px}
+.filterbar input{max-width:18rem}
+.filterbar input,.filterbar select{font-family:var(--mono);font-size:11px}
+.filterbar select{
+  width:auto;background:var(--paper-2);border:1px solid var(--rule);
+  padding:10px 12px;border-radius:2px;
+}
+.criteria-row{cursor:pointer}
+.criteria-row.off td{color:var(--ink-faint)}
+.criteria-row.off td:first-child{text-decoration:line-through}
+.tiny{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)}
 
 @media(max-width:880px){
   .galley{grid-template-columns:1fr;gap:1.6rem}
+  .tunegrid{grid-template-columns:1fr}
   .margin{position:static;max-height:none}
   .panel{padding:24px 18px 80px}
 }
@@ -415,6 +448,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <img class="mark" src="/static/logo-light.png" alt="Qavats">
     <img class="mark" src="/static/logo-dark.png" alt="" aria-hidden="true">
     <img class="mark" src="/static/logo-pink.png" alt="" aria-hidden="true">
+    <img class="mark" src="/static/logo-grass.png" alt="" aria-hidden="true">
     <span class="wordmark-sub">ask ash</span>
   </div>
   <div class="projpick">
@@ -428,12 +462,14 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <button data-tab="outline" aria-selected="false">Outline</button>
     <button data-tab="draft" aria-selected="false">Draft</button>
     <button data-tab="bench" aria-selected="false">Compare</button>
+    <button data-tab="tuning" aria-selected="false">Tuning</button>
     <button data-tab="history" aria-selected="false">History</button>
   </nav>
   <div class="themes" role="group" aria-label="Theme">
     <button class="sw-light" data-theme-set="light" title="Light" aria-pressed="true"></button>
     <button class="sw-dark"  data-theme-set="dark"  title="Dark"  aria-pressed="false"></button>
     <button class="sw-pink"  data-theme-set="pink"  title="Ballet pink" aria-pressed="false"></button>
+    <button class="sw-grass" data-theme-set="grass" title="Grass" aria-pressed="false"></button>
   </div>
   <div class="statusbit" id="statusbit">connecting</div>
 </div>
@@ -590,6 +626,94 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
   <div id="histWrap"></div>
 </div></section>
 
+<!-- TUNING -->
+<section class="panel" id="p-tuning"><div class="wrap">
+  <p class="eyebrow">Retrieval controls</p>
+  <h1>Tune search behavior</h1>
+  <p class="lede">Criteria live in memory, so retrieval can be adjusted without
+    editing code. Misses are saved as examples to check future tuning against.</p>
+
+  <div class="tunegrid">
+    <div>
+      <div class="slab" style="margin-bottom:18px">
+        <p class="eyebrow" style="margin-bottom:12px">Search criteria</p>
+        <div class="filterbar">
+          <select id="critFilterType" title="Criteria type">
+            <option value="">All types</option>
+            <option value="stopword">Stopword</option>
+            <option value="low_signal">Low signal</option>
+            <option value="domain_trigger">Domain trigger</option>
+            <option value="domain_term">Domain term</option>
+          </select>
+          <input type="text" id="critFilterText" placeholder="Filter term or group">
+        </div>
+        <div id="criteriaWrap"></div>
+      </div>
+
+      <div class="slab">
+        <p class="eyebrow" style="margin-bottom:12px">Recent misses</p>
+        <div id="missWrap"></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="slab" style="margin-bottom:18px">
+        <p class="eyebrow" style="margin-bottom:12px">Add or edit</p>
+        <div class="field"><label for="critType">Type</label>
+          <select id="critType">
+            <option value="stopword">Stopword</option>
+            <option value="low_signal">Low signal</option>
+            <option value="domain_trigger">Domain trigger</option>
+            <option value="domain_term">Domain term</option>
+          </select></div>
+        <div class="row">
+          <div class="field" style="flex:1;min-width:120px"><label for="critGroup">Group</label>
+            <input type="text" id="critGroup" placeholder="healthcare"></div>
+          <div class="field" style="flex:1;min-width:120px"><label for="critWeight">Weight</label>
+            <input type="number" id="critWeight" value="1" step="0.1"></div>
+        </div>
+        <div class="field"><label for="critTerm">Term</label>
+          <input type="text" id="critTerm" placeholder="clinical"></div>
+        <div class="field"><label for="critNotes">Notes</label>
+          <textarea id="critNotes" placeholder="Why this term matters"></textarea></div>
+        <label class="toggle" style="margin-bottom:14px">
+          <input type="checkbox" id="critEnabled" checked>
+          <span>Enabled</span>
+        </label>
+        <div class="row">
+          <button class="btn" id="btnSaveCrit">Save criterion</button>
+          <button class="btn ghost" id="btnClearCrit">Clear</button>
+        </div>
+      </div>
+
+      <div class="slab" style="margin-bottom:18px">
+        <p class="eyebrow" style="margin-bottom:12px">Indexing</p>
+        <div class="row">
+          <div class="field" style="flex:1;min-width:120px"><label for="chunkSize">Chunk size</label>
+            <input type="number" id="chunkSize" min="150" max="2000" step="25"></div>
+          <div class="field" style="flex:1;min-width:120px"><label for="chunkOverlap">Overlap</label>
+            <input type="number" id="chunkOverlap" min="0" max="500" step="25"></div>
+        </div>
+        <button class="btn ghost" id="btnSaveChunking">Save chunking</button>
+        <div class="tiny" style="margin-top:10px">Rescan documents after changing chunking.</div>
+      </div>
+
+      <div class="slab">
+        <p class="eyebrow" style="margin-bottom:12px">Submit miss</p>
+        <div class="field"><label for="missQuery">Query</label>
+          <textarea id="missQuery" placeholder="Question that produced the miss"></textarea></div>
+        <div class="field"><label for="missExpected">Expected source</label>
+          <input type="text" id="missExpected" placeholder="The source that should have matched"></div>
+        <div class="field"><label for="missActual">Actual source</label>
+          <input type="text" id="missActual" placeholder="The irrelevant source that appeared"></div>
+        <div class="field"><label for="missNotes">Notes</label>
+          <textarea id="missNotes" placeholder="What went wrong"></textarea></div>
+        <button class="btn" id="btnSubmitMiss">Save miss</button>
+      </div>
+    </div>
+  </div>
+</div></section>
+
 <script>
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t);
@@ -599,6 +723,7 @@ const esc = s => (s ?? "").replace(/[&<>"]/g, c =>
 
 let STATE = { outline:null, evidence:{}, models:[], busy:false,
               project:null, projects:[], showContext:false };
+STATE.tuning = { criteria: [], misses: [], settings: {} };
 
 /* Every request carries the project explicitly. The server holds no session,
    so there is no way to be looking at one project and writing into another. */
@@ -627,6 +752,7 @@ function show(tab){
     b.setAttribute("aria-selected", b.dataset.tab === tab));
   document.querySelectorAll(".panel").forEach(p =>
     p.classList.toggle("on", p.id === "p-" + tab));
+  if (tab === "tuning") loadTuning();
   if (tab === "history") loadHistory();
 }
 
@@ -1455,6 +1581,160 @@ async function runSummarize(){
     wrap.appendChild(el("div", "empty", "No indexed documents matched."));
 }
 
+/* --- tuning ------------------------------------------------------------- */
+async function loadTuning(){
+  if (!STATE.project) return;
+  try {
+    const j = await (await fetch(qp("/api/tuning"))).json();
+    if (j.error) return toast(j.error);
+    STATE.tuning.criteria = j.criteria || [];
+    STATE.tuning.misses = j.misses || [];
+    STATE.tuning.settings = j.settings || {};
+    $("#chunkSize").value = STATE.tuning.settings.rag_chunk_size || 500;
+    $("#chunkOverlap").value = STATE.tuning.settings.rag_chunk_overlap || 100;
+    renderCriteria();
+    renderMisses();
+  } catch(e){
+    toast("Could not load tuning");
+  }
+}
+
+function renderCriteria(){
+  const wrap = $("#criteriaWrap"); if (!wrap) return;
+  const type = $("#critFilterType").value;
+  const needle = ($("#critFilterText").value || "").toLowerCase().trim();
+  const rows = STATE.tuning.criteria.filter(r =>
+    (!type || r.criteria_type === type) &&
+    (!needle || `${r.term} ${r.group_name} ${r.notes || ""}`.toLowerCase().includes(needle)));
+
+  wrap.innerHTML = "";
+  if (!rows.length){
+    wrap.appendChild(el("div", "empty", "No matching criteria."));
+    return;
+  }
+  const tb = el("table");
+  tb.innerHTML = "<thead><tr>" +
+    ["Term","Type","Group","Weight","State"].map(h => `<th>${h}</th>`).join("") +
+    "</tr></thead>";
+  const body = el("tbody");
+  rows.forEach(r => {
+    const tr = el("tr", "criteria-row" + (r.enabled ? "" : " off"));
+    tr.onclick = () => fillCriterionForm(r);
+    tr.appendChild(el("td", "", r.term));
+    tr.appendChild(el("td", "", r.criteria_type.replace("_", " ")));
+    tr.appendChild(el("td", "", r.group_name || ""));
+    tr.appendChild(el("td", "num", String(r.weight ?? 1)));
+    tr.appendChild(el("td", "", r.enabled ? "on" : "off"));
+    body.appendChild(tr);
+  });
+  tb.appendChild(body);
+  wrap.appendChild(tb);
+}
+
+function fillCriterionForm(r){
+  $("#critType").value = r.criteria_type;
+  $("#critGroup").value = r.group_name || "";
+  $("#critWeight").value = r.weight ?? 1;
+  $("#critTerm").value = r.term || "";
+  $("#critNotes").value = r.notes || "";
+  $("#critEnabled").checked = !!r.enabled;
+}
+
+function clearCriterionForm(){
+  $("#critType").value = "stopword";
+  $("#critGroup").value = "";
+  $("#critWeight").value = "1";
+  $("#critTerm").value = "";
+  $("#critNotes").value = "";
+  $("#critEnabled").checked = true;
+  $("#critTerm").focus();
+}
+
+async function saveCriterion(){
+  const payload = {
+    criteria_type: $("#critType").value,
+    group_name: $("#critGroup").value,
+    weight: $("#critWeight").value,
+    term: $("#critTerm").value,
+    notes: $("#critNotes").value,
+    enabled: $("#critEnabled").checked,
+  };
+  if (!payload.term.trim()) return $("#critTerm").focus();
+  const r = await (await fetch("/api/tuning/criteria", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(withProject(payload)),
+  })).json();
+  if (r.error) return toast(r.error);
+  STATE.tuning.criteria = r.criteria || [];
+  renderCriteria();
+  toast("Criterion saved");
+}
+
+async function saveChunking(){
+  const r = await (await fetch("/api/tuning/settings", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(withProject({
+      rag_chunk_size: $("#chunkSize").value,
+      rag_chunk_overlap: $("#chunkOverlap").value,
+    })),
+  })).json();
+  if (r.error) return toast(r.error);
+  toast("Chunking saved");
+}
+
+async function submitMiss(){
+  const payload = {
+    query: $("#missQuery").value,
+    expected_source: $("#missExpected").value,
+    actual_source: $("#missActual").value,
+    notes: $("#missNotes").value,
+  };
+  if (!payload.query.trim()) return $("#missQuery").focus();
+  const r = await (await fetch("/api/tuning/misses", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(withProject(payload)),
+  })).json();
+  if (r.error) return toast(r.error);
+  STATE.tuning.misses = r.misses || [];
+  $("#missQuery").value = ""; $("#missExpected").value = "";
+  $("#missActual").value = ""; $("#missNotes").value = "";
+  renderMisses();
+  toast("Miss saved");
+}
+
+function renderMisses(){
+  const wrap = $("#missWrap"); if (!wrap) return;
+  wrap.innerHTML = "";
+  const misses = STATE.tuning.misses || [];
+  if (!misses.length){
+    wrap.appendChild(el("div", "empty", "No misses logged for this project."));
+    return;
+  }
+  const tb = el("table");
+  tb.innerHTML = "<thead><tr>" +
+    ["Query","Expected","Actual","When"].map(h => `<th>${h}</th>`).join("") +
+    "</tr></thead>";
+  const body = el("tbody");
+  misses.forEach(m => {
+    const tr = el("tr");
+    tr.appendChild(el("td", "", m.query));
+    tr.appendChild(el("td", "", m.expected_source || ""));
+    tr.appendChild(el("td", "", m.actual_source || ""));
+    tr.appendChild(el("td", "", (m.recorded_at || "").slice(0, 16)));
+    if (m.notes) tr.title = m.notes;
+    body.appendChild(tr);
+  });
+  tb.appendChild(body);
+  wrap.appendChild(tb);
+}
+
+$("#critFilterType").onchange = renderCriteria;
+$("#critFilterText").oninput = renderCriteria;
+$("#btnSaveCrit").onclick = saveCriterion;
+$("#btnClearCrit").onclick = clearCriterionForm;
+$("#btnSaveChunking").onclick = saveChunking;
+$("#btnSubmitMiss").onclick = submitMiss;
+
 /* --- history ------------------------------------------------------------ */
 async function loadHistory(){
   const h = await (await fetch(qp("/api/history"))).json();
@@ -1608,6 +1888,7 @@ function localStorage_set(v){ try { window.localStorage.setItem("proj", v); }
 async function switchProject(name){
   STATE.project = name; localStorage_set(name);
   STATE.outline = null; STATE.evidence = {};
+  STATE.tuning = { criteria: [], misses: [], settings: {} };
   STATE.chat.messages = []; STATE.chat.turnSeq = 0;
   $("#topic").value = ""; $("#brief").value = "";
   $("#docWrap").innerHTML = ""; $("#benchWrap").innerHTML = ""; $("#chatColumn").innerHTML = "";

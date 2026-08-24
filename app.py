@@ -77,6 +77,21 @@ try:
 except Exception as _e:
     print(f"  Update tracking unavailable ({_e}). Everything else runs normally.")
 
+MEMORY_AVAILABLE = False
+try:
+    sys.path.insert(0, str(BASE_DIR / "memory"))
+    from memory_client import (
+        get_search_criteria,
+        get_setting,
+        list_retrieval_misses,
+        record_retrieval_miss,
+        set_setting,
+        upsert_search_criterion,
+    )
+    MEMORY_AVAILABLE = True
+except Exception as _e:
+    print(f"  Tuning storage unavailable ({_e}). Everything else runs normally.")
+
 
 def _delayed_restart(delay: float = 0.6):
     """
@@ -284,6 +299,112 @@ def rescan():
             "new": s["new"], "updated": s["updated"], "removed": s["removed"],
             "chunks": collection.count()}})
     return jsonify({"job": start_job(work)})
+
+
+# ---------------------------------------------------------------------------
+# Retrieval tuning
+# ---------------------------------------------------------------------------
+
+CRITERIA_TYPES = {"stopword", "low_signal", "domain_trigger", "domain_term"}
+TUNING_SETTING_KEYS = {"rag_chunk_size", "rag_chunk_overlap"}
+
+
+def _memory_required():
+    if MEMORY_AVAILABLE:
+        return None
+    return jsonify({"error": "memory database is not available"}), 503
+
+
+@app.get("/api/tuning")
+def api_tuning():
+    unavailable = _memory_required()
+    if unavailable:
+        return unavailable
+    proj = active()
+    return jsonify({
+        "criteria": get_search_criteria(enabled_only=False),
+        "settings": {
+            "rag_chunk_size": get_setting("rag_chunk_size", "500"),
+            "rag_chunk_overlap": get_setting("rag_chunk_overlap", "100"),
+        },
+        "misses": list_retrieval_misses(project=proj, limit=50),
+    })
+
+
+@app.post("/api/tuning/criteria")
+def api_tuning_criteria():
+    unavailable = _memory_required()
+    if unavailable:
+        return unavailable
+    body = request.json or {}
+    criteria_type = (body.get("criteria_type") or "").strip().lower()
+    group_name = (body.get("group_name") or "").strip().lower()
+    term = " ".join((body.get("term") or "").strip().lower().split())
+    notes = (body.get("notes") or "").strip() or None
+    enabled = bool(body.get("enabled", True))
+    try:
+        weight = float(body.get("weight", 1.0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "weight must be a number"}), 400
+
+    if criteria_type not in CRITERIA_TYPES:
+        return jsonify({"error": "unknown criteria type"}), 400
+    if not term:
+        return jsonify({"error": "term is required"}), 400
+    if criteria_type.startswith("domain_") and not group_name:
+        return jsonify({"error": "domain criteria need a group"}), 400
+
+    upsert_search_criterion(
+        criteria_type, term, group_name=group_name, weight=weight,
+        enabled=enabled, notes=notes,
+    )
+    return jsonify({"criteria": get_search_criteria(enabled_only=False)})
+
+
+@app.post("/api/tuning/settings")
+def api_tuning_settings():
+    unavailable = _memory_required()
+    if unavailable:
+        return unavailable
+    body = request.json or {}
+    saved = {}
+    for key in TUNING_SETTING_KEYS:
+        if key not in body:
+            continue
+        try:
+            value = int(body[key])
+        except (TypeError, ValueError):
+            return jsonify({"error": f"{key} must be a whole number"}), 400
+        if key == "rag_chunk_size" and not 150 <= value <= 2000:
+            return jsonify({"error": "chunk size must be between 150 and 2000"}), 400
+        if key == "rag_chunk_overlap" and not 0 <= value <= 500:
+            return jsonify({"error": "chunk overlap must be between 0 and 500"}), 400
+        saved[key] = str(value)
+        set_setting(key, str(value))
+    return jsonify({"settings": saved})
+
+
+@app.post("/api/tuning/misses")
+def api_tuning_misses():
+    unavailable = _memory_required()
+    if unavailable:
+        return unavailable
+    body = request.json or {}
+    proj = active(body)
+    query = (body.get("query") or "").strip()
+    if not query:
+        return jsonify({"error": "query is required"}), 400
+    miss_id = record_retrieval_miss(
+        proj,
+        query,
+        expected_source=(body.get("expected_source") or "").strip() or None,
+        actual_source=(body.get("actual_source") or "").strip() or None,
+        notes=(body.get("notes") or "").strip() or None,
+    )
+    return jsonify({
+        "id": miss_id,
+        "misses": list_retrieval_misses(project=proj, limit=50),
+    })
 
 
 # ---------------------------------------------------------------------------
