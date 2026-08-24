@@ -134,6 +134,8 @@ class LanceCollection:
     Keeping those methods here lets us change storage without rewriting every
     retrieval path at once.
     """
+    INDEX_MIN_ROWS = 256
+
     def __init__(self, path: str, name: str, dimension: int):
         try:
             import lancedb
@@ -160,9 +162,16 @@ class LanceCollection:
                 pa.field("project", pa.string()),
                 pa.field("filename", pa.string()),
                 pa.field("file_hash", pa.string()),
+                pa.field("chunk_index", pa.int64()),
+                pa.field("chunk_count", pa.int64()),
+                pa.field("word_count", pa.int64()),
+                pa.field("char_count", pa.int64()),
+                pa.field("source_ext", pa.string()),
+                pa.field("source_stem", pa.string()),
                 pa.field("metadata_json", pa.string()),
             ])
             self.table = self.db.create_table(name, schema=schema)
+        self._indexes_dirty = False
 
     def count(self) -> int:
         return self.table.count_rows()
@@ -175,9 +184,15 @@ class LanceCollection:
             return ""
         parts = []
         for key, value in where.items():
-            if key not in {"id", "source", "project", "filename", "file_hash"}:
+            if key not in {
+                "id", "source", "project", "filename", "file_hash",
+                "chunk_index", "source_ext", "source_stem",
+            }:
                 continue
-            parts.append(f"{key} = {self._quote(value)}")
+            if isinstance(value, (int, float)):
+                parts.append(f"{key} = {value}")
+            else:
+                parts.append(f"{key} = {self._quote(value)}")
         return " AND ".join(parts)
 
     def _metadata_from_row(self, row: dict) -> dict:
@@ -185,10 +200,19 @@ class LanceCollection:
             meta = json.loads(row.get("metadata_json") or "{}")
         except Exception:
             meta = {}
-        for key in ("source", "project", "filename", "file_hash"):
+        for key in (
+            "source", "project", "filename", "file_hash", "chunk_index",
+            "chunk_count", "word_count", "char_count", "source_ext", "source_stem",
+        ):
             if row.get(key) is not None:
                 meta[key] = row.get(key)
         return meta
+
+    def _chunk_index_from_id(self, cid: str) -> int:
+        try:
+            return int(str(cid).rpartition("::")[2])
+        except Exception:
+            return -1
 
     def _rows(self, ids: list = None, where: dict = None) -> list:
         if self.count() == 0:
@@ -219,19 +243,36 @@ class LanceCollection:
             return
         self.delete(ids=ids)
         rows = []
+        chunk_count_by_source = {}
+        for cid, meta in zip(ids, metadatas):
+            source = (meta or {}).get("source") or str(cid).rpartition("::")[0]
+            chunk_count_by_source[source] = chunk_count_by_source.get(source, 0) + 1
+
         for cid, vector, doc, meta in zip(ids, embeddings, documents, metadatas):
             meta = dict(meta or {})
+            source = meta.get("source") or str(cid).rpartition("::")[0]
+            chunk_index = int(meta.get("chunk_index", self._chunk_index_from_id(cid)))
+            source_path = Path(source)
+            word_count = len((doc or "").split())
             rows.append({
                 "id": cid,
                 "vector": vector,
                 "document": doc,
-                "source": meta.get("source"),
+                "source": source,
                 "project": meta.get("project"),
                 "filename": meta.get("filename"),
                 "file_hash": meta.get("file_hash"),
+                "chunk_index": chunk_index,
+                "chunk_count": int(meta.get(
+                    "chunk_count", chunk_count_by_source.get(source, 0))),
+                "word_count": int(meta.get("word_count", word_count)),
+                "char_count": int(meta.get("char_count", len(doc or ""))),
+                "source_ext": meta.get("source_ext") or source_path.suffix.lower(),
+                "source_stem": meta.get("source_stem") or source_path.stem,
                 "metadata_json": json.dumps(meta),
             })
         self.table.add(rows)
+        self._indexes_dirty = True
 
     def delete(self, ids: list):
         if not ids or self.count() == 0:
@@ -260,6 +301,50 @@ class LanceCollection:
             out["distances"].append([row.get("_distance") for row in rows])
         return out
 
+    def text_search(self, text: str, limit: int = 10, where: dict = None) -> list:
+        if self.count() == 0 or not text.strip():
+            return []
+        expr = self._where_expr(where)
+        q = self.table.search(
+            text, query_type="fts", fts_columns="document"
+        ).limit(min(limit, self.count()))
+        if expr:
+            q = q.where(expr)
+        try:
+            return q.to_list()
+        except Exception:
+            return []
+
+    def ensure_indexes(self):
+        n = self.count()
+        if n == 0:
+            return
+        try:
+            self.table.create_fts_index(
+                "document",
+                replace=True,
+                use_tantivy=False,
+            )
+        except Exception as e:
+            print(f"  [Warning] LanceDB full-text index unavailable: {e}")
+        for column in ("source", "project", "filename", "chunk_index"):
+            try:
+                self.table.create_scalar_index(column, replace=True)
+            except Exception as e:
+                print(f"  [Warning] LanceDB scalar index unavailable for {column}: {e}")
+        if n >= self.INDEX_MIN_ROWS:
+            try:
+                partitions = max(1, min(64, int(math.sqrt(n))))
+                self.table.create_index(
+                    metric="cosine",
+                    index_type="IVF_FLAT",
+                    num_partitions=partitions,
+                    replace=True,
+                )
+            except Exception as e:
+                print(f"  [Warning] LanceDB vector index unavailable: {e}")
+        self._indexes_dirty = False
+
 print("Loading embedding model...")
 embedder = SentenceTransformer(
     "sentence-transformers/all-MiniLM-L6-v2",
@@ -267,7 +352,7 @@ embedder = SentenceTransformer(
 )
 
 VECTOR_DB_PATH = str(BASE_DIR / "lancedb")
-collection = LanceCollection(VECTOR_DB_PATH, "my_documents", 384)
+collection = LanceCollection(VECTOR_DB_PATH, "my_documents_v2", 384)
 
 print(f"Vector DB path:  {VECTOR_DB_PATH}")
 print(f"Documents path:  {DOCUMENTS_FOLDER}")
@@ -561,9 +646,19 @@ def index_file(file: Path, current_hash: str) -> int:
         embeddings=embeddings,
         documents=chunks,
         metadatas=[
-            {"source": rel, "project": project,
-             "filename": file.name, "file_hash": current_hash}
-            for _ in chunks
+            {
+                "source": rel,
+                "project": project,
+                "filename": file.name,
+                "file_hash": current_hash,
+                "chunk_index": i,
+                "chunk_count": len(chunks),
+                "word_count": len(chunk.split()),
+                "char_count": len(chunk),
+                "source_ext": file.suffix.lower(),
+                "source_stem": file.stem,
+            }
+            for i, chunk in enumerate(chunks)
         ],
     )
     record_document_profile(rel, text, project, source_hash=current_hash)
@@ -629,6 +724,9 @@ def scan_documents(folder: str = None, verbose: bool = True) -> dict:
             remove_source(filename)
             summary["removed"].append(filename)
 
+    if summary["new"] or summary["updated"] or summary["removed"]:
+        collection.ensure_indexes()
+
     return summary
 
 
@@ -675,6 +773,8 @@ def ingest_content(filename: str, content: str, project: str = None) -> tuple:
 
     new_hash = file_hash(dest_path)
     chunk_count = index_file(dest_path, new_hash)
+    if chunk_count:
+        collection.ensure_indexes()
     return rel, chunk_count
 
 # ---------------------------------------------------------------------------
@@ -1192,14 +1292,36 @@ def _semantic_candidates(question: str, n_results: int, project: str = None):
         return []
     results = _semantic_search(question, n_results=n_results, project=project)
     out = []
-    for rank, (doc, meta) in enumerate(
-        zip(results["documents"][0], results["metadatas"][0])
+    for rank, (cid, doc, meta) in enumerate(
+        zip(results["ids"][0], results["documents"][0], results["metadatas"][0])
     ):
         out.append({
+            "id": cid,
             "document": doc,
             "metadata": dict(meta),
             "score": 1.0 / (rank + 1),
             "signals": {"semantic"},
+        })
+    return out
+
+
+def _fulltext_candidates(question: str, n_results: int, project: str = None):
+    if collection.count() == 0 or not hasattr(collection, "text_search"):
+        return []
+    rows = collection.text_search(
+        question,
+        limit=max(n_results, 12),
+        where={"project": project} if project else None,
+    )
+    out = []
+    for rank, row in enumerate(rows):
+        meta = collection._metadata_from_row(row)
+        out.append({
+            "id": row.get("id"),
+            "document": row.get("document") or "",
+            "metadata": meta,
+            "score": 1.6 / (rank + 1),
+            "signals": {"fulltext"},
         })
     return out
 
@@ -1279,15 +1401,18 @@ def _candidate_key(doc: str, meta: dict) -> str:
 
 
 def _add_candidate(candidates: dict, doc: str, meta: dict,
-                   score: float, signal: str):
+                   score: float, signal: str, cid: str = None):
     key = _candidate_key(doc, meta)
     if key not in candidates:
         candidates[key] = {
+            "id": cid,
             "document": doc,
             "metadata": dict(meta),
             "score": 0.0,
             "signals": set(),
         }
+    elif cid and not candidates[key].get("id"):
+        candidates[key]["id"] = cid
     candidates[key]["score"] += score
     candidates[key]["signals"].add(signal)
 
@@ -1542,6 +1667,7 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
             item["metadata"],
             item["score"],
             "citation",
+            item.get("id"),
         )
 
     for item in _registry_candidates(words, project=project):
@@ -1551,20 +1677,33 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
             item["metadata"],
             item["score"],
             "document_registry",
+            item.get("id"),
+        )
+
+    for item in _fulltext_candidates(question, n_results * 3, project=project):
+        _add_candidate(
+            candidates,
+            item["document"],
+            item["metadata"],
+            item["score"],
+            "fulltext",
+            item.get("id"),
         )
 
     for i, meta in enumerate(all_data["metadatas"]):
         if project and meta.get("project") != project:
             continue
+        cid = all_data["ids"][i]
         doc = all_data["documents"][i]
         source = meta.get("source", "")
         source_score = _source_matches(source, words, question=question)
         content_score = _word_count_score(doc, words)
         if source_score:
-            _add_candidate(candidates, doc, meta, 2.0 + source_score / 4, "source")
+            _add_candidate(
+                candidates, doc, meta, 2.0 + source_score / 4, "source", cid)
         if content_score:
             _add_candidate(candidates, doc, meta,
-                           1.0 + math.log1p(content_score), "keyword")
+                           1.0 + math.log1p(content_score), "keyword", cid)
 
     semantic_limit = max(n_results * 3, 12)
     for item in _semantic_candidates(question, semantic_limit, project=project):
@@ -1574,6 +1713,7 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
             item["metadata"],
             item["score"],
             "semantic",
+            item.get("id"),
         )
 
     ranked = sorted(
@@ -1582,6 +1722,7 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
             c["score"] + 0.35 * max(0, len(c["signals"]) - 1),
             "citation" in c["signals"],
             "document_registry" in c["signals"],
+            "fulltext" in c["signals"],
             "source" in c["signals"],
         ),
         reverse=True,
