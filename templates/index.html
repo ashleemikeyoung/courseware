@@ -461,7 +461,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <button data-tab="outline" aria-selected="false">Outline</button>
     <button data-tab="draft" aria-selected="false">Draft</button>
     <button data-tab="bench" aria-selected="false">Compare</button>
-    <button data-tab="tuning" aria-selected="false">Tuning</button>
+    <button data-tab="tuning" aria-selected="false">Settings</button>
     <button data-tab="history" aria-selected="false">History</button>
   </nav>
   <div class="themes" role="group" aria-label="Theme">
@@ -628,7 +628,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 <!-- TUNING -->
 <section class="panel" id="p-tuning"><div class="wrap">
   <p class="eyebrow">Retrieval controls</p>
-  <h1>Tune search behavior</h1>
+  <h1>Settings</h1>
   <p class="lede">Criteria live in memory, so retrieval can be adjusted without
     editing code. Misses are saved as examples to check future tuning against.</p>
 
@@ -641,6 +641,12 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
             <option value="">All types</option>
             <option value="stopword">Stopword</option>
             <option value="low_signal">Low signal</option>
+            <option value="source_low_signal">Source low signal</option>
+            <option value="section_noise">Section noise</option>
+            <option value="document_section">Document section</option>
+            <option value="genre_marker">Genre marker</option>
+            <option value="theme_marker">Theme marker</option>
+            <option value="subject_stop_label">Subject stop label</option>
             <option value="domain_trigger">Domain trigger</option>
             <option value="domain_term">Domain term</option>
           </select>
@@ -662,6 +668,12 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
           <select id="critType">
             <option value="stopword">Stopword</option>
             <option value="low_signal">Low signal</option>
+            <option value="source_low_signal">Source low signal</option>
+            <option value="section_noise">Section noise</option>
+            <option value="document_section">Document section</option>
+            <option value="genre_marker">Genre marker</option>
+            <option value="theme_marker">Theme marker</option>
+            <option value="subject_stop_label">Subject stop label</option>
             <option value="domain_trigger">Domain trigger</option>
             <option value="domain_term">Domain term</option>
           </select></div>
@@ -693,8 +705,22 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
           <div class="field" style="flex:1;min-width:120px"><label for="chunkOverlap">Overlap</label>
             <input type="number" id="chunkOverlap" min="0" max="500" step="25"></div>
         </div>
-        <button class="btn ghost" id="btnSaveChunking">Save chunking</button>
-        <div class="tiny" style="margin-top:10px">Rescan documents after changing chunking.</div>
+        <div class="field"><label for="supportedExtensions">Supported extensions</label>
+          <textarea id="supportedExtensions" placeholder=".pdf, .docx, .md"></textarea></div>
+        <div class="field"><label for="ignoredDirs">Ignored folders</label>
+          <textarea id="ignoredDirs" placeholder=".git, node_modules, .trash"></textarea></div>
+        <button class="btn ghost" id="btnSaveIndexing">Save indexing</button>
+        <div class="tiny" style="margin-top:10px">Re-index after changing extensions, ignored folders, or chunking.</div>
+      </div>
+
+      <div class="slab" style="margin-bottom:18px">
+        <p class="eyebrow" style="margin-bottom:12px">Apply changes</p>
+        <label class="toggle" style="margin-bottom:14px">
+          <input type="checkbox" id="autoReindexToggle">
+          <span>Auto re-index after saves</span>
+        </label>
+        <button class="btn" id="btnReindexTuning">Re-index now</button>
+        <div class="log" id="tuninglog" style="display:none;margin-top:14px"></div>
       </div>
 
       <div class="slab">
@@ -1591,6 +1617,12 @@ async function loadTuning(){
     STATE.tuning.settings = j.settings || {};
     $("#chunkSize").value = STATE.tuning.settings.rag_chunk_size || 500;
     $("#chunkOverlap").value = STATE.tuning.settings.rag_chunk_overlap || 100;
+    $("#supportedExtensions").value =
+      (STATE.tuning.settings.rag_supported_extensions || "").split(",").join(", ");
+    $("#ignoredDirs").value =
+      (STATE.tuning.settings.rag_ignored_dirs || "").split(",").join(", ");
+    $("#autoReindexToggle").checked =
+      STATE.tuning.settings.rag_auto_reindex_on_tuning === "on";
     renderCriteria();
     renderMisses();
   } catch(e){
@@ -1667,18 +1699,53 @@ async function saveCriterion(){
   STATE.tuning.criteria = r.criteria || [];
   renderCriteria();
   toast("Criterion saved");
+  maybeAutoReindex();
 }
 
-async function saveChunking(){
+async function saveIndexing(){
   const r = await (await fetch("/api/tuning/settings", {
     method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify(withProject({
       rag_chunk_size: $("#chunkSize").value,
       rag_chunk_overlap: $("#chunkOverlap").value,
+      rag_supported_extensions: $("#supportedExtensions").value,
+      rag_ignored_dirs: $("#ignoredDirs").value,
+      rag_auto_reindex_on_tuning: $("#autoReindexToggle").checked ? "on" : "off",
     })),
   })).json();
   if (r.error) return toast(r.error);
-  toast("Chunking saved");
+  STATE.tuning.settings = Object.assign(STATE.tuning.settings, r.settings || {});
+  toast("Indexing saved");
+  maybeAutoReindex();
+}
+
+async function saveAutoReindex(){
+  const r = await (await fetch("/api/tuning/settings", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(withProject({
+      rag_auto_reindex_on_tuning: $("#autoReindexToggle").checked ? "on" : "off",
+    })),
+  })).json();
+  if (r.error) return toast(r.error);
+  STATE.tuning.settings.rag_auto_reindex_on_tuning =
+    $("#autoReindexToggle").checked ? "on" : "off";
+  toast($("#autoReindexToggle").checked ? "Auto re-index on" : "Auto re-index off");
+}
+
+function maybeAutoReindex(){
+  if ($("#autoReindexToggle").checked) runTuningReindex();
+}
+
+function runTuningReindex(){
+  return runJob("/api/tuning/reindex", {}, $("#tuninglog"), (ev, box) => {
+    if (ev.type === "stage") logLine(box, ev.stage);
+    if (ev.type === "done"){
+      const s = ev.summary;
+      logLine(box, `${s.updated.length} re-indexed, ${s.removed.length} removed. ` +
+                   `${s.chunks} chunks now indexed.`);
+      loadStatus();
+    }
+  });
 }
 
 async function submitMiss(){
@@ -1731,8 +1798,10 @@ $("#critFilterType").onchange = renderCriteria;
 $("#critFilterText").oninput = renderCriteria;
 $("#btnSaveCrit").onclick = saveCriterion;
 $("#btnClearCrit").onclick = clearCriterionForm;
-$("#btnSaveChunking").onclick = saveChunking;
+$("#btnSaveIndexing").onclick = saveIndexing;
 $("#btnSubmitMiss").onclick = submitMiss;
+$("#autoReindexToggle").onchange = saveAutoReindex;
+$("#btnReindexTuning").onclick = runTuningReindex;
 
 /* --- history ------------------------------------------------------------ */
 async function loadHistory(){

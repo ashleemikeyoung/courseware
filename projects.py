@@ -28,6 +28,7 @@ creating a project means making a folder and rescanning.
 
 import os
 import re
+import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.resolve()
@@ -40,13 +41,50 @@ PROJECTS_ROOT = Path(os.getenv("PROJECTS_FOLDER", BASE_DIR / "projects"))
 # Files sitting loose at the documents root, belonging to no folder.
 UNFILED = "unfiled"
 
-# Folders that are plumbing, not projects.
-IGNORED = {".git", ".obsidian", "__pycache__", ".DS_Store", "node_modules",
-           ".venv", "venv", ".trash", ".writer"}
+DEFAULT_IGNORED = {
+    ".git", ".obsidian", "__pycache__", ".DS_Store", "node_modules",
+    ".venv", "venv", ".trash", ".writer",
+}
+DEFAULT_SUPPORTED_EXTENSIONS = {
+    ".txt", ".md", ".pdf", ".docx", ".xlsx", ".pptx",
+    ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".bmp",
+    ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".dng",
+}
+
+
+def _get_setting(key: str, default: str) -> str:
+    try:
+        sys.path.insert(0, str(BASE_DIR / "memory"))
+        from memory_client import get_setting
+        return get_setting(key, default)
+    except Exception:
+        return default
+
+
+def _csv_setting(key: str, default_values: set) -> set:
+    raw = _get_setting(key, ",".join(sorted(default_values)))
+    values = {
+        item.strip().lower()
+        for item in (raw or "").replace("\n", ",").split(",")
+        if item.strip()
+    }
+    return values or set(default_values)
+
+
+def ignored_dirs() -> set:
+    return _csv_setting("rag_ignored_dirs", DEFAULT_IGNORED)
+
+
+def supported_extensions() -> set:
+    return {
+        ext if ext.startswith(".") else f".{ext}"
+        for ext in _csv_setting(
+            "rag_supported_extensions", DEFAULT_SUPPORTED_EXTENSIONS)
+    }
 
 
 def is_project_dir(p: Path) -> bool:
-    return (p.is_dir() and p.name not in IGNORED
+    return (p.is_dir() and p.name not in ignored_dirs()
             and not p.name.startswith("."))
 
 
@@ -118,7 +156,8 @@ def create(name: str) -> str:
 
 def stats(collection=None) -> list:
     """Projects with file and chunk counts, for a picker."""
-    from rag import SUPPORTED_EXTENSIONS
+    extensions = supported_extensions()
+    ignored = ignored_dirs()
 
     by_project = {}
     if collection is not None and collection.count():
@@ -132,10 +171,12 @@ def stats(collection=None) -> list:
         root = source_root(name)
         if name == UNFILED:
             files = [f for f in root.iterdir()
-                     if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS]
+                     if f.is_file() and f.suffix.lower() in extensions]
         else:
             files = [f for f in root.rglob("*")
-                     if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS]
+                     if f.is_file() and f.suffix.lower() in extensions
+                     and not any(part in ignored or part.startswith(".")
+                                 for part in f.relative_to(root).parts[:-1])]
 
         p = paths(name)
         out.append({

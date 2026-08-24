@@ -403,6 +403,141 @@ DEFAULT_SEARCH_CRITERIA = [
         ]
     ],
     *[
+        {"criteria_type": "source_low_signal", "term": term}
+        for term in [
+            "article", "study", "research", "system", "systems", "service",
+            "services", "practice", "quality", "offering",
+        ]
+    ],
+    *[
+        {"criteria_type": "section_noise", "term": term}
+        for term in [
+            "references", "bibliography", "works cited", "doi:",
+            "accessed:", "[online]", "available:",
+        ]
+    ],
+    *[
+        {"criteria_type": "document_section", "term": term}
+        for term in [
+            "abstract", "introduction", "literature review", "method",
+            "methods", "methodology", "results", "findings", "discussion",
+            "conclusion", "recommendations", "implications", "limitations",
+            "references",
+        ]
+    ],
+    *[
+        {"criteria_type": "genre_marker", "group_name": group, "term": term}
+        for group, terms in {
+            "chat_export": [
+                "chat history", "conversation export", "conversation with claude",
+                "working session", "record of a research and writing session",
+            ],
+            "research_methods_guide": ["sage research methods"],
+            "book_chapter": ["doi:", "online isbn"],
+            "dissertation_template": [
+                "dissertation template", "insert your dissertation title here",
+            ],
+            "dissertation": [
+                "a dissertation presented to", "a dissertation submitted",
+                "doctoral dissertation", "doctor of philosophy", "degree of doctor",
+                "dissertation committee", "proquest dissertations",
+            ],
+            "research_book_filename": [
+                "an-applied-guide-to-research-designs",
+                "an-introduction-to-qualitative-research",
+                "constructing-social-research", "doing-quantitative-research",
+                "introducing-qualitative-research", "qualitative-data-analysis",
+                "qualitative-data-collection-tools",
+                "quantitative-research-in-education",
+                "research-methods-and-statistics", "research-with-children",
+                "social-research-theory-methods",
+                "understanding-and-evaluating-research",
+                "qualitativeresearchag", "sharanb.merriam",
+            ],
+            "research_book_head": [
+                "library of congress cataloging",
+                "all rights reserved. may not be reproduced",
+                "sage publications", "sage research methods", "isbn",
+            ],
+            "coursework": [
+                "topic4 dq", "topic5 dq", "topic6 dq", "topic7 dq",
+                " dq1", " dq2", "summary of the problem space",
+                "population to be studied", "variables (excluding demographics)",
+                "discussion question",
+            ],
+            "coursework_dissertation": ["problem space", "dissertation"],
+            "presentation": ["slide 1:", "speaker notes"],
+            "spreadsheet": ["sheet:"],
+            "academic_section": [
+                "abstract", "introduction", "method", "methods", "methodology",
+                "results", "findings", "discussion", "conclusion", "references",
+            ],
+            "academic_filename": [
+                "ebsco-fulltext", "s2.0-", "feduc-", "societies-", "jmir_",
+                "determinants_of", "div-class-title", "sc-96", "ej",
+            ],
+            "scholarly_marker": [
+                "doi:", "journal", " vol.", " volume ", " issue ", "abstract",
+                "keywords", "received", "accepted", "publication year",
+                "publisher information", "type original research",
+                "original research", "article",
+            ],
+            "legal_filing": [
+                "plaintiff", "defendant", "case no", "court", "pursuant to",
+                "complaint", "affidavit", "judgment", "dismissal",
+                "certificate of service",
+            ],
+            "contract_agreement": [
+                "settlement agreement", "quitclaim", "contract", "agreement made",
+                "executed agreement", "this agreement", "release and settlement",
+            ],
+            "interview_protocol": ["interview protocol", "interview questions"],
+            "literature_review": [
+                "systematic review", "scoping review", "review of the literature",
+            ],
+            "notes": ["meeting notes"],
+        }.items()
+        for term in terms
+    ],
+    *[
+        {"criteria_type": "theme_marker", "group_name": group, "term": term}
+        for group, terms in {
+            "ai_adoption": [
+                "ai adoption", "adoption of ai",
+                "artificial intelligence adoption", "generative ai adoption",
+                "adopt generative ai", "ai usage",
+            ],
+            "training_usability": [
+                "training", "ease of use", "perceived usefulness",
+            ],
+            "technology_context": [
+                "ai", "artificial intelligence", "technology", "system",
+            ],
+            "legal_privilege": [
+                "attorney-client privilege", "attorney client privilege",
+                "work-product privilege", "work product doctrine",
+                "work product privilege", "client confidentiality",
+                "legal privilege", "privileged communication",
+            ],
+            "research_methods": [
+                "methodology", "qualitative", "quantitative", "research design",
+                "interview protocol", "data collection", "sample size",
+            ],
+            "risk_governance": [
+                "risk governance", "ai governance", "compliance", "legal ethics",
+                "confidentiality", "privacy risk", "ethical risk",
+                "risk management",
+            ],
+        }.items()
+        for term in terms
+    ],
+    *[
+        {"criteria_type": "subject_stop_label", "term": term}
+        for term in [
+            "description", "abstract", "source", "publisher information",
+        ]
+    ],
+    *[
         {"criteria_type": "domain_trigger", "group_name": "healthcare", "term": term}
         for term in [
             "healthcare", "health", "medical", "clinical", "patient",

@@ -305,8 +305,15 @@ def rescan():
 # Retrieval tuning
 # ---------------------------------------------------------------------------
 
-CRITERIA_TYPES = {"stopword", "low_signal", "domain_trigger", "domain_term"}
-TUNING_SETTING_KEYS = {"rag_chunk_size", "rag_chunk_overlap"}
+CRITERIA_TYPES = {
+    "stopword", "low_signal", "source_low_signal", "section_noise",
+    "domain_trigger", "domain_term", "document_section", "genre_marker",
+    "theme_marker", "subject_stop_label",
+}
+TUNING_SETTING_KEYS = {
+    "rag_chunk_size", "rag_chunk_overlap", "rag_auto_reindex_on_tuning",
+    "rag_supported_extensions", "rag_ignored_dirs",
+}
 
 
 def _memory_required():
@@ -326,6 +333,16 @@ def api_tuning():
         "settings": {
             "rag_chunk_size": get_setting("rag_chunk_size", "500"),
             "rag_chunk_overlap": get_setting("rag_chunk_overlap", "100"),
+            "rag_auto_reindex_on_tuning": get_setting(
+                "rag_auto_reindex_on_tuning", "off"),
+            "rag_supported_extensions": get_setting(
+                "rag_supported_extensions",
+                ".arw,.bmp,.cr2,.cr3,.dng,.docx,.gif,.jpeg,.jpg,.md,.nef,.orf,.pdf,.png,.pptx,.rw2,.tiff,.txt,.xlsx",
+            ),
+            "rag_ignored_dirs": get_setting(
+                "rag_ignored_dirs",
+                ".DS_Store,.git,.obsidian,.trash,.venv,.writer,__pycache__,node_modules,venv",
+            ),
         },
         "misses": list_retrieval_misses(project=proj, limit=50),
     })
@@ -371,6 +388,26 @@ def api_tuning_settings():
     for key in TUNING_SETTING_KEYS:
         if key not in body:
             continue
+        if key == "rag_auto_reindex_on_tuning":
+            value = "on" if body.get(key) in (True, "on", "true", "1", 1) else "off"
+            saved[key] = value
+            set_setting(key, value)
+            continue
+        if key in {"rag_supported_extensions", "rag_ignored_dirs"}:
+            raw = str(body.get(key) or "")
+            values = [
+                item.strip().lower()
+                for item in raw.replace("\n", ",").split(",")
+                if item.strip()
+            ]
+            if key == "rag_supported_extensions":
+                values = [v if v.startswith(".") else f".{v}" for v in values]
+            value = ",".join(dict.fromkeys(values))
+            if not value:
+                return jsonify({"error": f"{key} cannot be empty"}), 400
+            saved[key] = value
+            set_setting(key, value)
+            continue
         try:
             value = int(body[key])
         except (TypeError, ValueError):
@@ -382,6 +419,26 @@ def api_tuning_settings():
         saved[key] = str(value)
         set_setting(key, str(value))
     return jsonify({"settings": saved})
+
+
+@app.post("/api/tuning/reindex")
+def api_tuning_reindex():
+    unavailable = _memory_required()
+    if unavailable:
+        return unavailable
+    proj = active(request.json or {})
+
+    def work(emit):
+        from rag import scan_documents
+        emit({"type": "stage", "stage": "re-indexing with current settings"})
+        s = scan_documents(verbose=False, force=True, overwrite_profiles=True)
+        emit({"type": "done", "summary": {
+            "new": s["new"], "updated": s["updated"], "removed": s["removed"],
+            "unchanged": s["unchanged"], "chunks": collection.count(),
+            "project": proj,
+        }})
+
+    return jsonify({"job": start_job(work)})
 
 
 @app.post("/api/tuning/misses")

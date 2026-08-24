@@ -112,11 +112,7 @@ if _docs_env:
 else:
     DOCUMENTS_FOLDER = str(BASE_DIR / "documents")
 
-# ---------------------------------------------------------------------------
-# Supported file extensions
-# ---------------------------------------------------------------------------
-
-SUPPORTED_EXTENSIONS = set(filter(None, [
+DEFAULT_SUPPORTED_EXTENSIONS = set(filter(None, [
     ".txt", ".md",
     ".pdf",
     ".docx" if DOCX_AVAILABLE else None,
@@ -126,6 +122,42 @@ SUPPORTED_EXTENSIONS = set(filter(None, [
     ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2",
     ".dng" if RAW_AVAILABLE else None,
 ]))
+DEFAULT_IGNORED_DIRS = {
+    ".git", ".obsidian", "__pycache__", "node_modules",
+    ".venv", "venv", ".trash", ".writer",
+}
+
+
+def _csv_setting(key: str, default_values: set) -> set:
+    if not MEMORY_AVAILABLE or get_setting is None:
+        return set(default_values)
+    try:
+        raw = get_setting(key, ",".join(sorted(default_values)))
+    except Exception as e:
+        print(f"  [Warning] memory setting {key} unavailable: {e}")
+        return set(default_values)
+    values = {
+        item.strip().lower()
+        for item in (raw or "").replace("\n", ",").split(",")
+        if item.strip()
+    }
+    return values or set(default_values)
+
+
+def supported_extensions() -> set:
+    return {
+        ext if ext.startswith(".") else f".{ext}"
+        for ext in _csv_setting("rag_supported_extensions", DEFAULT_SUPPORTED_EXTENSIONS)
+    }
+
+
+def ignored_dirs() -> set:
+    return _csv_setting("rag_ignored_dirs", DEFAULT_IGNORED_DIRS)
+
+
+# Backward-compatible export for older call sites. Active scans use the
+# functions above so Settings changes apply without editing code.
+SUPPORTED_EXTENSIONS = DEFAULT_SUPPORTED_EXTENSIONS
 
 # ---------------------------------------------------------------------------
 # Embedding model and vector database — all paths absolute
@@ -628,8 +660,6 @@ def remove_source(filename: str):
         print(f"  Removed {len(ids_to_delete)} chunks for {filename}")
 
 
-_IGNORED_DIRS = {".git", ".obsidian", "__pycache__", "node_modules",
-                 ".venv", "venv", ".trash", ".writer"}
 DOCUMENT_PROFILE_MODEL = "local-profile-v2"
 
 
@@ -684,8 +714,12 @@ def index_file(file: Path, current_hash: str) -> int:
     return len(chunks)
 
 
-def scan_documents(folder: str = None, verbose: bool = True) -> dict:
+def scan_documents(folder: str = None, verbose: bool = True,
+                   force: bool = False,
+                   overwrite_profiles: bool = False) -> dict:
     folder_path = Path(folder).resolve() if folder else Path(DOCUMENTS_FOLDER)
+    active_extensions = supported_extensions()
+    active_ignored_dirs = ignored_dirs()
 
     if not folder_path.exists():
         folder_path.mkdir(parents=True)
@@ -700,8 +734,8 @@ def scan_documents(folder: str = None, verbose: bool = True) -> dict:
         str(f.relative_to(folder_path)): file_hash(f)
         for f in folder_path.rglob("*")
         if f.is_file()
-        and f.suffix.lower() in SUPPORTED_EXTENSIONS
-        and not any(part in _IGNORED_DIRS or part.startswith(".")
+        and f.suffix.lower() in active_extensions
+        and not any(part in active_ignored_dirs or part.startswith(".")
                     for part in f.relative_to(folder_path).parts[:-1])
     }
 
@@ -718,9 +752,10 @@ def scan_documents(folder: str = None, verbose: bool = True) -> dict:
                 print(f"      Added {count} chunks")
             summary["new"].append(filename)
 
-        elif indexed[filename] != current_hash:
+        elif force or indexed[filename] != current_hash:
             if verbose:
-                print(f"  [~] Re-indexing changed file: {filename}")
+                reason = "forced" if force else "changed"
+                print(f"  [~] Re-indexing {reason} file: {filename}")
             remove_source(filename)
             count = index_file(file, current_hash)
             if verbose:
@@ -728,7 +763,7 @@ def scan_documents(folder: str = None, verbose: bool = True) -> dict:
             summary["updated"].append(filename)
 
         else:
-            if _needs_document_profile(filename):
+            if overwrite_profiles or _needs_document_profile(filename):
                 text = load_file(file)
                 if text.strip():
                     record_document_profile(
@@ -935,11 +970,11 @@ def _derive_document_label(source: str, text: str) -> str:
 
 
 def _document_sections(text: str) -> dict:
-    keywords = [
+    keywords = _criteria_terms("document_section") or {
         "abstract", "introduction", "literature review", "method", "methods",
         "methodology", "results", "findings", "discussion", "conclusion",
         "recommendations", "implications", "limitations", "references",
-    ]
+    }
     hits = {}
     for i, line in enumerate(text.splitlines()):
         clean = re.sub(r"[^a-z ]+", "", line.strip().lower())
@@ -963,24 +998,38 @@ def _document_genres(source: str, text: str) -> list:
 
     # Container/export formats first. These may discuss many topics, but the
     # file itself is not an article, legal filing, or interview protocol.
-    if any(term in lower[:4000] for term in [
+    if any(term in lower[:4000] for term in (
+        _criteria_group_terms("genre_marker", "chat_export") or {
         "chat history", "conversation export", "conversation with claude",
         "working session", "record of a research and writing session",
-    ]):
+    })):
         add("chat export")
         return genres
 
-    if "sage research methods" in lower[:4000]:
+    research_guide_terms = (
+        _criteria_group_terms("genre_marker", "research_methods_guide")
+        or {"sage research methods"}
+    )
+    if any(term in lower[:4000] for term in research_guide_terms):
         add("research methods guide")
-        if "doi:" in lower[:4000] or "online isbn" in lower[:4000]:
+        book_chapter_terms = (
+            _criteria_group_terms("genre_marker", "book_chapter")
+            or {"doi:", "online isbn"}
+        )
+        if any(term in lower[:4000] for term in book_chapter_terms):
             add("book chapter")
         return genres
 
-    if "dissertation template" in filename or "insert your dissertation title here" in lower[:4000]:
+    dissertation_template_terms = (
+        _criteria_group_terms("genre_marker", "dissertation_template")
+        or {"dissertation template", "insert your dissertation title here"}
+    )
+    if (any(term in filename for term in dissertation_template_terms)
+            or any(term in lower[:4000] for term in dissertation_template_terms)):
         add("dissertation template")
         return genres
 
-    dissertation_markers = [
+    dissertation_markers = _criteria_group_terms("genre_marker", "dissertation") or {
         "a dissertation presented to",
         "a dissertation submitted",
         "doctoral dissertation",
@@ -988,7 +1037,7 @@ def _document_genres(source: str, text: str) -> list:
         "degree of doctor",
         "dissertation committee",
         "proquest dissertations",
-    ]
+    }
     if (
         "dissertation" in filename
         or any(term in lower[:10000] for term in dissertation_markers)
@@ -996,7 +1045,8 @@ def _document_genres(source: str, text: str) -> list:
         add("dissertation")
         return genres
 
-    research_book_filename_terms = [
+    research_book_filename_terms = (
+        _criteria_group_terms("genre_marker", "research_book_filename") or {
         "an-applied-guide-to-research-designs",
         "an-introduction-to-qualitative-research",
         "constructing-social-research",
@@ -1011,14 +1061,15 @@ def _document_genres(source: str, text: str) -> list:
         "understanding-and-evaluating-research",
         "qualitativeresearchag",
         "sharanb.merriam",
-    ]
-    research_book_head_markers = [
+    })
+    research_book_head_markers = (
+        _criteria_group_terms("genre_marker", "research_book_head") or {
         "library of congress cataloging",
         "all rights reserved. may not be reproduced",
         "sage publications",
         "sage research methods",
         "isbn",
-    ]
+    })
     if suffix == ".pdf" and (
         any(term in filename for term in research_book_filename_terms)
         or (
@@ -1029,41 +1080,52 @@ def _document_genres(source: str, text: str) -> list:
         add("research methods guide")
         return genres
 
-    coursework_terms = [
+    coursework_terms = _criteria_group_terms("genre_marker", "coursework") or {
         "topic4 dq", "topic5 dq", "topic6 dq", "topic7 dq", " dq1", " dq2",
         "summary of the problem space", "population to be studied",
         "variables (excluding demographics)", "discussion question",
-    ]
+    }
     if any(term in lower[:6000] or term in filename for term in coursework_terms):
-        if "problem space" in lower[:6000] or "dissertation" in lower[:6000]:
+        coursework_dissertation_terms = (
+            _criteria_group_terms("genre_marker", "coursework_dissertation")
+            or {"problem space", "dissertation"}
+        )
+        if any(term in lower[:6000] for term in coursework_dissertation_terms):
             add("dissertation draft")
         else:
             add("coursework")
         return genres
 
-    if suffix == ".pptx" or "slide 1:" in lower or "speaker notes" in lower:
+    presentation_terms = (
+        _criteria_group_terms("genre_marker", "presentation")
+        or {"slide 1:", "speaker notes"}
+    )
+    if suffix == ".pptx" or any(term in lower for term in presentation_terms):
         add("presentation")
         return genres
 
-    if suffix in {".xlsx", ".xls"} or lower.startswith("sheet:"):
+    spreadsheet_terms = _criteria_group_terms("genre_marker", "spreadsheet") or {"sheet:"}
+    if suffix in {".xlsx", ".xls"} or any(lower.startswith(term) for term in spreadsheet_terms):
         add("spreadsheet")
         return genres
 
-    academic_sections = {
+    academic_sections = _criteria_group_terms("genre_marker", "academic_section") or {
         "abstract", "introduction", "method", "methods", "methodology",
         "results", "findings", "discussion", "conclusion", "references",
     }
     head = lower[:8000]
     article_filename = bool(re.match(r"^\d+-\d+-\d+-", filename))
-    article_filename = article_filename or any(token in filename for token in [
+    article_filename_terms = (
+        _criteria_group_terms("genre_marker", "academic_filename") or {
         "ebsco-fulltext", "s2.0-", "feduc-", "societies-", "jmir_",
         "determinants_of", "div-class-title", "sc-96", "ej",
-    ])
-    scholarly_markers = [
+    })
+    article_filename = article_filename or any(token in filename for token in article_filename_terms)
+    scholarly_markers = _criteria_group_terms("genre_marker", "scholarly_marker") or {
         "doi:", "journal", " vol.", " volume ", " issue ", "abstract",
         "keywords", "received", "accepted", "publication year", "publisher information",
         "type original research", "original research", "article",
-    ]
+    }
     marker_hits = sum(1 for marker in scholarly_markers if marker in head)
     if suffix == ".pdf" and (
         (article_filename and marker_hits >= 1)
@@ -1072,36 +1134,41 @@ def _document_genres(source: str, text: str) -> list:
     ):
         add("academic article")
 
-    legal_filing_terms = [
+    legal_filing_terms = _criteria_group_terms("genre_marker", "legal_filing") or {
         "plaintiff", "defendant", "case no", "court", "pursuant to",
         "complaint", "affidavit", "judgment", "dismissal", "certificate of service",
-    ]
+    }
     if "academic article" not in genres and sum(1 for term in legal_filing_terms if term in head) >= 3:
         add("legal filing")
 
-    agreement_head_terms = [
+    agreement_head_terms = _criteria_group_terms("genre_marker", "contract_agreement") or {
         "settlement agreement", "quitclaim", "contract", "agreement made",
         "executed agreement", "this agreement", "release and settlement",
-    ]
+    }
     if "academic article" not in genres and any(term in head for term in agreement_head_terms):
         add("contract/agreement")
 
     if (
-        "interview protocol" in lower[:8000]
-        or "interview questions" in lower[:8000]
+        any(term in lower[:8000] for term in (
+            _criteria_group_terms("genre_marker", "interview_protocol")
+            or {"interview protocol", "interview questions"}
+        ))
         or ("participant" in lower[:8000] and "interview" in lower[:8000])
     ):
         add("interview protocol")
 
+    literature_review_terms = (
+        _criteria_group_terms("genre_marker", "literature_review")
+        or {"systematic review", "scoping review", "review of the literature"}
+    )
     if (
         "literature review" in sections
-        or "systematic review" in lower[:8000]
-        or "scoping review" in lower[:8000]
-        or "review of the literature" in lower[:8000]
+        or any(term in lower[:8000] for term in literature_review_terms)
     ):
         add("literature review")
 
-    if suffix in {".md", ".txt"} or "meeting notes" in lower[:4000]:
+    notes_terms = _criteria_group_terms("genre_marker", "notes") or {"meeting notes"}
+    if suffix in {".md", ".txt"} or any(term in lower[:4000] for term in notes_terms):
         add("notes")
 
     return genres or ["document"]
@@ -1110,35 +1177,47 @@ def _document_themes(text: str) -> list:
     lower = text.lower()
     themes = []
 
-    if any(term in lower for term in [
+    if any(term in lower for term in (
+        _criteria_group_terms("theme_marker", "ai_adoption") or {
         "ai adoption", "adoption of ai", "artificial intelligence adoption",
         "generative ai adoption", "adopt generative ai", "ai usage",
-    ]):
+    })):
         themes.append("ai adoption")
 
+    training_terms = (
+        _criteria_group_terms("theme_marker", "training_usability") or
+        {"training", "ease of use", "perceived usefulness"}
+    )
+    technology_terms = (
+        _criteria_group_terms("theme_marker", "technology_context") or
+        {"ai", "artificial intelligence", "technology", "system"}
+    )
     if (
-        any(term in lower for term in ["training", "ease of use", "perceived usefulness"])
-        and any(term in lower for term in ["ai", "artificial intelligence", "technology", "system"])
+        any(term in lower for term in training_terms)
+        and any(term in lower for term in technology_terms)
     ):
         themes.append("training and usability")
 
-    if any(term in lower for term in [
+    if any(term in lower for term in (
+        _criteria_group_terms("theme_marker", "legal_privilege") or {
         "attorney-client privilege", "attorney client privilege",
         "work-product privilege", "work product doctrine", "work product privilege",
         "client confidentiality", "legal privilege", "privileged communication",
-    ]):
+    })):
         themes.append("legal privilege")
 
-    if any(term in lower for term in [
+    if any(term in lower for term in (
+        _criteria_group_terms("theme_marker", "research_methods") or {
         "methodology", "qualitative", "quantitative", "research design",
         "interview protocol", "data collection", "sample size",
-    ]):
+    })):
         themes.append("research methods")
 
-    if any(term in lower for term in [
+    if any(term in lower for term in (
+        _criteria_group_terms("theme_marker", "risk_governance") or {
         "risk governance", "ai governance", "compliance", "legal ethics",
         "confidentiality", "privacy risk", "ethical risk", "risk management",
-    ]):
+    })):
         themes.append("risk and governance")
 
     return themes
@@ -1146,7 +1225,10 @@ def _document_themes(text: str) -> list:
 
 def _document_subject_terms(text: str) -> list:
     lines = _meaningful_header_lines(text)
-    stop_labels = {"description", "abstract", "source", "publisher information"}
+    stop_labels = (
+        _criteria_terms("subject_stop_label")
+        or {"description", "abstract", "source", "publisher information"}
+    )
     subjects = _labeled_block(lines, "Subject Terms", stop_labels)
     keywords = []
     for line in lines[:120]:
@@ -1380,6 +1462,18 @@ def _criteria_terms(criteria_type: str) -> set:
     }
 
 
+def _criteria_group_terms(criteria_type: str, group_name: str) -> set:
+    return {
+        (row.get("term") or "").lower()
+        for row in _search_criteria_rows()
+        if (
+            row.get("criteria_type") == criteria_type
+            and (row.get("group_name") or "") == group_name
+            and row.get("term")
+        )
+    }
+
+
 def _domain_groups_from_criteria() -> dict:
     groups = {}
     for row in _search_criteria_rows():
@@ -1402,6 +1496,23 @@ def _terms(text: str) -> list:
 
 def _compact(text: str) -> str:
     return "".join(_terms(text))
+
+
+def _term_pattern(term: str):
+    parts = _terms(term)
+    if not parts:
+        return None
+    joined = r"\s+".join(re.escape(part) for part in parts)
+    return re.compile(rf"(?<![a-z0-9]){joined}(?![a-z0-9])", re.I)
+
+
+def _term_count(text: str, term: str) -> int:
+    pattern = _term_pattern(term)
+    return len(pattern.findall(text or "")) if pattern else 0
+
+
+def _term_present(text: str, term: str) -> bool:
+    return _term_count(text, term) > 0
 
 
 def meaningful_words(text: str) -> list:
@@ -1428,8 +1539,24 @@ def meaningful_words(text: str) -> list:
 
 
 def _word_count_score(text: str, words: list) -> int:
-    text_lower = text.lower()
-    return sum(text_lower.count(w) for w in words if len(w) >= 3)
+    return sum(_term_count(text, w) for w in words if len(w) >= 3)
+
+
+def _meaningful_phrases(text: str) -> list:
+    stopwords = _criteria_terms("stopword") or _BASIC_STOPWORDS_FALLBACK
+    tokens = [t for t in _terms(text) if t not in stopwords and len(t) >= 2]
+    phrases = []
+    for size in (3, 2):
+        for i in range(0, max(0, len(tokens) - size + 1)):
+            phrase = " ".join(tokens[i:i + size])
+            if any(len(part) >= 4 for part in tokens[i:i + size]):
+                phrases.append(phrase)
+    return phrases
+
+
+def _phrase_score(text: str, question: str) -> int:
+    return sum(3 * _term_count(text, phrase)
+               for phrase in _meaningful_phrases(question))
 
 
 def _query_required_domain_groups(question: str) -> list:
@@ -1444,8 +1571,24 @@ def _query_required_domain_groups(question: str) -> list:
 def _matches_required_domain_groups(text: str, required_groups: list) -> bool:
     if not required_groups:
         return True
-    haystack = (text or "").lower()
-    return all(any(term in haystack for term in group) for group in required_groups)
+    return all(any(_term_present(text, term) for term in group)
+               for group in required_groups)
+
+
+def _is_reference_like(text: str) -> bool:
+    lower = (text or "").lower()
+    noise_terms = _criteria_terms("section_noise")
+    if any(_term_present(lower, term) for term in noise_terms):
+        return True
+    doi_hits = lower.count("doi:")
+    bracket_refs = len(re.findall(r"(?<!\w)\[\d+\]", lower))
+    citation_punctuation = len(re.findall(r"\bvol\.\s*\d+|\bpp\.\s*\d+|https?://", lower))
+    return doi_hits >= 2 or bracket_refs >= 3 or citation_punctuation >= 3
+
+
+def _query_allows_reference_chunks(question: str) -> bool:
+    return any(_term_present(question, term)
+               for term in (_criteria_terms("section_noise") or set()))
 
 
 def _source_matches(source: str, words: list, question: str = "") -> int:
@@ -1457,14 +1600,17 @@ def _source_matches(source: str, words: list, question: str = "") -> int:
     score = 0
     if query_compact and query_compact in source_compact:
         score += 14
+    source_low_signal = _criteria_terms("source_low_signal")
     for w in words:
         if len(w) < 3:
             continue
-        if w in stem_lower or w in _compact(stem_lower):
+        if w in source_low_signal:
+            continue
+        if _term_present(stem_lower, w) or w in _compact(stem_lower):
             score += 6
-        elif w in filename_lower or w in _compact(filename_lower):
+        elif _term_present(filename_lower, w) or w in _compact(filename_lower):
             score += 4
-        elif w in source_lower:
+        elif _term_present(source_lower, w):
             score += 2
     return score
 
@@ -1590,7 +1736,7 @@ def mine_document_store(question: str, project: str = None,
             source = path.name
         if project and projects.project_of(source) != project:
             continue
-        if any(part in _IGNORED_DIRS or part.startswith(".")
+        if any(part in ignored_dirs() or part.startswith(".")
                for part in Path(source).parts[:-1]):
             continue
 
@@ -1738,6 +1884,7 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
 
     words = meaningful_words(question)
     required_domain_groups = _query_required_domain_groups(question)
+    allow_reference_chunks = _query_allows_reference_chunks(question)
     candidates = {}
     all_data = collection.get(include=["metadatas", "documents"])
 
@@ -1787,7 +1934,9 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
             candidate_text, required_domain_groups):
             continue
         source_score = _source_matches(source, words, question=question)
-        content_score = _word_count_score(doc, words)
+        content_score = _word_count_score(doc, words) + _phrase_score(doc, question)
+        if _is_reference_like(doc) and not allow_reference_chunks:
+            content_score = 0
         if source_score:
             _add_candidate(
                 candidates, doc, meta, 2.0 + source_score / 4, "source", cid)
@@ -1817,6 +1966,12 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
                     c["document"] or "",
                 ]),
                 required_domain_groups,
+            )
+            and (
+                allow_reference_chunks
+                or not _is_reference_like(c["document"])
+                or "source" in c["signals"]
+                or "citation" in c["signals"]
             )
         ],
         key=lambda c: (
