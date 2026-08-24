@@ -192,11 +192,17 @@ nav button:focus-visible,.btn:focus-visible,.cite:focus-visible{
 .themes button[aria-pressed="true"]{
   box-shadow:0 0 0 1.5px var(--paper),0 0 0 3px var(--ink)}
 .themes button:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
-.sw-light{background:#edefe9;border-color:#c9cec3}
-.sw-dark{background:#16181a;border-color:#343a3c}
-.sw-pink{background:#faeef0;border-color:#e0c3cb}
-.sw-grass{background:#000000;border-color:#65e550}
+.sw-light{background:#fffff7;border-color:#fff7d1}
+.sw-dark{background:#16181a;border-color:#8fabe0}
+.sw-pink{background:#faeef0;border-color:#a8324f}
+.sw-grass{background:#1e4620;border-color:#fff0a5}
 .sw-ocean{background:#224fbc;border-color:#ffffff}
+.sw-pink::after,.sw-grass::after,.sw-ocean::after{
+  content:"";position:absolute;inset:4px;border-radius:50%;
+}
+.sw-pink::after{background:#a8324f}
+.sw-grass::after{background:#fff0a5}
+.sw-ocean::after{background:#ffffff}
 .statusbit{
   font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;
   padding:11px 16px;color:var(--ink-faint);border-left:1px solid var(--rule);
