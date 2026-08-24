@@ -719,6 +719,8 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
             <input type="number" id="chunkSize" min="150" max="2000" step="25"></div>
           <div class="field" style="flex:1;min-width:120px"><label for="chunkOverlap">Overlap</label>
             <input type="number" id="chunkOverlap" min="0" max="500" step="25"></div>
+          <div class="field" style="flex:1;min-width:120px"><label for="topicMinHits">Minimum topic hits</label>
+            <input type="number" id="topicMinHits" min="1" max="100" step="1"></div>
         </div>
         <div class="field"><label for="supportedExtensions">Supported extensions</label>
           <textarea id="supportedExtensions" placeholder=".pdf, .docx, .md"></textarea></div>
@@ -1632,6 +1634,8 @@ async function loadTuning(){
     STATE.tuning.settings = j.settings || {};
     $("#chunkSize").value = STATE.tuning.settings.rag_chunk_size || 500;
     $("#chunkOverlap").value = STATE.tuning.settings.rag_chunk_overlap || 100;
+    $("#topicMinHits").value =
+      STATE.tuning.settings.rag_topic_min_domain_hits || 5;
     $("#supportedExtensions").value =
       (STATE.tuning.settings.rag_supported_extensions || "").split(",").join(", ");
     $("#ignoredDirs").value =
@@ -1723,6 +1727,7 @@ async function saveIndexing(){
     body: JSON.stringify(withProject({
       rag_chunk_size: $("#chunkSize").value,
       rag_chunk_overlap: $("#chunkOverlap").value,
+      rag_topic_min_domain_hits: $("#topicMinHits").value,
       rag_supported_extensions: $("#supportedExtensions").value,
       rag_ignored_dirs: $("#ignoredDirs").value,
       rag_auto_reindex_on_tuning: $("#autoReindexToggle").checked ? "on" : "off",

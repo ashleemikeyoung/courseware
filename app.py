@@ -319,6 +319,7 @@ CRITERIA_TYPES = {
 TUNING_SETTING_KEYS = {
     "rag_chunk_size", "rag_chunk_overlap", "rag_auto_reindex_on_tuning",
     "rag_supported_extensions", "rag_ignored_dirs",
+    "rag_topic_min_domain_hits",
 }
 
 
@@ -341,6 +342,8 @@ def api_tuning():
             "rag_chunk_overlap": get_setting("rag_chunk_overlap", "100"),
             "rag_auto_reindex_on_tuning": get_setting(
                 "rag_auto_reindex_on_tuning", "off"),
+            "rag_topic_min_domain_hits": get_setting(
+                "rag_topic_min_domain_hits", "5"),
             "rag_supported_extensions": get_setting(
                 "rag_supported_extensions",
                 ".arw,.bmp,.cr2,.cr3,.dng,.docx,.gif,.jpeg,.jpg,.md,.nef,.orf,.pdf,.png,.pptx,.rw2,.tiff,.txt,.xlsx",
@@ -423,6 +426,8 @@ def api_tuning_settings():
             return jsonify({"error": "chunk size must be between 150 and 2000"}), 400
         if key == "rag_chunk_overlap" and not 0 <= value <= 500:
             return jsonify({"error": "chunk overlap must be between 0 and 500"}), 400
+        if key == "rag_topic_min_domain_hits" and not 1 <= value <= 100:
+            return jsonify({"error": "minimum topic hits must be between 1 and 100"}), 400
         saved[key] = str(value)
         set_setting(key, str(value))
     return jsonify({"settings": saved})

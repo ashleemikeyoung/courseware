@@ -44,6 +44,7 @@ import summarize
 from memory_client import (
     find_citation, search_document_uploads,
     get_synopsis,
+    get_setting,
     get_bibliography_entry, record_bibliography_entry,
     record_query_quality,
 )
@@ -159,6 +160,11 @@ DOCUMENT_INVENTORY_RE = re.compile(
 )
 FILENAME_LIST_RE = re.compile(
     r"\b(?:filenames?|file names?|sources?|paths?|list)\b", re.IGNORECASE
+)
+TOPIC_FILTER_RE = re.compile(
+    r"\b(?:about|on|deal(?:s|ing)?\s+with|related\s+to|concerning|"
+    r"cover(?:s|ing)?|discuss(?:es|ing)?)\b",
+    re.IGNORECASE,
 )
 ANNOTATED_BIBLIOGRAPHY_RE = re.compile(
     r"\b(?:annotated\s+)?bibliograph\w*\b", re.IGNORECASE
@@ -486,6 +492,30 @@ def _inventory_genre(question: str) -> str:
     return None
 
 
+def _domain_hit_count_for_source(source: str, question: str) -> int:
+    groups = summarize.rag._query_required_domain_groups(question)
+    if not groups:
+        return 0
+    path = Path(summarize.rag.DOCUMENTS_FOLDER) / source
+    try:
+        text = summarize.rag._main_body_text(
+            summarize.rag.load_file(path)[:120000])
+    except Exception:
+        return 0
+    return sum(
+        summarize.rag._term_count(text, term)
+        for group in groups
+        for term in group
+    )
+
+
+def _topic_min_domain_hits() -> int:
+    try:
+        return max(1, int(get_setting("rag_topic_min_domain_hits", "5")))
+    except Exception:
+        return 5
+
+
 def _answer_document_inventory(question: str, project: str = None):
     """
     Answer count/list questions from libSQL document metadata.
@@ -522,6 +552,70 @@ def _answer_document_inventory(question: str, project: str = None):
             "research methods guide",
             "spreadsheet",
         ])
+
+    if genre and TOPIC_FILTER_RE.search(question or ""):
+        try:
+            rows = summarize.rag.mine_document_store(
+                question, project=project, limit=500)
+        except Exception as e:
+            return {
+                "text": f"I couldn't query the document store: {e}",
+                "evidence": {},
+                "grounded": False,
+                "passages_offered": 0,
+                "metrics": {"topic_inventory_error": str(e)},
+            }
+
+        excluded = {g.lower() for g in exclude_genres}
+        min_domain_hits = _topic_min_domain_hits()
+        filtered = []
+        for row in rows:
+            row_genres = {g.lower() for g in row.get("genres", [])}
+            if genre.lower() not in row_genres:
+                continue
+            if excluded.intersection(row_genres):
+                continue
+            if (
+                _domain_hit_count_for_source(row.get("source") or "", question)
+                < min_domain_hits
+            ):
+                continue
+            filtered.append(row)
+
+        label = genre or "saved document"
+        plural = label if label.endswith("s") else label + "s"
+        if not filtered:
+            scope = f" in project {project}" if project else ""
+            return {
+                "text": f"I found 0 {plural} matching that topic{scope}.",
+                "evidence": {},
+                "grounded": True,
+                "passages_offered": 0,
+                "metrics": {"topic_inventory": True, "count": 0},
+            }
+
+        wants_list = FILENAME_LIST_RE.search(question or "")
+        noun = label if len(filtered) == 1 else plural
+        lines = [f"I found {len(filtered)} {noun} matching that topic."]
+        if wants_list or len(filtered) <= 10:
+            lines.append("")
+            for row in filtered:
+                source = row.get("source") or ""
+                title = row.get("label") or Path(source).name
+                suffix = f" — {title}" if title and title != Path(source).name else ""
+                lines.append(f"- {source}{suffix}")
+
+        return {
+            "text": "\n".join(lines),
+            "evidence": {},
+            "grounded": True,
+            "passages_offered": 0,
+            "metrics": {
+                "topic_inventory": True,
+                "count": len(filtered),
+                "genre": genre,
+            },
+        }
 
     try:
         rows = search_document_uploads(

@@ -1695,6 +1695,20 @@ def _document_row_text(row: dict) -> str:
     return " ".join(parts)
 
 
+def _main_body_text(text: str) -> str:
+    """
+    Keep source-level topical matching anchored in the article body.
+    References and bibliographies are useful for citation lookups, but a topic
+    appearing only there should not make the whole source count as being about
+    that topic.
+    """
+    match = re.search(
+        r"(?im)^\s*(references|bibliography|works cited|literature cited)\s*$",
+        text or "",
+    )
+    return (text or "")[:match.start()] if match else (text or "")
+
+
 def _json_list(value) -> list:
     if isinstance(value, list):
         return value
@@ -1758,8 +1772,15 @@ def mine_document_store(question: str, project: str = None,
         if not text.strip():
             continue
 
-        searchable = f"{metadata_text}\n{source}\n{text[:max_chars_per_file]}".lower()
-        if not _matches_required_domain_groups(searchable, required_domain_groups):
+        main_text = _main_body_text(text[:max_chars_per_file])
+        identity_text = " ".join([
+            source,
+            row.get("label") or _derive_document_label(source, text),
+        ])
+        topic_searchable = f"{identity_text}\n{main_text}".lower()
+        searchable = f"{metadata_text}\n{identity_text}\n{main_text}".lower()
+        if not _matches_required_domain_groups(
+                topic_searchable, required_domain_groups):
             continue
         score = _word_count_score(searchable, words)
         score += _source_matches(source, words, question=question)
@@ -1775,7 +1796,7 @@ def mine_document_store(question: str, project: str = None,
                 _json_list(row.get("subject_terms"))
                 or _document_subject_terms(text)
             ),
-            "snippet": _file_excerpt(text[:max_chars_per_file], words),
+            "snippet": _file_excerpt(main_text, words),
         })
 
     matches.sort(key=lambda item: item["score"], reverse=True)
