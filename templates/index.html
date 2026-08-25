@@ -171,6 +171,8 @@ nav button[data-tab="ask"]{
   flex:1 1 auto;text-align:left;padding:13px 22px;font-size:13px;
   color:var(--ink);background:var(--paper);
 }
+.home-tab{display:inline-flex;align-items:center;gap:8px}
+.home-tab .home-icon{font-size:16px;line-height:1}
 nav button.icon-tab{
   width:44px;min-width:44px;padding:7px 0;font-size:24px;line-height:1;
   letter-spacing:0;text-align:center;text-transform:none;
@@ -484,7 +486,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <button id="btnNewProj" title="New project">+</button>
   </div>
   <nav id="nav">
-    <button data-tab="ask" aria-selected="true">Ask</button>
+    <button data-tab="ask" aria-selected="true"><span class="home-tab"><span class="home-icon" aria-hidden="true">⌂</span><span>Home</span></span></button>
     <button class="icon-tab" data-tab="tuning" aria-selected="false" title="Settings" aria-label="Settings">⚙</button>
   </nav>
   <div class="themes" role="group" aria-label="Theme">
@@ -530,7 +532,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 <!-- ASK -->
 <section class="panel on" id="p-ask"><div class="wrap">
   <p class="eyebrow">Open-ended</p>
-  <h1>Ask anything</h1>
+  <h1>Home</h1>
   <p class="lede" id="askLede">A plain conversation. Turn grounding on to pull
     answers from the current project's documents, or leave it off and talk to
     the model directly.</p>
