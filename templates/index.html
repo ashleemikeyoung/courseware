@@ -161,16 +161,29 @@ nav{
   border-top:1px solid var(--rule-soft);
 }
 nav button{
-  flex:1 0 auto;
+  flex:0 0 auto;
   background:none;border:0;border-right:1px solid var(--rule-soft);
-  padding:11px 20px;cursor:pointer;font-family:var(--mono);font-size:11px;
-  letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint);
+  padding:9px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint);
   white-space:nowrap;transition:color .12s,background .12s;
+}
+nav button[data-tab="ask"]{
+  flex:1 0 220px;text-align:left;padding:13px 22px;font-size:13px;
+  color:var(--ink);background:var(--paper);
+}
+nav button[data-tab="setup"],
+nav button[data-tab="bench"],
+nav button[data-tab="tuning"],
+nav button[data-tab="history"]{
+  opacity:.68;
 }
 nav button:hover{color:var(--ink);background:var(--paper)}
 nav button[aria-selected="true"]{
   color:var(--ink);background:var(--paper);
   box-shadow:inset 0 -2px 0 var(--blue);
+}
+nav button[data-tab="ask"][aria-selected="true"]{
+  box-shadow:inset 0 -3px 0 var(--blue);
 }
 nav button:focus-visible,.btn:focus-visible,.cite:focus-visible{
   outline:2px solid var(--blue);outline-offset:1px}
@@ -473,8 +486,8 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <button id="btnNewProj" title="New project">+</button>
   </div>
   <nav id="nav">
-    <button data-tab="setup" aria-selected="true">Status</button>
-    <button data-tab="ask" aria-selected="false">Ask</button>
+    <button data-tab="ask" aria-selected="true">Ask</button>
+    <button data-tab="setup" aria-selected="false">Status</button>
     <button data-tab="summarize" aria-selected="false">Summarize</button>
     <button data-tab="outline" aria-selected="false">Outline</button>
     <button data-tab="draft" aria-selected="false">Draft</button>
@@ -499,7 +512,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 </div>
 
 <!-- SETUP -->
-<section class="panel on" id="p-setup"><div class="wrap">
+<section class="panel" id="p-setup"><div class="wrap">
   <p class="eyebrow">Local status</p>
   <h1>Projects and index health</h1>
   <p class="lede">This is a status page. Your projects are source folders under
@@ -523,7 +536,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 </div></section>
 
 <!-- ASK -->
-<section class="panel" id="p-ask"><div class="wrap">
+<section class="panel on" id="p-ask"><div class="wrap">
   <p class="eyebrow">Open-ended</p>
   <h1>Ask anything</h1>
   <p class="lede" id="askLede">A plain conversation. Turn grounding on to pull
