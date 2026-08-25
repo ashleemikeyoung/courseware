@@ -128,7 +128,7 @@ button,input,textarea,select{font:inherit;color:inherit}
 
 /* --- chrome ------------------------------------------------------------- */
 .rail{
-  display:flex;align-items:stretch;gap:0;
+  display:flex;align-items:stretch;gap:0;flex-wrap:wrap;
   border-bottom:1px solid var(--rule);background:var(--paper-2);
   position:sticky;top:0;z-index:40;
 }
@@ -156,8 +156,12 @@ button,input,textarea,select{font:inherit;color:inherit}
   font-family:var(--wordmark);font-weight:500;font-size:19px;
   color:var(--ink-faint);padding-top:2px;white-space:nowrap;
 }
-nav{display:flex;flex:1;overflow-x:auto}
+nav{
+  display:flex;flex:1 0 100%;order:10;flex-wrap:wrap;overflow-x:visible;
+  border-top:1px solid var(--rule-soft);
+}
 nav button{
+  flex:1 0 auto;
   background:none;border:0;border-right:1px solid var(--rule-soft);
   padding:11px 20px;cursor:pointer;font-family:var(--mono);font-size:11px;
   letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint);
