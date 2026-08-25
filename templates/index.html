@@ -157,7 +157,7 @@ button,input,textarea,select{font:inherit;color:inherit}
   color:var(--ink-faint);padding-top:2px;white-space:nowrap;
 }
 nav{
-  display:flex;flex:1 0 100%;order:10;flex-wrap:wrap;overflow-x:visible;
+  display:flex;flex:1 0 100%;order:10;align-items:stretch;overflow:visible;
   border-top:1px solid var(--rule-soft);
 }
 nav button{
@@ -168,14 +168,12 @@ nav button{
   white-space:nowrap;transition:color .12s,background .12s;
 }
 nav button[data-tab="ask"]{
-  flex:1 0 220px;text-align:left;padding:13px 22px;font-size:13px;
+  flex:1 1 auto;text-align:left;padding:13px 22px;font-size:13px;
   color:var(--ink);background:var(--paper);
 }
-nav button[data-tab="setup"],
-nav button[data-tab="bench"],
-nav button[data-tab="tuning"],
-nav button[data-tab="history"]{
-  opacity:.68;
+nav button.icon-tab{
+  width:44px;min-width:44px;padding:9px 0;font-size:16px;line-height:1;
+  letter-spacing:0;text-align:center;text-transform:none;
 }
 nav button:hover{color:var(--ink);background:var(--paper)}
 nav button[aria-selected="true"]{
@@ -487,13 +485,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
   </div>
   <nav id="nav">
     <button data-tab="ask" aria-selected="true">Ask</button>
-    <button data-tab="setup" aria-selected="false">Status</button>
-    <button data-tab="summarize" aria-selected="false">Summarize</button>
-    <button data-tab="outline" aria-selected="false">Outline</button>
-    <button data-tab="draft" aria-selected="false">Draft</button>
-    <button data-tab="bench" aria-selected="false">Compare</button>
-    <button data-tab="tuning" aria-selected="false">Settings</button>
-    <button data-tab="history" aria-selected="false">History</button>
+    <button class="icon-tab" data-tab="tuning" aria-selected="false" title="Settings" aria-label="Settings">⚙</button>
   </nav>
   <div class="themes" role="group" aria-label="Theme">
     <button class="sw-light" data-theme-set="light" title="Light" aria-pressed="true"></button>
@@ -661,6 +653,11 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 <section class="panel" id="p-tuning"><div class="wrap">
   <p class="eyebrow">Retrieval controls</p>
   <h1>Settings</h1>
+  <div class="row" style="margin-bottom:16px">
+    <button class="btn ghost small" onclick="show('setup')">Status</button>
+    <button class="btn ghost small" onclick="show('bench')">Compare</button>
+    <button class="btn ghost small" onclick="show('history')">History</button>
+  </div>
   <p class="lede">Criteria live in memory, so retrieval can be adjusted without
     editing code. Misses are saved as examples to check future tuning against.</p>
 
@@ -804,17 +801,17 @@ document.querySelectorAll("[data-theme-set]").forEach(b =>
 
 /* --- tabs --------------------------------------------------------------- */
 $("#nav").addEventListener("click", e => {
-  const b = e.target.closest("button"); if (!b) return; show(b.dataset.tab);
+  const b = e.target.closest("button[data-tab]"); if (!b) return;
+  show(b.dataset.tab);
 });
 function show(tab){
-  document.querySelectorAll("#nav button").forEach(b =>
+  document.querySelectorAll("#nav button[data-tab]").forEach(b =>
     b.setAttribute("aria-selected", b.dataset.tab === tab));
   document.querySelectorAll(".panel").forEach(p =>
     p.classList.toggle("on", p.id === "p-" + tab));
   if (tab === "tuning") loadTuning();
   if (tab === "history") loadHistory();
 }
-
 /* --- job streaming ------------------------------------------------------ */
 function runJob(url, body, logEl, onEvent){
   return new Promise((resolve, reject) => {
