@@ -36,7 +36,9 @@ from writer import (
 # two places quietly agreeing on the same borrowed default instead of ask.py
 # declaring its own). Callers can still override with an explicit model.
 from config import ASK_MODEL
+import coder
 import projects
+import redactor
 import summarize
 
 # writer.py's import above already inserts memory/ onto sys.path (see its
@@ -253,6 +255,10 @@ RELATION_TARGET_RE = re.compile(
 WEB_SEARCH_RE = re.compile(
     r"\b(?:web|internet|online|google|external)\s+search\b|"
     r"\bsearch\s+(?:the\s+)?(?:web|internet|online|google)\b",
+    re.IGNORECASE,
+)
+CODER_REQUEST_RE = re.compile(
+    r"^\s*(?:code|coder|write\s+code|edit\s+code|implement|patch)\s*:",
     re.IGNORECASE,
 )
 DDG_RESULT_RE = re.compile(
@@ -489,7 +495,10 @@ def _trim_history(messages: list, max_words: int = 3000) -> list:
 
 def _plan_query(question: str, context: str = "") -> dict:
     q = question or ""
-    if (
+    if _is_coder_request(q):
+        intent = "code_action"
+        primary = "local_workspace"
+    elif (
         REDACTION_REQUEST_RE.search(q)
         or _has_ask_term(
             q, "redaction_request",
@@ -542,7 +551,7 @@ def _plan_query(question: str, context: str = "") -> dict:
         "primary_source": primary,
         "define": {
             "intent": intent,
-            "source_of_truth": "document_store",
+            "source_of_truth": primary,
             "primary_source": primary,
             "question": q,
         },
@@ -550,6 +559,72 @@ def _plan_query(question: str, context: str = "") -> dict:
             "document_store_first": intent in DOCUMENT_TRUTH_INTENTS,
             "mine_sources_on_insufficient_result": True,
             "chroma_role": "passage_index_not_source_of_truth",
+        },
+    }
+
+
+def _is_coder_request(question: str) -> bool:
+    return bool(
+        CODER_REQUEST_RE.search(question or "")
+        or _has_ask_term(
+            question,
+            "coder_request",
+            ["code:", "coder:", "write code:", "edit code:", "implement:", "patch:"],
+        )
+    )
+
+
+def _answer_coder_request(question: str) -> dict:
+    if not _is_coder_request(question):
+        return None
+    try:
+        result = coder.write_code(question)
+    except Exception as exc:
+        return {
+            "text": (
+                "I recognized that as a code-writing request, but I could not "
+                "apply the change.\n\n"
+                f"Reason: {type(exc).__name__}: {exc}"
+            ),
+            "evidence": {},
+            "grounded": True,
+            "passages_offered": 0,
+            "metrics": {
+                "coder_request": True,
+                "applied": False,
+                "error": type(exc).__name__,
+            },
+        }
+
+    if result.get("needs_target_files"):
+        return {
+            "text": result["message"],
+            "evidence": {},
+            "grounded": True,
+            "passages_offered": 0,
+            "metrics": {
+                "coder_request": True,
+                "applied": False,
+                "needs_target_files": True,
+            },
+        }
+
+    files = "\n".join(f"- {path}" for path in result["files"])
+    return {
+        "text": (
+            "Code changes written.\n\n"
+            f"{files}\n\n"
+            "Review the change, then use the app update control to apply and "
+            "restart when you are ready."
+        ),
+        "evidence": {},
+        "grounded": True,
+        "passages_offered": 0,
+        "metrics": {
+            "coder_request": True,
+            "applied": True,
+            "files": result["files"],
+            **result.get("metrics", {}),
         },
     }
 
@@ -670,13 +745,62 @@ def _answer_redaction_request(question: str, project: str = None) -> dict:
 
     source = summarize.detect_file_reference(question, project=project)
     if source:
+        try:
+            result = redactor.redact_source(
+                source,
+                project=project,
+                extra_terms=_redaction_search_query(question).split(),
+            )
+        except redactor.UnsupportedRedactionError as exc:
+            return {
+                "text": (
+                    "I found the exact file for that redaction request and did "
+                    "not print its contents back into chat.\n\n"
+                    f"- {source}\n\n"
+                    f"{exc}"
+                ),
+                "evidence": {},
+                "grounded": True,
+                "passages_offered": 0,
+                "metrics": {
+                    "redaction_request": True,
+                    "exact_file": True,
+                    "count": 1,
+                    "sources": [source],
+                    "redaction_supported": False,
+                },
+            }
+        except Exception as exc:
+            return {
+                "text": (
+                    "I found the exact file, but the redacted copy could not "
+                    "be created. I did not print the document contents back "
+                    "into chat.\n\n"
+                    f"- {source}\n\n"
+                    f"Redaction error: {type(exc).__name__}"
+                ),
+                "evidence": {},
+                "grounded": True,
+                "passages_offered": 0,
+                "metrics": {
+                    "redaction_request": True,
+                    "exact_file": True,
+                    "count": 1,
+                    "sources": [source],
+                    "redaction_error": type(exc).__name__,
+                },
+            }
+
         return {
             "text": (
-                "I found the exact file for that redaction request. I did not "
-                "print the contents or private details back into chat.\n\n"
-                f"- {source}\n\n"
-                "The Ask view can identify the file, but the redaction "
-                "exporter is not wired into this workflow yet."
+                "Redacted copy created. I did not print the contents or "
+                "private details back into chat.\n\n"
+                f"- Source: {source}\n"
+                f"- Output: {result['output_path']}\n"
+                f"- Redactions: {result['matches_redacted']} matches across "
+                f"{result['paragraphs_touched']} paragraphs\n\n"
+                "Please review the redacted file before sharing it; automated "
+                "redaction can miss context-specific private information."
             ),
             "evidence": {},
             "grounded": True,
@@ -686,6 +810,8 @@ def _answer_redaction_request(question: str, project: str = None) -> dict:
                 "exact_file": True,
                 "count": 1,
                 "sources": [source],
+                "redacted_output": result["output_path"],
+                "matches_redacted": result["matches_redacted"],
             },
         }
 
@@ -733,8 +859,8 @@ def _answer_redaction_request(question: str, project: str = None) -> dict:
         lines.append(f"- {source}")
     lines.extend([
         "",
-        "The Ask view can identify the files, but the redaction exporter is "
-        "not wired into this workflow yet.",
+        "Tell me the exact file to redact and I will create a separate "
+        "redacted DOCX copy without printing the contents here.",
     ])
     return {
         "text": "\n".join(lines),
@@ -2129,6 +2255,13 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     app_command = _answer_app_command_guard(last_user)
     if app_command:
         return app_command
+
+    coder_action = _answer_coder_request(last_user)
+    if coder_action:
+        coder_action["metrics"]["route"] = "coder_request"
+        return _quality_finish(
+            coder_action, last_user, plan, project=scope,
+            improvements=["routed_explicit_coder_request_to_local_code_writer"])
 
     if ground and last_user.strip():
         redaction = _answer_redaction_request(last_user, project=scope)

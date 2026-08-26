@@ -880,6 +880,10 @@ DEFAULT_SEARCH_CRITERIA = [
                 "redact", "redacted", "redaction", "de-identify",
                 "deidentify", "remove pii", "remove personal information",
             ],
+            "coder_request": [
+                "code:", "coder:", "write code:", "edit code:",
+                "implement:", "patch:",
+            ],
             "contextual_search": [
                 "this", "that", "these", "those", "same", "subject",
                 "matter", "above", "it",
