@@ -822,6 +822,99 @@ DEFAULT_SEARCH_CRITERIA = [
         ]
     ],
     *[
+        {"criteria_type": "genre_alias", "group_name": group, "term": term}
+        for group, terms in {
+            "academic article": [
+                "article", "articles", "academic article", "academic articles",
+            ],
+            "book chapter": ["book chapter", "book chapters"],
+            "presentation": ["presentation", "presentations"],
+            "chat export": ["chat export", "chat exports"],
+            "coursework": ["coursework"],
+            "dissertation draft": ["dissertation draft", "dissertation drafts"],
+            "dissertation": ["dissertation", "dissertations", "thesis"],
+            "legal filing": ["legal filing", "legal filings"],
+            "contract/agreement": [
+                "contract", "contracts", "agreement", "agreements",
+            ],
+            "interview protocol": ["interview protocol", "interview protocols"],
+            "research methods guide": [
+                "research methods guide", "research methods guides",
+            ],
+        }.items()
+        for term in terms
+    ],
+    *[
+        {"criteria_type": "ask_route", "group_name": group, "term": term}
+        for group, terms in {
+            "summarize": ["summarize", "summary"],
+            "abstract_filter": [
+                "abstract", "abstracts", "with abstract", "has abstract",
+                "have abstract", "having abstract", "contains abstract",
+                "include abstract",
+            ],
+            "topic_filter": [
+                "about", "on", "deals with", "dealing with", "related to",
+                "concerning", "covers", "covering", "discusses", "discussing",
+            ],
+            "annotated_bibliography": [
+                "bibliography", "annotated bibliography",
+            ],
+            "document_metadata": [
+                "author", "authors", "who wrote", "who authored",
+                "written by", "document type", "document types", "genre",
+                "genres", "subject", "subject matter", "topic", "topics",
+                "theme", "themes", "metadata",
+            ],
+            "content_search": ["which", "what", "find", "show", "identify"],
+            "app_command": [
+                "clear", "reset", "wipe", "reindex", "re-index", "rescan",
+                "refresh index",
+            ],
+            "content_question": [
+                "argues", "covers", "discusses", "says", "explain",
+                "summarize", "summary", "compare", "contrast", "synthesize",
+                "analyze",
+            ],
+            "redaction_request": [
+                "redact", "redacted", "redaction", "de-identify",
+                "deidentify", "remove pii", "remove personal information",
+            ],
+            "contextual_search": [
+                "this", "that", "these", "those", "same", "subject",
+                "matter", "above", "it",
+            ],
+            "all_documents": ["all", "every", "each"],
+            "web_search": [
+                "web search", "internet search", "online search",
+                "google search", "external search", "search the web",
+                "search the internet", "search online", "search google",
+            ],
+        }.items()
+        for term in terms
+    ],
+    *[
+        {"criteria_type": "relation_target", "term": term}
+        for term in [
+            "concerning", "regarding", "about", "related to", "dealing with",
+            "involving", "mentioning", "referencing",
+        ]
+    ],
+    *[
+        {"criteria_type": "source_lookup_stopword", "term": term}
+        for term in [
+            "about", "above", "additional", "additionally", "also", "another",
+            "appears", "article", "articles", "because", "being", "could",
+            "discuss", "discusses", "discussing", "document", "documents",
+            "file", "files", "following", "found", "from", "into", "legal",
+            "like", "mentions", "one", "other", "provides", "settings",
+            "several", "source", "sources", "specific", "specifically",
+            "that", "their", "there", "these", "this", "those", "use",
+            "uses", "using", "which", "with", "dealing", "subject",
+            "concerning",
+        ]
+    ],
+    *[
         {"criteria_type": "domain_trigger", "group_name": "healthcare", "term": term}
         for term in [
             "healthcare", "health", "medical", "clinical", "patient",

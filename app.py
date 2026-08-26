@@ -314,7 +314,8 @@ def rescan():
 CRITERIA_TYPES = {
     "stopword", "low_signal", "source_low_signal", "section_noise",
     "domain_trigger", "domain_term", "document_section", "genre_marker",
-    "theme_marker", "subject_stop_label",
+    "theme_marker", "subject_stop_label", "ask_route", "genre_alias",
+    "source_lookup_stopword", "relation_target",
 }
 TUNING_SETTING_KEYS = {
     "rag_chunk_size", "rag_chunk_overlap", "rag_auto_reindex_on_tuning",
@@ -380,8 +381,11 @@ def api_tuning_criteria():
         return jsonify({"error": "unknown criteria type"}), 400
     if not term:
         return jsonify({"error": "term is required"}), 400
-    if criteria_type.startswith("domain_") and not group_name:
-        return jsonify({"error": "domain criteria need a group"}), 400
+    if (
+        criteria_type.startswith("domain_")
+        or criteria_type in {"ask_route", "genre_alias"}
+    ) and not group_name:
+        return jsonify({"error": f"{criteria_type} criteria need a group"}), 400
 
     upsert_search_criterion(
         criteria_type, term, group_name=group_name, weight=weight,

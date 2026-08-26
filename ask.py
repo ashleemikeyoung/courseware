@@ -47,7 +47,7 @@ import summarize
 from memory_client import (
     find_citation, search_document_uploads,
     get_synopsis,
-    get_setting,
+    get_setting, get_search_criteria,
     get_bibliography_entry, record_bibliography_entry,
     record_query_quality,
 )
@@ -242,6 +242,14 @@ ALL_DOCUMENTS_RE = re.compile(
     r"\b(?:all|every|each)\b.*\b(?:documents?|files?|sources?)\b",
     re.IGNORECASE,
 )
+NAMED_ENTITY_RE = re.compile(
+    r"\b[A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+){1,3}\b"
+)
+RELATION_TARGET_RE = re.compile(
+    r"\b(?:concerning|regarding|about|related\s+to|dealing\s+with|"
+    r"involving|mentioning|referencing)\s+(.+?)[?.!]*$",
+    re.IGNORECASE,
+)
 WEB_SEARCH_RE = re.compile(
     r"\b(?:web|internet|online|google|external)\s+search\b|"
     r"\bsearch\s+(?:the\s+)?(?:web|internet|online|google)\b",
@@ -278,8 +286,106 @@ DOCUMENT_TRUTH_INTENTS = {
     "document_inventory",
     "document_identity",
     "document_metadata",
+    "document_redaction",
     "cross_document_search",
 }
+_ASK_CRITERIA_CACHE = {"loaded_at": 0.0, "rows": []}
+_ASK_CRITERIA_TTL_SECONDS = 30
+
+
+def _ask_criteria_rows() -> list:
+    now = time.time()
+    if now - _ASK_CRITERIA_CACHE["loaded_at"] < _ASK_CRITERIA_TTL_SECONDS:
+        return list(_ASK_CRITERIA_CACHE["rows"])
+    try:
+        rows = get_search_criteria(enabled_only=True)
+        _ASK_CRITERIA_CACHE["loaded_at"] = now
+        _ASK_CRITERIA_CACHE["rows"] = rows
+        return list(rows)
+    except Exception:
+        return list(_ASK_CRITERIA_CACHE["rows"])
+
+
+def _ask_terms(criteria_type: str, group_name: str = None,
+               fallback=None) -> set:
+    terms = {
+        (row.get("term") or "").lower()
+        for row in _ask_criteria_rows()
+        if row.get("criteria_type") == criteria_type
+        and (group_name is None or (row.get("group_name") or "") == group_name)
+        and row.get("term")
+    }
+    return terms or {str(term).lower() for term in (fallback or [])}
+
+
+def _ask_group_map(criteria_type: str, fallback: dict = None) -> dict:
+    groups = {}
+    for row in _ask_criteria_rows():
+        if row.get("criteria_type") != criteria_type:
+            continue
+        group = row.get("group_name") or ""
+        term = (row.get("term") or "").lower()
+        if group and term:
+            groups.setdefault(group, set()).add(term)
+    return groups or {
+        group: {str(term).lower() for term in terms}
+        for group, terms in (fallback or {}).items()
+    }
+
+
+def _term_pattern(terms: set) -> re.Pattern:
+    ordered = sorted((term for term in terms if term), key=len, reverse=True)
+    if not ordered:
+        return re.compile(r"a\A")
+    body = "|".join(
+        re.escape(term).replace(r"\ ", r"\s+") for term in ordered
+    )
+    return re.compile(rf"(?<![A-Za-z0-9])(?:{body})(?![A-Za-z0-9])", re.I)
+
+
+def _has_ask_term(text: str, group_name: str, fallback=None) -> bool:
+    return bool(_term_pattern(
+        _ask_terms("ask_route", group_name, fallback)
+    ).search(text or ""))
+
+
+def _requires_abstract(question: str) -> bool:
+    return bool(
+        ABSTRACT_FILTER_RE.search(question or "")
+        or _has_ask_term(
+            question, "abstract_filter",
+            ["abstract", "abstracts", "with abstract", "has abstract"])
+    )
+
+
+def _has_topic_filter(question: str) -> bool:
+    return bool(
+        TOPIC_FILTER_RE.search(question or "")
+        or _has_ask_term(
+            question, "topic_filter",
+            ["about", "dealing with", "related to", "concerning",
+             "covering", "discussing"])
+    )
+
+
+def _is_app_command(question: str) -> bool:
+    return bool(
+        APP_COMMAND_RE.search(question or "")
+        or _has_ask_term(
+            question, "app_command",
+            ["clear", "reset", "wipe", "reindex", "rescan",
+             "refresh index"])
+    )
+
+
+def _wants_web_search(question: str) -> bool:
+    return bool(
+        WEB_SEARCH_RE.search(question or "")
+        or _has_ask_term(
+            question, "web_search",
+            ["web search", "internet search", "online search",
+             "external search", "search the web"])
+    )
 
 
 def _is_degenerate(text: str) -> bool:
@@ -383,10 +489,23 @@ def _trim_history(messages: list, max_words: int = 3000) -> list:
 
 def _plan_query(question: str, context: str = "") -> dict:
     q = question or ""
-    if SOURCE_FOLLOWUP_RE.search(q):
+    if (
+        REDACTION_REQUEST_RE.search(q)
+        or _has_ask_term(
+            q, "redaction_request",
+            ["redact", "redacted", "redaction", "de-identify", "deidentify",
+             "remove pii", "remove personal information"])
+    ):
+        intent = "document_redaction"
+        primary = "document_store"
+    elif SOURCE_FOLLOWUP_RE.search(q):
         intent = "document_identity"
         primary = "document_registry"
-    elif ANNOTATED_BIBLIOGRAPHY_RE.search(q):
+    elif (
+        ANNOTATED_BIBLIOGRAPHY_RE.search(q)
+        or _has_ask_term(q, "annotated_bibliography",
+                         ["bibliography", "annotated bibliography"])
+    ):
         intent = "synthesis"
         primary = "document_registry"
     elif DOCUMENT_INVENTORY_RE.search(q) and (
@@ -394,7 +513,11 @@ def _plan_query(question: str, context: str = "") -> dict:
     ):
         intent = "document_inventory"
         primary = "document_registry"
-    elif DOCUMENT_METADATA_RE.search(q):
+    elif (
+        DOCUMENT_METADATA_RE.search(q)
+        or _has_ask_term(q, "document_metadata",
+                         ["author", "authors", "metadata", "subject"])
+    ):
         intent = "document_metadata"
         primary = "document_registry"
     elif SUMMARIZE_RE.search(q) and _has_known_source_reference(q, context):
@@ -403,7 +526,11 @@ def _plan_query(question: str, context: str = "") -> dict:
     elif CONTENT_SEARCH_RE.search(q):
         intent = "cross_document_search"
         primary = "document_store"
-    elif CONTENT_QUESTION_RE.search(q):
+    elif (
+        CONTENT_QUESTION_RE.search(q)
+        or _has_ask_term(q, "content_question",
+                         ["explain", "summarize", "compare", "analyze"])
+    ):
         intent = "document_content"
         primary = "document_store"
     else:
@@ -521,14 +648,24 @@ def _source_mining_evidence(question: str, registry: CitationRegistry,
 
 
 def _redaction_search_query(question: str) -> str:
-    q = re.sub(REDACTION_REQUEST_RE, " ", question or "")
+    redaction_terms = _ask_terms(
+        "ask_route", "redaction_request",
+        ["redact", "redacted", "redaction", "de-identify", "deidentify",
+         "remove pii", "remove personal information"])
+    q = _term_pattern(redaction_terms).sub(" ", question or "")
     q = re.sub(r"\b(?:the|a|an|file|document|documents|set|copy|copies)\b",
                " ", q, flags=re.IGNORECASE)
     return " ".join(q.split()) or (question or "")
 
 
 def _answer_redaction_request(question: str, project: str = None) -> dict:
-    if not REDACTION_REQUEST_RE.search(question or ""):
+    if not (
+        REDACTION_REQUEST_RE.search(question or "")
+        or _has_ask_term(
+            question, "redaction_request",
+            ["redact", "redacted", "redaction", "de-identify", "deidentify",
+             "remove pii", "remove personal information"])
+    ):
         return None
 
     query = _redaction_search_query(question)
@@ -593,9 +730,12 @@ def _answer_redaction_request(question: str, project: str = None) -> dict:
 
 def _inventory_genre(question: str) -> str:
     q = " ".join((question or "").lower().split())
-    for phrase in sorted(GENRE_ALIASES, key=len, reverse=True):
-        if re.search(r"\b" + re.escape(phrase) + r"\b", q):
-            return GENRE_ALIASES[phrase]
+    fallback = {}
+    for alias, genre in GENRE_ALIASES.items():
+        fallback.setdefault(genre, set()).add(alias)
+    for genre, aliases in _ask_group_map("genre_alias", fallback).items():
+        if _term_pattern(aliases).search(q):
+            return genre
     if re.search(r"\bfiles?\b|\bdocuments?\b|\bsources?\b", q):
         return None
     return None
@@ -794,7 +934,7 @@ def _answer_document_inventory(question: str, project: str = None):
         return None
 
     genre = _inventory_genre(question)
-    requires_abstract = bool(ABSTRACT_FILTER_RE.search(question or ""))
+    requires_abstract = _requires_abstract(question)
     wants_inventory_shape = (
         FILENAME_LIST_RE.search(question or "")
         or re.search(r"\bhow many\b", question or "", re.I)
@@ -823,7 +963,7 @@ def _answer_document_inventory(question: str, project: str = None):
             "spreadsheet",
         ])
 
-    if genre and TOPIC_FILTER_RE.search(question or ""):
+    if genre and _has_topic_filter(question):
         try:
             rows = summarize.rag.mine_document_store(
                 question, project=project, limit=500)
@@ -959,7 +1099,13 @@ def _answer_document_inventory(question: str, project: str = None):
 
 
 def _contextual_document_query(question: str, context: str = "") -> str:
-    if not CONTEXTUAL_SEARCH_RE.search(question or ""):
+    if not (
+        CONTEXTUAL_SEARCH_RE.search(question or "")
+        or _has_ask_term(
+            question, "contextual_search",
+            ["this", "that", "these", "those", "same", "subject",
+             "matter", "above", "it"])
+    ):
         return question or ""
     hints = []
     for source in _sources_from_context(context or "")[-8:]:
@@ -970,7 +1116,13 @@ def _contextual_document_query(question: str, context: str = "") -> str:
 
 
 def _sensitive_document_context(context: str) -> bool:
-    if REDACTION_REQUEST_RE.search(context or ""):
+    if (
+        REDACTION_REQUEST_RE.search(context or "")
+        or _has_ask_term(
+            context, "redaction_request",
+            ["redact", "redacted", "redaction", "de-identify", "deidentify",
+             "remove pii", "remove personal information"])
+    ):
         return True
     sources = _sources_from_context(context or "")
     return any(source.startswith("Replevin/") for source in sources)
@@ -982,6 +1134,83 @@ def _source_context_prefixes(context: str) -> set:
     return prefixes
 
 
+def _exhaustive_document_query(question: str, context: str = "") -> str:
+    entities = [
+        entity.strip()
+        for entity in NAMED_ENTITY_RE.findall(question or "")
+        if entity.lower() not in {"What", "Which"}
+    ]
+    if entities:
+        return " ".join(entities)
+
+    relation_terms = _ask_terms(
+        "relation_target",
+        fallback=[
+            "concerning", "regarding", "about", "related to", "dealing with",
+            "involving", "mentioning", "referencing",
+        ])
+    relation_pattern = _term_pattern(relation_terms)
+    match = RELATION_TARGET_RE.search(question or "")
+    if match:
+        target = match.group(1).strip(" \t\r\n\"'`“”‘’.?!")
+        words = [
+            word for word in summarize.rag.meaningful_words(target)
+            if word not in _ask_terms(
+                "source_lookup_stopword",
+                fallback=SOURCE_LOOKUP_STOPWORDS)
+        ]
+        if words:
+            return " ".join(words)
+    relation_match = relation_pattern.search(question or "")
+    if relation_match:
+        target = (question or "")[relation_match.end():].strip(" \t\r\n\"'`“”‘’.?!")
+        words = [
+            word for word in summarize.rag.meaningful_words(target)
+            if word not in _ask_terms(
+                "source_lookup_stopword",
+                fallback=SOURCE_LOOKUP_STOPWORDS)
+        ]
+        if words:
+            return " ".join(words)
+
+    sources = _sources_from_context(context or "")
+    if sources:
+        return "\n".join(sources[-8:] + [question or ""])
+    return question or ""
+
+
+def _source_has_terms(source: str, terms: list, require_all: bool = False) -> bool:
+    terms = [term for term in terms if len(term) >= 3]
+    if not terms:
+        return True
+    try:
+        all_data = summarize.rag.collection.get(include=["metadatas", "documents"])
+    except Exception:
+        return False
+    found = set()
+    source_text = source.lower()
+    for term in terms:
+        if summarize.rag._term_present(source_text, term):
+            found.add(term)
+    for meta, doc in zip(all_data["metadatas"], all_data["documents"]):
+        if meta.get("source") != source:
+            continue
+        haystack = " ".join([
+            meta.get("source") or "",
+            meta.get("filename") or "",
+            meta.get("source_stem") or "",
+            doc or "",
+        ]).lower()
+        for term in terms:
+            if term not in found and summarize.rag._term_present(haystack, term):
+                found.add(term)
+        if require_all and len(found) == len(terms):
+            return True
+        if not require_all and found:
+            return True
+    return len(found) == len(terms) if require_all else bool(found)
+
+
 def _answer_document_store_search(question: str, context: str = "",
                                   project: str = None):
     if not CONTENT_SEARCH_RE.search(question or ""):
@@ -991,11 +1220,26 @@ def _answer_document_store_search(question: str, context: str = "",
 
     query = _contextual_document_query(question, context)
     sensitive = _sensitive_document_context(context)
-    if ALL_DOCUMENTS_RE.search(question or ""):
+    all_docs = (
+        ALL_DOCUMENTS_RE.search(question or "")
+        or (
+            _has_ask_term(question, "all_documents", ["all", "every", "each"])
+            and re.search(r"\b(?:documents?|files?|sources?)\b",
+                          question or "", re.I)
+        )
+    )
+    if all_docs:
+        exhaustive_query = _exhaustive_document_query(question, context)
         try:
-            sources = summarize.find_documents(query, project=project)
+            sources = summarize.find_documents(exhaustive_query, project=project)
         except Exception:
             sources = []
+        required_terms = summarize.rag.meaningful_words(exhaustive_query)
+        if len(required_terms) >= 2:
+            sources = [
+                source for source in sources
+                if _source_has_terms(source, required_terms, require_all=True)
+            ]
         prefixes = _source_context_prefixes(context)
         if prefixes:
             sources = [source for source in sources
@@ -1134,9 +1378,11 @@ def _lookup_words(text: str) -> list:
     words = re.findall(r"[A-Za-z][A-Za-z0-9'-]{3,}", text or "")
     out = []
     seen = set()
+    stopwords = _ask_terms(
+        "source_lookup_stopword", fallback=SOURCE_LOOKUP_STOPWORDS)
     for word in words:
         key = word.lower().strip("'")
-        if key in SOURCE_LOOKUP_STOPWORDS or key in seen:
+        if key in stopwords or key in seen:
             continue
         seen.add(key)
         out.append(key)
@@ -1259,7 +1505,7 @@ def _citation_for_source(source: str) -> dict:
 def _answer_document_metadata(question: str, context: str, project: str = None):
     if not DOCUMENT_METADATA_RE.search(question or ""):
         return None
-    if CONTENT_SEARCH_RE.search(question or "") and TOPIC_FILTER_RE.search(question or ""):
+    if CONTENT_SEARCH_RE.search(question or "") and _has_topic_filter(question):
         return None
 
     sources = _sources_from_context(
@@ -1813,7 +2059,7 @@ def _document_reference_scan(question: str, registry: CitationRegistry,
 
 
 def _answer_app_command_guard(question: str) -> dict:
-    if not APP_COMMAND_RE.search(question or ""):
+    if not _is_app_command(question):
         return None
     if not (
         re.search(r"\b(?:history|conversation|chat)\b", question or "", re.I)
