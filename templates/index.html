@@ -752,6 +752,10 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
           <input type="checkbox" id="autoReindexToggle">
           <span>Auto re-index after saves</span>
         </label>
+        <label class="toggle" style="margin-bottom:14px">
+          <input type="checkbox" id="externalSearchToggle">
+          <span>Allow external web search when local evidence is thin</span>
+        </label>
         <button class="btn" id="btnReindexTuning">Re-index now</button>
         <div class="log" id="tuninglog" style="display:none;margin-top:14px"></div>
       </div>
@@ -1744,6 +1748,8 @@ async function loadTuning(){
       (STATE.tuning.settings.rag_ignored_dirs || "").split(",").join(", ");
     $("#autoReindexToggle").checked =
       STATE.tuning.settings.rag_auto_reindex_on_tuning === "on";
+    $("#externalSearchToggle").checked =
+      STATE.tuning.settings.rag_external_search_enabled === "on";
     renderCriteria();
     renderMisses();
   } catch(e){
@@ -1833,6 +1839,7 @@ async function saveIndexing(){
       rag_supported_extensions: $("#supportedExtensions").value,
       rag_ignored_dirs: $("#ignoredDirs").value,
       rag_auto_reindex_on_tuning: $("#autoReindexToggle").checked ? "on" : "off",
+      rag_external_search_enabled: $("#externalSearchToggle").checked ? "on" : "off",
     })),
   })).json();
   if (r.error) return toast(r.error);
@@ -1852,6 +1859,19 @@ async function saveAutoReindex(){
   STATE.tuning.settings.rag_auto_reindex_on_tuning =
     $("#autoReindexToggle").checked ? "on" : "off";
   toast($("#autoReindexToggle").checked ? "Auto re-index on" : "Auto re-index off");
+}
+
+async function saveExternalSearch(){
+  const r = await (await fetch("/api/tuning/settings", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(withProject({
+      rag_external_search_enabled: $("#externalSearchToggle").checked ? "on" : "off",
+    })),
+  })).json();
+  if (r.error) return toast(r.error);
+  STATE.tuning.settings.rag_external_search_enabled =
+    $("#externalSearchToggle").checked ? "on" : "off";
+  toast($("#externalSearchToggle").checked ? "External search on" : "External search off");
 }
 
 function maybeAutoReindex(){
@@ -1923,6 +1943,7 @@ $("#btnClearCrit").onclick = clearCriterionForm;
 $("#btnSaveIndexing").onclick = saveIndexing;
 $("#btnSubmitMiss").onclick = submitMiss;
 $("#autoReindexToggle").onchange = saveAutoReindex;
+$("#externalSearchToggle").onchange = saveExternalSearch;
 $("#btnReindexTuning").onclick = runTuningReindex;
 
 /* --- history ------------------------------------------------------------ */

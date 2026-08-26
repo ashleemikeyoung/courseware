@@ -20,7 +20,10 @@ the retrieval query, since that is what the person is actually asking right now.
 import json
 import re
 import time
+import html
+import urllib.request
 from pathlib import Path
+from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 from writer import (
     CitationRegistry, gather_evidence, evidence_block, ask_ollama_chat,
@@ -53,7 +56,7 @@ CHAT_SYSTEM = """You are a direct, capable assistant. Answer plainly, without
 preamble, without restating the question, and without padding for length.
 
 You may be given source material retrieved from the user's local document
-library. When you are:
+library or, when explicitly enabled, external web search results. When you are:
   - Read every passage given before answering, not just the first one. A
     later passage often completes what an earlier one only started.
   - A passage marked "[Verified citation record]" is authoritative for the
@@ -161,6 +164,11 @@ DOCUMENT_INVENTORY_RE = re.compile(
 FILENAME_LIST_RE = re.compile(
     r"\b(?:filenames?|file names?|sources?|paths?|list)\b", re.IGNORECASE
 )
+ABSTRACT_FILTER_RE = re.compile(
+    r"\b(?:with|have|has|having|contain(?:s|ing)?|include(?:s|ing)?)\s+"
+    r"(?:an?\s+)?abstract\b|\babstracts?\b",
+    re.IGNORECASE,
+)
 TOPIC_FILTER_RE = re.compile(
     r"\b(?:about|on|deal(?:s|ing)?\s+with|related\s+to|concerning|"
     r"cover(?:s|ing)?|discuss(?:es|ing)?)\b",
@@ -220,6 +228,19 @@ CONTENT_QUESTION_RE = re.compile(
     r"\b(?:argues?|covers?|discuss(?:es)?|says?|explain|summarize|summary|"
     r"compare|contrast|synthesize|analyze)\b",
     re.IGNORECASE,
+)
+WEB_SEARCH_RE = re.compile(
+    r"\b(?:web|internet|online|google|external)\s+search\b|"
+    r"\bsearch\s+(?:the\s+)?(?:web|internet|online|google)\b",
+    re.IGNORECASE,
+)
+DDG_RESULT_RE = re.compile(
+    r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
+    re.IGNORECASE | re.DOTALL,
+)
+DDG_SNIPPET_RE = re.compile(
+    r'<a[^>]+class="result__snippet"[^>]*>(.*?)</a>',
+    re.IGNORECASE | re.DOTALL,
 )
 SOURCE_FOLLOWUP_RE = re.compile(
     r"\b(?:which|what)\s+(?:source|document|file|article)\s+"
@@ -520,6 +541,160 @@ def _topic_min_domain_hits() -> int:
         return 5
 
 
+def _external_search_enabled() -> bool:
+    try:
+        value = str(get_setting("rag_external_search_enabled", "0")).strip().lower()
+    except Exception:
+        value = "0"
+    return value in {"1", "true", "yes", "on", "enabled"}
+
+
+def _strip_html(value: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", value or "")
+    return " ".join(html.unescape(text).split())
+
+
+def _clean_external_url(url: str) -> str:
+    url = html.unescape(url or "")
+    parsed = urlparse(url)
+    if parsed.netloc.endswith("duckduckgo.com") and parsed.path.startswith("/l/"):
+        target = parse_qs(parsed.query).get("uddg", [""])[0]
+        if target:
+            return unquote(target)
+    return url
+
+
+def _external_search_results(question: str, limit: int = 5) -> list:
+    url = "https://duckduckgo.com/html/?q=" + quote_plus(question or "")
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 AppleWebKit/537.36 "
+                "(KHTML, like Gecko) AskAsh/1.0"
+            )
+        },
+    )
+    with urllib.request.urlopen(req, timeout=12) as response:
+        page = response.read().decode("utf-8", errors="replace")
+
+    snippets = [_strip_html(s) for s in DDG_SNIPPET_RE.findall(page)]
+    results = []
+    for idx, (raw_url, raw_title) in enumerate(DDG_RESULT_RE.findall(page)):
+        title = _strip_html(raw_title)
+        result_url = _clean_external_url(raw_url)
+        if not title or not result_url:
+            continue
+        results.append({
+            "title": title,
+            "url": result_url,
+            "snippet": snippets[idx] if idx < len(snippets) else "",
+        })
+        if len(results) >= limit:
+            break
+    return results
+
+
+def _external_search_evidence(question: str, registry: CitationRegistry,
+                              limit: int = 5) -> list:
+    try:
+        results = _external_search_results(question, limit=limit)
+    except Exception as e:
+        print(f"  [Warning: external search failed: {e}]")
+        return []
+
+    evidence = []
+    for result in results:
+        details = [
+            "[External web search result]",
+            f"Title: {result.get('title') or ''}",
+            f"URL: {result.get('url') or ''}",
+            f"Snippet: {result.get('snippet') or ''}",
+        ]
+        evidence.append(registry.register(
+            result.get("url") or "external-search", -40, -40,
+            "\n".join(details)))
+    return evidence
+
+
+def _row_has_section(row: dict, section: str) -> bool:
+    wanted = (section or "").lower()
+    sections = row.get("sections_found") or {}
+    if isinstance(sections, str):
+        try:
+            sections = json.loads(sections)
+        except Exception:
+            sections = {}
+    if not isinstance(sections, dict):
+        return False
+    return any(str(key).lower() == wanted and bool(value)
+               for key, value in sections.items())
+
+
+def _dedupe_document_rows(rows: list) -> tuple:
+    """
+    Collapse duplicate copies of the same file for inventory answers.
+
+    All-project views can legitimately contain the same PDF under multiple
+    project folders. For "how many documents" questions, the user's intent is
+    usually unique source material, not path copies.
+    """
+    unique = []
+    seen = set()
+    duplicates = 0
+    for row in rows:
+        key = row.get("source_hash") or row.get("file_id") or row.get("source")
+        if key in seen:
+            duplicates += 1
+            continue
+        seen.add(key)
+        unique.append(row)
+    return unique, duplicates
+
+
+def _insufficient_local_answer(question: str, plan: dict, project: str,
+                               deep_searched: bool = False,
+                               improvements: list = None) -> dict:
+    external_allowed = _external_search_enabled()
+    search_url = "https://www.google.com/search?q=" + quote_plus(question or "")
+    if external_allowed:
+        text = (
+            "I do not have enough substantive local document evidence to answer "
+            "that reliably. I searched the indexed chunks"
+            f"{' and the full document store' if deep_searched else ''}, but "
+            "did not find a strong match.\n\n"
+            "External search is enabled, but I could not retrieve outside "
+            f"results for this request. Try this web query: {search_url}"
+        )
+    else:
+        text = (
+            "I do not have enough substantive local document evidence to answer "
+            "that reliably. I searched the indexed chunks"
+            f"{' and the full document store' if deep_searched else ''}, but "
+            "did not find a strong match.\n\n"
+            "External web search is currently off, so I stopped instead of "
+            "guessing from general knowledge. Turn on external search in "
+            "Settings when you want the app to look beyond local documents."
+        )
+
+    result = {
+        "text": text,
+        "evidence": {},
+        "grounded": True,
+        "passages_offered": 0,
+        "metrics": {
+            "route": "insufficient_local_evidence",
+            "local_search_exhausted": True,
+            "deep_document_search": bool(deep_searched),
+            "external_search_enabled": external_allowed,
+            "suggested_external_search_url": search_url,
+        },
+    }
+    return _quality_finish(
+        result, question, plan, project=project,
+        improvements=improvements or [])
+
+
 def _answer_document_inventory(question: str, project: str = None):
     """
     Answer count/list questions from libSQL document metadata.
@@ -535,9 +710,16 @@ def _answer_document_inventory(question: str, project: str = None):
         return None
 
     genre = _inventory_genre(question)
+    requires_abstract = bool(ABSTRACT_FILTER_RE.search(question or ""))
+    wants_inventory_shape = (
+        FILENAME_LIST_RE.search(question or "")
+        or re.search(r"\bhow many\b", question or "", re.I)
+    )
+    if not genre and not wants_inventory_shape:
+        return None
     # Avoid treating an in-article phrase like "articles screened" as an
     # inventory request unless the user asks for filenames/list/count shape.
-    if genre and not (FILENAME_LIST_RE.search(question or "") or re.search(r"\bhow many\b", question or "", re.I)):
+    if genre and not wants_inventory_shape:
         return None
 
     exclude_genres = ["chat export"]
@@ -584,7 +766,10 @@ def _answer_document_inventory(question: str, project: str = None):
                 < min_domain_hits
             ):
                 continue
+            if requires_abstract and not _row_has_section(row, "abstract"):
+                continue
             filtered.append(row)
+        filtered, duplicates = _dedupe_document_rows(filtered)
 
         label = genre or "saved document"
         plural = label if label.endswith("s") else label + "s"
@@ -600,7 +785,8 @@ def _answer_document_inventory(question: str, project: str = None):
 
         wants_list = FILENAME_LIST_RE.search(question or "")
         noun = label if len(filtered) == 1 else plural
-        lines = [f"I found {len(filtered)} {noun} matching that topic."]
+        unique_word = " unique" if duplicates else ""
+        lines = [f"I found {len(filtered)}{unique_word} {noun} matching that topic."]
         if wants_list or len(filtered) <= 10:
             lines.append("")
             for row in filtered:
@@ -617,6 +803,7 @@ def _answer_document_inventory(question: str, project: str = None):
             "metrics": {
                 "topic_inventory": True,
                 "count": len(filtered),
+                "duplicates_collapsed": duplicates,
                 "genre": genre,
             },
         }
@@ -639,18 +826,31 @@ def _answer_document_inventory(question: str, project: str = None):
         }
 
     label = genre or "saved document"
+    if requires_abstract:
+        rows = [row for row in rows if _row_has_section(row, "abstract")]
+    rows, duplicates = _dedupe_document_rows(rows)
     plural = label if label.endswith("s") else label + "s"
     if not rows:
-        scope = f" in project {project}" if project else ""
+        scope = (
+            f" in project {project}"
+            if project and project != projects.ALL else ""
+        )
+        qualifier = " with an abstract" if requires_abstract else ""
         return {
-            "text": f"I found 0 {plural}{scope} in the document registry.",
+            "text": f"I found 0 {plural}{qualifier}{scope} in the document registry.",
             "evidence": {},
             "grounded": True,
             "passages_offered": 0,
-            "metrics": {"registry_inventory": True, "count": 0},
+            "metrics": {
+                "registry_inventory": True,
+                "count": 0,
+                "duplicates_collapsed": duplicates,
+            },
         }
 
-    lines = [f"I found {len(rows)} {plural}:", ""]
+    qualifier = " with an abstract" if requires_abstract else ""
+    unique_word = " unique" if duplicates else ""
+    lines = [f"I found {len(rows)}{unique_word} {plural}{qualifier}:", ""]
     for row in rows:
         source = row.get("source") or ""
         title = row.get("label") or Path(source).name
@@ -664,7 +864,13 @@ def _answer_document_inventory(question: str, project: str = None):
         "evidence": {},
         "grounded": True,
         "passages_offered": 0,
-        "metrics": {"registry_inventory": True, "count": len(rows), "genre": genre},
+        "metrics": {
+            "registry_inventory": True,
+            "count": len(rows),
+            "duplicates_collapsed": duplicates,
+            "requires_abstract": requires_abstract,
+            "genre": genre,
+        },
     }
 
 
@@ -708,13 +914,33 @@ def _answer_document_store_search(question: str, project: str = None):
         ]
 
     if not matches:
-        scope = f" in project {project}" if project else ""
+        scope = (
+            f" in project {project}"
+            if project and project != projects.ALL else ""
+        )
+        external_allowed = _external_search_enabled()
+        search_url = "https://www.google.com/search?q=" + quote_plus(question or "")
+        extra = (
+            f" External search is enabled; next web query: {search_url}"
+            if external_allowed
+            else " External web search is off, so I stopped instead of guessing."
+        )
         return {
-            "text": f"I did not find a matching source in the document store{scope}.",
+            "text": (
+                f"I did not find a matching source in the document store{scope} "
+                "after a deeper local scan." + extra
+            ),
             "evidence": {},
             "grounded": True,
             "passages_offered": 0,
-            "metrics": {"document_store_search": True, "count": 0},
+            "metrics": {
+                "document_store_search": True,
+                "count": 0,
+                "local_search_exhausted": True,
+                "deep_document_search": True,
+                "external_search_enabled": external_allowed,
+                "suggested_external_search_url": search_url,
+            },
         }
 
     lines = ["The strongest document-store matches are:", ""]
@@ -1594,6 +1820,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     registry = CitationRegistry()
     evidence = []
     improvements = []
+    used_external_search = False
 
     if ground:
         if last_user.strip():
@@ -1635,20 +1862,41 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 plan["intent"] in {"cross_document_search", "document_content"}
                 and (not evidence or source_count < 1)
             )
+            deep_searched = False
             if needs_source_mining:
                 mined = _source_mining_evidence(
                     query_text, registry, project=scope)
+                deep_searched = True
                 if mined:
                     evidence = mined + evidence
                     improvements.append("mined_document_store_after_thin_retrieval")
+            if (
+                plan["intent"] in {"cross_document_search", "document_content"}
+                and not evidence
+                and _external_search_enabled()
+            ):
+                external = _external_search_evidence(query_text, registry)
+                if external:
+                    evidence = external
+                    used_external_search = True
+                    improvements.append("used_external_search_after_local_exhaustion")
+            if (
+                plan["intent"] in {"cross_document_search", "document_content"}
+                and not evidence
+            ):
+                improvements.append("stopped_before_general_knowledge")
+                return _insufficient_local_answer(
+                    last_user, plan, scope, deep_searched=deep_searched,
+                    improvements=improvements)
 
     system = CHAT_SYSTEM
     if evidence:
         system += "\n\nSource material:\n\n" + evidence_block(evidence, char_budget=10000)
     elif ground:
         system += ("\n\nNothing in the user's documents matched this question. "
-                   "Answer from general knowledge and say plainly that their "
-                   "documents didn't cover it, if that's relevant to say.")
+                   "For document-grounded questions, say plainly that the "
+                   "local documents did not provide enough evidence instead "
+                   "of presenting a guess as a sourced answer.")
 
     # When there's real evidence to report, this has become a fact-reporting
     # task, not an open conversation -- sampling variance that's harmless
@@ -1700,7 +1948,9 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
 
     result = {"text": text, "evidence": evidence_out, "grounded": bool(evidence),
               "passages_offered": len(evidence), "metrics": metrics}
-    result["metrics"]["route"] = plan.get("primary_source")
+    result["metrics"]["route"] = (
+        "external_search" if used_external_search else plan.get("primary_source")
+    )
     return _quality_finish(
         result, last_user, plan, project=scope, evidence=evidence,
         improvements=improvements)

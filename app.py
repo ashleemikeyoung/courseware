@@ -319,7 +319,7 @@ CRITERIA_TYPES = {
 TUNING_SETTING_KEYS = {
     "rag_chunk_size", "rag_chunk_overlap", "rag_auto_reindex_on_tuning",
     "rag_supported_extensions", "rag_ignored_dirs",
-    "rag_topic_min_domain_hits",
+    "rag_topic_min_domain_hits", "rag_external_search_enabled",
 }
 
 
@@ -342,6 +342,8 @@ def api_tuning():
             "rag_chunk_overlap": get_setting("rag_chunk_overlap", "100"),
             "rag_auto_reindex_on_tuning": get_setting(
                 "rag_auto_reindex_on_tuning", "off"),
+            "rag_external_search_enabled": get_setting(
+                "rag_external_search_enabled", "off"),
             "rag_topic_min_domain_hits": get_setting(
                 "rag_topic_min_domain_hits", "5"),
             "rag_supported_extensions": get_setting(
@@ -398,7 +400,7 @@ def api_tuning_settings():
     for key in TUNING_SETTING_KEYS:
         if key not in body:
             continue
-        if key == "rag_auto_reindex_on_tuning":
+        if key in {"rag_auto_reindex_on_tuning", "rag_external_search_enabled"}:
             value = "on" if body.get(key) in (True, "on", "true", "1", 1) else "off"
             saved[key] = value
             set_setting(key, value)

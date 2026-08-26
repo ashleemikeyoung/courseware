@@ -1877,6 +1877,12 @@ def mine_document_store(question: str, project: str = None,
         if not _matches_required_domain_groups(
                 topic_searchable, required_domain_groups):
             continue
+        distinct_term_hits = sum(
+            1 for word in dict.fromkeys(words)
+            if len(word) >= 3 and _term_present(searchable, word)
+        )
+        if len([w for w in words if len(w) >= 3]) >= 3 and distinct_term_hits < 2:
+            continue
         score = _word_count_score(searchable, words)
         score += _source_matches(source, words, question=question)
         if score <= 0:
