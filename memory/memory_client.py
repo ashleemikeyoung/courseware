@@ -27,6 +27,9 @@ worth logging rather than everything being captured by default.
 """
 
 import json
+import mimetypes
+import socket
+import uuid
 
 import libsql_client
 
@@ -330,6 +333,287 @@ def record_query_quality(project: str, question: str, intent: str = None,
                 json.dumps(analyze or {}),
                 json.dumps(improve or {}),
                 json.dumps(control or {}),
+            ],
+        )
+    finally:
+        client.close()
+
+
+# ---------------------------------------------------------------------------
+# El Roi file identity and scan/diff foundation.
+# ---------------------------------------------------------------------------
+
+EL_ROI_NAMESPACE = uuid.UUID("3ab230c8-87f6-4d08-a0c2-9f6b55dff73a")
+
+
+def _stable_id(kind: str, value: str) -> str:
+    return str(uuid.uuid5(EL_ROI_NAMESPACE, f"{kind}:{value}"))
+
+
+def _new_id() -> str:
+    return str(uuid.uuid4())
+
+
+def _server_name(name: str = None) -> str:
+    return (name or socket.gethostname() or "local").strip()
+
+
+def ensure_file_server(name: str = None, base_url: str = None,
+                       machine: str = None) -> str:
+    name = _server_name(name)
+    server_id = _stable_id("file_server", name)
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        client.execute(
+            "INSERT INTO file_servers "
+            "(server_id, name, base_url, machine, last_seen_at) "
+            "VALUES (?, ?, ?, ?, datetime('now')) "
+            "ON CONFLICT(server_id) DO UPDATE SET "
+            "name=excluded.name, base_url=coalesce(excluded.base_url, base_url), "
+            "machine=coalesce(excluded.machine, machine), status='active', "
+            "last_seen_at=datetime('now')",
+            [server_id, name, base_url, machine],
+        )
+        return server_id
+    finally:
+        client.close()
+
+
+def ensure_storage_root(root_path: str, server_name: str = None,
+                        description: str = None, base_url: str = None,
+                        machine: str = None) -> str:
+    server_id = ensure_file_server(server_name, base_url=base_url, machine=machine)
+    normalized = str(root_path)
+    storage_root_id = _stable_id("storage_root", f"{server_id}:{normalized}")
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        client.execute(
+            "INSERT INTO storage_roots "
+            "(storage_root_id, server_id, root_path, description, observed_at) "
+            "VALUES (?, ?, ?, ?, datetime('now')) "
+            "ON CONFLICT(storage_root_id) DO UPDATE SET "
+            "root_path=excluded.root_path, "
+            "description=coalesce(excluded.description, description), "
+            "status='active', observed_at=datetime('now')",
+            [storage_root_id, server_id, normalized, description],
+        )
+        return storage_root_id
+    finally:
+        client.close()
+
+
+def start_file_scan(storage_root_id: str) -> str:
+    scan_run_id = _new_id()
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        client.execute(
+            "INSERT INTO file_scan_runs (scan_run_id, storage_root_id) "
+            "VALUES (?, ?)",
+            [scan_run_id, storage_root_id],
+        )
+        return scan_run_id
+    finally:
+        client.close()
+
+
+def _rowdict(result):
+    rows = [dict(zip(result.columns, row)) for row in result.rows]
+    return rows[0] if rows else None
+
+
+def _hash_version(client, hash_value: str):
+    result = client.execute(
+        "SELECT fv.file_version_id, fv.file_id, fv.version_number "
+        "FROM file_hashes fh "
+        "JOIN file_versions fv ON fv.file_version_id = fh.file_version_id "
+        "WHERE fh.hash_algorithm = 'md5' AND fh.hash_value = ? LIMIT 1",
+        [hash_value],
+    )
+    return _rowdict(result)
+
+
+def _latest_version_number(client, file_id: str) -> int:
+    result = client.execute(
+        "SELECT max(version_number) FROM file_versions WHERE file_id = ?",
+        [file_id],
+    )
+    return int(result.rows[0][0] or 0) if result.rows else 0
+
+
+def _create_file_version(client, file_id: str, version_number: int,
+                         relative_path: str, hash_value: str, byte_size: int,
+                         modified_at: str, mime_type: str = None) -> str:
+    file_version_id = _new_id()
+    client.execute(
+        "INSERT OR IGNORE INTO files (file_id, status) VALUES (?, 'active')",
+        [file_id],
+    )
+    client.execute(
+        "INSERT INTO file_versions "
+        "(file_version_id, file_id, version_number, origin_date, "
+        " last_modified_at, byte_size, mime_type, original_filename) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            file_version_id, file_id, version_number, modified_at,
+            modified_at, byte_size, mime_type, relative_path.split("/")[-1],
+        ],
+    )
+    client.execute(
+        "INSERT OR IGNORE INTO file_hashes "
+        "(file_version_id, hash_algorithm, hash_value) VALUES (?, 'md5', ?)",
+        [file_version_id, hash_value],
+    )
+    return file_version_id
+
+
+def record_file_observation(storage_root_id: str, relative_path: str,
+                            hash_value: str, byte_size: int,
+                            modified_at: str, scan_run_id: str = None,
+                            mime_type: str = None) -> dict:
+    """
+    Record one scan observation in El Roi and return stable file identity.
+
+    A same-path hash change becomes a new version of the same file. A same-hash
+    file discovered at another path reuses the existing file version, giving
+    the catalog rename/copy awareness without relying on filenames.
+    """
+    mime_type = mime_type or mimetypes.guess_type(relative_path)[0] or ""
+    storage_object_id = _stable_id(
+        "storage_object", f"{storage_root_id}:{relative_path}")
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        existing = _rowdict(client.execute(
+            "SELECT fso.file_version_id, fv.file_id, fh.hash_value "
+            "FROM file_storage_objects fso "
+            "JOIN file_versions fv ON fv.file_version_id = fso.file_version_id "
+            "LEFT JOIN file_hashes fh ON fh.file_version_id = fv.file_version_id "
+            " AND fh.hash_algorithm = 'md5' "
+            "WHERE fso.storage_root_id = ? AND fso.relative_path = ? "
+            "LIMIT 1",
+            [storage_root_id, relative_path],
+        ))
+
+        if existing and existing.get("hash_value") == hash_value:
+            file_id = existing["file_id"]
+            file_version_id = existing["file_version_id"]
+            observed_state = "unchanged"
+        elif existing:
+            hashed = _hash_version(client, hash_value)
+            if hashed:
+                file_id = hashed["file_id"]
+                file_version_id = hashed["file_version_id"]
+                observed_state = "matched_existing_hash"
+            else:
+                file_id = existing["file_id"]
+                version_number = _latest_version_number(client, file_id) + 1
+                file_version_id = _create_file_version(
+                    client, file_id, version_number, relative_path, hash_value,
+                    byte_size, modified_at, mime_type,
+                )
+                observed_state = "updated"
+        else:
+            hashed = _hash_version(client, hash_value)
+            if hashed:
+                file_id = hashed["file_id"]
+                file_version_id = hashed["file_version_id"]
+            else:
+                file_id = _new_id()
+                file_version_id = _create_file_version(
+                    client, file_id, 1, relative_path, hash_value,
+                    byte_size, modified_at, mime_type,
+                )
+            observed_state = "new"
+
+        client.execute(
+            "INSERT INTO file_storage_objects "
+            "(storage_object_id, storage_root_id, file_version_id, "
+            " relative_path, status, observed_at, missing_at) "
+            "VALUES (?, ?, ?, ?, 'active', datetime('now'), NULL) "
+            "ON CONFLICT(storage_root_id, relative_path) DO UPDATE SET "
+            "file_version_id=excluded.file_version_id, status='active', "
+            "observed_at=datetime('now'), missing_at=NULL",
+            [storage_object_id, storage_root_id, file_version_id, relative_path],
+        )
+        client.execute(
+            "INSERT OR IGNORE INTO file_paths (file_version_id, path_text) "
+            "VALUES (?, ?)",
+            [file_version_id, relative_path],
+        )
+        if scan_run_id:
+            client.execute(
+                "INSERT OR REPLACE INTO file_scan_observations "
+                "(scan_run_id, storage_root_id, relative_path, file_version_id, "
+                " hash_value, observed_state) VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    scan_run_id, storage_root_id, relative_path,
+                    file_version_id, hash_value, observed_state,
+                ],
+            )
+        return {
+            "file_id": file_id,
+            "file_version_id": file_version_id,
+            "storage_root_id": storage_root_id,
+            "storage_object_id": storage_object_id,
+            "observed_state": observed_state,
+        }
+    finally:
+        client.close()
+
+
+def mark_missing_storage_objects(storage_root_id: str, current_paths: list,
+                                 scan_run_id: str = None) -> list:
+    current = set(current_paths or [])
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        result = client.execute(
+            "SELECT relative_path, file_version_id FROM file_storage_objects "
+            "WHERE storage_root_id = ? AND status = 'active'",
+            [storage_root_id],
+        )
+        missing = [
+            {"relative_path": row[0], "file_version_id": row[1]}
+            for row in result.rows
+            if row[0] not in current
+        ]
+        for row in missing:
+            client.execute(
+                "UPDATE file_storage_objects SET status='missing', "
+                "missing_at=datetime('now') "
+                "WHERE storage_root_id = ? AND relative_path = ?",
+                [storage_root_id, row["relative_path"]],
+            )
+            if scan_run_id:
+                client.execute(
+                    "INSERT OR REPLACE INTO file_scan_observations "
+                    "(scan_run_id, storage_root_id, relative_path, "
+                    " file_version_id, observed_state) VALUES (?, ?, ?, ?, 'missing')",
+                    [
+                        scan_run_id, storage_root_id, row["relative_path"],
+                        row["file_version_id"],
+                    ],
+                )
+        return missing
+    finally:
+        client.close()
+
+
+def finish_file_scan(scan_run_id: str, summary: dict,
+                     status: str = "complete", notes: str = None):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        client.execute(
+            "UPDATE file_scan_runs SET finished_at=datetime('now'), "
+            "files_seen=?, files_new=?, files_updated=?, files_unchanged=?, "
+            "files_missing=?, status=?, notes=? WHERE scan_run_id=?",
+            [
+                sum(len(summary.get(k, [])) for k in ("new", "updated", "unchanged")),
+                len(summary.get("new", [])),
+                len(summary.get("updated", [])),
+                len(summary.get("unchanged", [])),
+                len(summary.get("removed", [])),
+                status,
+                notes,
+                scan_run_id,
             ],
         )
     finally:
@@ -721,7 +1005,10 @@ def record_document_upload_profile(source: str, synopsis: str, word_count: int =
                                    genres: list = None, themes: list = None,
                                    authors: list = None,
                                    subject_terms: list = None,
-                                   upload_state: str = "project_file"):
+                                   upload_state: str = "project_file",
+                                   file_id: str = None,
+                                   file_version_id: str = None,
+                                   storage_root_id: str = None):
     """
     Upsert upload-style metadata for a project document.
 
@@ -736,8 +1023,10 @@ def record_document_upload_profile(source: str, synopsis: str, word_count: int =
                 "INSERT INTO documents "
                 "(source, synopsis, word_count, model, source_hash, chars, file_type, "
                 " project, label, sections_found, genres, themes, authors, "
-                " subject_terms, upload_state, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) "
+                " subject_terms, upload_state, file_id, file_version_id, "
+                " storage_root_id, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                " datetime('now')) "
                 "ON CONFLICT(source) DO UPDATE SET "
                 " synopsis=excluded.synopsis, word_count=excluded.word_count, "
                 " model=excluded.model, source_hash=excluded.source_hash, "
@@ -747,12 +1036,15 @@ def record_document_upload_profile(source: str, synopsis: str, word_count: int =
                 " themes=excluded.themes, authors=excluded.authors, "
                 " subject_terms=excluded.subject_terms, "
                 " upload_state=excluded.upload_state, "
+                " file_id=excluded.file_id, "
+                " file_version_id=excluded.file_version_id, "
+                " storage_root_id=excluded.storage_root_id, "
                 " indexed_at=datetime('now'), updated_at=datetime('now')",
                 [source, synopsis, word_count, model, source_hash, chars, file_type,
                  project, label, json.dumps(sections_found or {}),
                  json.dumps(genres or []), json.dumps(themes or []),
                  json.dumps(authors or []), json.dumps(subject_terms or []),
-                 upload_state],
+                 upload_state, file_id, file_version_id, storage_root_id],
             )
         except Exception as e:
             if "no such column" not in str(e).lower():
@@ -774,6 +1066,20 @@ def record_document_upload_profile(source: str, synopsis: str, word_count: int =
                  project, label, json.dumps(sections_found or {}),
                  json.dumps(genres or []), json.dumps(themes or []), upload_state],
             )
+    finally:
+        client.close()
+
+
+def link_document_file_identity(source: str, file_id: str = None,
+                                file_version_id: str = None,
+                                storage_root_id: str = None):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        client.execute(
+            "UPDATE documents SET file_id=?, file_version_id=?, "
+            "storage_root_id=?, updated_at=datetime('now') WHERE source=?",
+            [file_id, file_version_id, storage_root_id, source],
+        )
     finally:
         client.close()
 
@@ -813,7 +1119,8 @@ def search_document_uploads(query: str = None, project: str = None,
         sql = (
             "SELECT source, project, label, file_type, chars, word_count, "
             "source_hash, sections_found, genres, themes, synopsis, "
-            "authors, subject_terms, upload_state, indexed_at, updated_at "
+            "authors, subject_terms, upload_state, file_id, file_version_id, "
+            "storage_root_id, indexed_at, updated_at "
             "FROM documents"
             + where + " ORDER BY coalesce(updated_at, indexed_at) DESC LIMIT ?"
         )

@@ -7,6 +7,7 @@ import re
 import subprocess
 import time
 import requests
+from datetime import datetime, timezone
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -45,6 +46,12 @@ try:
         search_synopses,
         get_search_criteria,
         get_setting,
+        ensure_storage_root,
+        start_file_scan,
+        record_file_observation,
+        mark_missing_storage_objects,
+        finish_file_scan,
+        link_document_file_identity,
     )
     MEMORY_AVAILABLE = True
 except Exception as e:
@@ -55,6 +62,12 @@ except Exception as e:
     search_synopses = None
     get_search_criteria = None
     get_setting = None
+    ensure_storage_root = None
+    start_file_scan = None
+    record_file_observation = None
+    mark_missing_storage_objects = None
+    finish_file_scan = None
+    link_document_file_identity = None
     MEMORY_AVAILABLE = False
     print(f"  [Warning] memory-db document registry unavailable: {e}")
 
@@ -673,7 +686,12 @@ def _project_scope(project: str):
     return None if project in (None, "", projects.ALL) else project
 
 
-def index_file(file: Path, current_hash: str) -> int:
+def _mtime_iso(file: Path) -> str:
+    return datetime.fromtimestamp(
+        file.stat().st_mtime, tz=timezone.utc).isoformat()
+
+
+def index_file(file: Path, current_hash: str, file_identity: dict = None) -> int:
     text = load_file(file)
     if not text.strip():
         print(f"  Skipping {file.name} (empty or unreadable)")
@@ -690,6 +708,7 @@ def index_file(file: Path, current_hash: str) -> int:
     except ValueError:
         rel = file.name
     project = _project_of(rel)
+    file_identity = dict(file_identity or {})
 
     ids = [f"{rel}::{i}" for i in range(len(chunks))]
     embeddings = embedder.encode(chunks).tolist()
@@ -710,11 +729,17 @@ def index_file(file: Path, current_hash: str) -> int:
                 "char_count": len(chunk),
                 "source_ext": file.suffix.lower(),
                 "source_stem": file.stem,
+                "file_id": file_identity.get("file_id"),
+                "file_version_id": file_identity.get("file_version_id"),
+                "storage_root_id": file_identity.get("storage_root_id"),
+                "storage_object_id": file_identity.get("storage_object_id"),
             }
             for i, chunk in enumerate(chunks)
         ],
     )
-    record_document_profile(rel, text, project, source_hash=current_hash)
+    record_document_profile(
+        rel, text, project, source_hash=current_hash,
+        file_identity=file_identity)
     return len(chunks)
 
 
@@ -724,6 +749,15 @@ def scan_documents(folder: str = None, verbose: bool = True,
     folder_path = Path(folder).resolve() if folder else Path(DOCUMENTS_FOLDER)
     active_extensions = supported_extensions()
     active_ignored_dirs = ignored_dirs()
+    storage_root_id = None
+    scan_run_id = None
+    if MEMORY_AVAILABLE and ensure_storage_root is not None:
+        try:
+            storage_root_id = ensure_storage_root(
+                str(folder_path), description="RAG documents root")
+            scan_run_id = start_file_scan(storage_root_id)
+        except Exception as e:
+            print(f"  [Warning] could not start El Roi scan: {e}")
 
     if not folder_path.exists():
         folder_path.mkdir(parents=True)
@@ -745,13 +779,39 @@ def scan_documents(folder: str = None, verbose: bool = True,
 
     indexed = get_indexed_sources()
     summary = {"new": [], "updated": [], "removed": [], "unchanged": []}
+    file_identities = {}
+
+    for filename, current_hash in current_files.items():
+        if storage_root_id and record_file_observation is not None:
+            file = folder_path / filename
+            try:
+                file_identities[filename] = record_file_observation(
+                    storage_root_id,
+                    filename,
+                    current_hash,
+                    file.stat().st_size,
+                    _mtime_iso(file),
+                    scan_run_id=scan_run_id,
+                    mime_type=None,
+                )
+                if link_document_file_identity is not None:
+                    ident = file_identities[filename]
+                    link_document_file_identity(
+                        filename,
+                        file_id=ident.get("file_id"),
+                        file_version_id=ident.get("file_version_id"),
+                        storage_root_id=ident.get("storage_root_id"),
+                    )
+            except Exception as e:
+                print(f"  [Warning] could not record El Roi file {filename}: {e}")
 
     for filename, current_hash in current_files.items():
         file = folder_path / filename  # filename is now a relative path
         if filename not in indexed:
             if verbose:
                 print(f"  [+] Indexing new file: {filename}")
-            count = index_file(file, current_hash)
+            count = index_file(
+                file, current_hash, file_identity=file_identities.get(filename))
             if verbose:
                 print(f"      Added {count} chunks")
             summary["new"].append(filename)
@@ -761,7 +821,8 @@ def scan_documents(folder: str = None, verbose: bool = True,
                 reason = "forced" if force else "changed"
                 print(f"  [~] Re-indexing {reason} file: {filename}")
             remove_source(filename)
-            count = index_file(file, current_hash)
+            count = index_file(
+                file, current_hash, file_identity=file_identities.get(filename))
             if verbose:
                 print(f"      Updated with {count} chunks")
             summary["updated"].append(filename)
@@ -772,8 +833,16 @@ def scan_documents(folder: str = None, verbose: bool = True,
                 if text.strip():
                     record_document_profile(
                         filename, text, projects.project_of(filename),
-                        source_hash=file_hash(file))
+                        source_hash=file_hash(file),
+                        file_identity=file_identities.get(filename))
             summary["unchanged"].append(filename)
+
+    if storage_root_id and mark_missing_storage_objects is not None:
+        try:
+            mark_missing_storage_objects(
+                storage_root_id, list(current_files), scan_run_id=scan_run_id)
+        except Exception as e:
+            print(f"  [Warning] could not mark missing El Roi files: {e}")
 
     for filename in indexed:
         if filename not in current_files:
@@ -784,6 +853,12 @@ def scan_documents(folder: str = None, verbose: bool = True,
 
     if summary["new"] or summary["updated"] or summary["removed"]:
         collection.ensure_indexes()
+
+    if scan_run_id and finish_file_scan is not None:
+        try:
+            finish_file_scan(scan_run_id, summary)
+        except Exception as e:
+            print(f"  [Warning] could not finish El Roi scan: {e}")
 
     return summary
 
@@ -830,7 +905,22 @@ def ingest_content(filename: str, content: str, project: str = None) -> tuple:
         remove_source(rel)
 
     new_hash = file_hash(dest_path)
-    chunk_count = index_file(dest_path, new_hash)
+    file_identity = None
+    if MEMORY_AVAILABLE and ensure_storage_root is not None:
+        try:
+            storage_root_id = ensure_storage_root(
+                str(Path(DOCUMENTS_FOLDER).resolve()),
+                description="RAG documents root")
+            file_identity = record_file_observation(
+                storage_root_id,
+                rel,
+                new_hash,
+                dest_path.stat().st_size,
+                _mtime_iso(dest_path),
+            )
+        except Exception as e:
+            print(f"  [Warning] could not record El Roi ingest {rel}: {e}")
+    chunk_count = index_file(dest_path, new_hash, file_identity=file_identity)
     if chunk_count:
         collection.ensure_indexes()
     return rel, chunk_count
@@ -1293,11 +1383,13 @@ def _document_profile(source: str, text: str, project: str) -> str:
     return "\n".join(parts)
 
 def record_document_profile(source: str, text: str, project: str,
-                            source_hash: str = None):
+                            source_hash: str = None,
+                            file_identity: dict = None):
     if not MEMORY_AVAILABLE or record_synopsis is None:
         return
     try:
         synopsis = _document_profile(source, text, project)
+        file_identity = dict(file_identity or {})
         if record_document_upload_profile is not None:
             record_document_upload_profile(
                 source,
@@ -1315,6 +1407,9 @@ def record_document_profile(source: str, text: str, project: str,
                 authors=_document_authors(text),
                 subject_terms=_document_subject_terms(text),
                 upload_state="project_file",
+                file_id=file_identity.get("file_id"),
+                file_version_id=file_identity.get("file_version_id"),
+                storage_root_id=file_identity.get("storage_root_id"),
             )
         else:
             record_synopsis(

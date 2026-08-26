@@ -315,6 +315,129 @@ CREATE INDEX IF NOT EXISTS idx_bibliography_entries_generated
 
 
 -- ---------------------------------------------------------------------------
+-- El Roi file identity and federation foundation.
+--
+-- This layer is the durable catalog for "what exists, where it lives, and
+-- which version it is" across local file servers. The RAG chunk store stays
+-- local and fast; these tables provide stable file identities, scan/diff
+-- history, storage-root routing, and provenance hooks that survive renames,
+-- moves, and later federation across multiple machines.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS file_servers (
+    server_id     TEXT PRIMARY KEY,
+    name          TEXT NOT NULL UNIQUE,
+    base_url      TEXT,
+    machine       TEXT,
+    status        TEXT NOT NULL DEFAULT 'active',
+    last_seen_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS storage_roots (
+    storage_root_id  TEXT PRIMARY KEY,
+    server_id        TEXT NOT NULL REFERENCES file_servers(server_id),
+    root_path        TEXT NOT NULL,
+    description      TEXT,
+    status           TEXT NOT NULL DEFAULT 'active',
+    observed_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(server_id, root_path)
+);
+
+CREATE TABLE IF NOT EXISTS files (
+    file_id     TEXT PRIMARY KEY,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    status      TEXT NOT NULL DEFAULT 'active'
+);
+
+CREATE TABLE IF NOT EXISTS file_versions (
+    file_version_id    TEXT PRIMARY KEY,
+    file_id            TEXT NOT NULL REFERENCES files(file_id),
+    version_number     INTEGER NOT NULL,
+    origin_date        TEXT,
+    last_modified_at   TEXT NOT NULL,
+    byte_size          INTEGER NOT NULL,
+    mime_type          TEXT,
+    original_filename  TEXT NOT NULL,
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(file_id, version_number)
+);
+
+CREATE TABLE IF NOT EXISTS file_hashes (
+    file_hash_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_version_id  TEXT NOT NULL REFERENCES file_versions(file_version_id),
+    hash_algorithm   TEXT NOT NULL,
+    hash_value       TEXT NOT NULL,
+    UNIQUE(hash_algorithm, hash_value)
+);
+
+CREATE TABLE IF NOT EXISTS file_storage_objects (
+    storage_object_id  TEXT PRIMARY KEY,
+    storage_root_id    TEXT NOT NULL REFERENCES storage_roots(storage_root_id),
+    file_version_id    TEXT NOT NULL REFERENCES file_versions(file_version_id),
+    relative_path      TEXT NOT NULL,
+    status             TEXT NOT NULL DEFAULT 'active',
+    observed_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    missing_at         TEXT,
+    UNIQUE(storage_root_id, relative_path)
+);
+
+CREATE TABLE IF NOT EXISTS file_paths (
+    file_path_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_version_id  TEXT NOT NULL REFERENCES file_versions(file_version_id),
+    path_text        TEXT NOT NULL,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(file_version_id, path_text)
+);
+
+CREATE TABLE IF NOT EXISTS file_scan_runs (
+    scan_run_id      TEXT PRIMARY KEY,
+    storage_root_id  TEXT NOT NULL REFERENCES storage_roots(storage_root_id),
+    started_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    finished_at      TEXT,
+    files_seen       INTEGER NOT NULL DEFAULT 0,
+    files_new        INTEGER NOT NULL DEFAULT 0,
+    files_updated    INTEGER NOT NULL DEFAULT 0,
+    files_unchanged  INTEGER NOT NULL DEFAULT 0,
+    files_missing    INTEGER NOT NULL DEFAULT 0,
+    status           TEXT NOT NULL DEFAULT 'running',
+    notes            TEXT
+);
+
+CREATE TABLE IF NOT EXISTS file_scan_observations (
+    scan_run_id      TEXT NOT NULL REFERENCES file_scan_runs(scan_run_id),
+    storage_root_id  TEXT NOT NULL REFERENCES storage_roots(storage_root_id),
+    relative_path    TEXT NOT NULL,
+    file_version_id  TEXT REFERENCES file_versions(file_version_id),
+    hash_value       TEXT,
+    observed_state   TEXT NOT NULL,
+    observed_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY(scan_run_id, storage_root_id, relative_path)
+);
+
+ALTER TABLE documents ADD COLUMN file_id TEXT;
+ALTER TABLE documents ADD COLUMN file_version_id TEXT;
+ALTER TABLE documents ADD COLUMN storage_root_id TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_file_servers_status
+    ON file_servers(status, last_seen_at);
+CREATE INDEX IF NOT EXISTS idx_storage_roots_server
+    ON storage_roots(server_id, status);
+CREATE INDEX IF NOT EXISTS idx_file_versions_file
+    ON file_versions(file_id, version_number);
+CREATE INDEX IF NOT EXISTS idx_file_hashes_value
+    ON file_hashes(hash_algorithm, hash_value);
+CREATE INDEX IF NOT EXISTS idx_storage_objects_version
+    ON file_storage_objects(file_version_id);
+CREATE INDEX IF NOT EXISTS idx_storage_objects_root_status
+    ON file_storage_objects(storage_root_id, status);
+CREATE INDEX IF NOT EXISTS idx_file_scan_observations_version
+    ON file_scan_observations(file_version_id);
+CREATE INDEX IF NOT EXISTS idx_documents_file_version
+    ON documents(file_version_id);
+
+
+-- ---------------------------------------------------------------------------
 -- PII scans -- deliberately a SUMMARY only. This table records what kinds
 -- of PII a document contains and how many instances, never the actual PII
 -- text itself -- storing the real names/SSNs/emails found would just create
