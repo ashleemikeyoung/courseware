@@ -229,6 +229,19 @@ CONTENT_QUESTION_RE = re.compile(
     r"compare|contrast|synthesize|analyze)\b",
     re.IGNORECASE,
 )
+REDACTION_REQUEST_RE = re.compile(
+    r"\b(?:redact|redacted|redaction|de[-\s]?identify|remove\s+pii|"
+    r"remove\s+personal\s+information)\b",
+    re.IGNORECASE,
+)
+CONTEXTUAL_SEARCH_RE = re.compile(
+    r"\b(?:this|that|these|those|same|subject|matter|above|it)\b",
+    re.IGNORECASE,
+)
+ALL_DOCUMENTS_RE = re.compile(
+    r"\b(?:all|every|each)\b.*\b(?:documents?|files?|sources?)\b",
+    re.IGNORECASE,
+)
 WEB_SEARCH_RE = re.compile(
     r"\b(?:web|internet|online|google|external)\s+search\b|"
     r"\bsearch\s+(?:the\s+)?(?:web|internet|online|google)\b",
@@ -505,6 +518,77 @@ def _source_mining_evidence(question: str, registry: CitationRegistry,
         evidence.append(registry.register(source, -30, -30, "\n".join(details)))
     return evidence
 
+
+
+def _redaction_search_query(question: str) -> str:
+    q = re.sub(REDACTION_REQUEST_RE, " ", question or "")
+    q = re.sub(r"\b(?:the|a|an|file|document|documents|set|copy|copies)\b",
+               " ", q, flags=re.IGNORECASE)
+    return " ".join(q.split()) or (question or "")
+
+
+def _answer_redaction_request(question: str, project: str = None) -> dict:
+    if not REDACTION_REQUEST_RE.search(question or ""):
+        return None
+
+    query = _redaction_search_query(question)
+    try:
+        sources = summarize.find_documents(query, project=project)
+    except Exception:
+        sources = []
+
+    def rank(source):
+        name = source.lower()
+        score = 0
+        for term in summarize.rag.meaningful_words(query):
+            if term in name:
+                score += 4
+        if "complaint" in name:
+            score += 8
+        if "replevin" in name:
+            score += 8
+        if source.startswith("Replevin/"):
+            score += 6
+        return score
+
+    ranked = sorted(sources, key=rank, reverse=True)
+    likely = [s for s in ranked if rank(s) > 0][:8]
+    if not likely:
+        return {
+            "text": (
+                "I did not find a local document that clearly matches that "
+                "redaction request. I did not print document contents because "
+                "redaction requests can contain sensitive material."
+            ),
+            "evidence": {},
+            "grounded": True,
+            "passages_offered": 0,
+            "metrics": {"redaction_request": True, "count": 0},
+        }
+
+    lines = [
+        "I found likely files for that redaction request. I did not print the "
+        "contents or private details back into chat.",
+        "",
+    ]
+    for source in likely:
+        lines.append(f"- {source}")
+    lines.extend([
+        "",
+        "The Ask view can identify the files, but the redaction exporter is "
+        "not wired into this workflow yet.",
+    ])
+    return {
+        "text": "\n".join(lines),
+        "evidence": {},
+        "grounded": True,
+        "passages_offered": 0,
+        "metrics": {
+            "redaction_request": True,
+            "count": len(likely),
+            "sources": likely,
+        },
+    }
 
 
 def _inventory_genre(question: str) -> str:
@@ -874,15 +958,69 @@ def _answer_document_inventory(question: str, project: str = None):
     }
 
 
-def _answer_document_store_search(question: str, project: str = None):
+def _contextual_document_query(question: str, context: str = "") -> str:
+    if not CONTEXTUAL_SEARCH_RE.search(question or ""):
+        return question or ""
+    hints = []
+    for source in _sources_from_context(context or "")[-8:]:
+        hints.append(source)
+    if not hints:
+        return question or ""
+    return "\n".join(hints + [question or ""])
+
+
+def _sensitive_document_context(context: str) -> bool:
+    if REDACTION_REQUEST_RE.search(context or ""):
+        return True
+    sources = _sources_from_context(context or "")
+    return any(source.startswith("Replevin/") for source in sources)
+
+
+def _source_context_prefixes(context: str) -> set:
+    sources = _sources_from_context(context or "")
+    prefixes = {source.split("/", 1)[0] for source in sources if "/" in source}
+    return prefixes
+
+
+def _answer_document_store_search(question: str, context: str = "",
+                                  project: str = None):
     if not CONTENT_SEARCH_RE.search(question or ""):
         return None
     if FILENAME_LIST_RE.search(question or "") or re.search(r"\bhow many\b", question or "", re.I):
         return None
 
+    query = _contextual_document_query(question, context)
+    sensitive = _sensitive_document_context(context)
+    if ALL_DOCUMENTS_RE.search(question or ""):
+        try:
+            sources = summarize.find_documents(query, project=project)
+        except Exception:
+            sources = []
+        prefixes = _source_context_prefixes(context)
+        if prefixes:
+            sources = [source for source in sources
+                       if source.split("/", 1)[0] in prefixes]
+        if sources:
+            lines = ["I found these matching documents:", ""]
+            for source in sources:
+                lines.append(f"- {source}")
+            return {
+                "text": "\n".join(lines),
+                "evidence": {},
+                "grounded": True,
+                "passages_offered": 0,
+                "metrics": {
+                    "document_store_search": True,
+                    "exhaustive": True,
+                    "sensitive_context": sensitive,
+                    "count": len(sources),
+                    "sources": sources,
+                },
+            }
+
     try:
         matches = summarize.rag.mine_document_store(
-            question, project=project, limit=8)
+            query, project=project, limit=8)
     except Exception as e:
         return {
             "text": f"I couldn't mine the document store: {e}",
@@ -946,6 +1084,9 @@ def _answer_document_store_search(question: str, project: str = None):
     lines = ["The strongest document-store matches are:", ""]
     for match in matches[:5]:
         source = match.get("source") or ""
+        if sensitive:
+            lines.append(f"- {source}")
+            continue
         title = match.get("label") or Path(source).name
         genres = ", ".join(match.get("genres") or [])
         authors = "; ".join(match.get("authors") or [])
@@ -1117,6 +1258,8 @@ def _citation_for_source(source: str) -> dict:
 
 def _answer_document_metadata(question: str, context: str, project: str = None):
     if not DOCUMENT_METADATA_RE.search(question or ""):
+        return None
+    if CONTENT_SEARCH_RE.search(question or "") and TOPIC_FILTER_RE.search(question or ""):
         return None
 
     sources = _sources_from_context(
@@ -1721,6 +1864,13 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
         return app_command
 
     if ground and last_user.strip():
+        redaction = _answer_redaction_request(last_user, project=scope)
+        if redaction:
+            redaction["metrics"]["route"] = "redaction_request"
+            return _quality_finish(
+                redaction, last_user, plan, project=scope,
+                improvements=["recognized_redaction_request_without_echoing_content"])
+
         bibliography = _answer_annotated_bibliography(
             last_user, model=model, project=scope, on_token=on_token,
             echo=echo)
@@ -1754,7 +1904,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 improvements=["used_document_registry_for_metadata"])
 
         store_search = _answer_document_store_search(
-            last_user, project=scope)
+            last_user, recent_context, project=scope)
         if store_search:
             store_search["metrics"]["route"] = "document_store"
             return _quality_finish(
