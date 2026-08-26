@@ -1359,6 +1359,84 @@ function rememberAskPrompt(text){
   renderAskHistory();
 }
 
+function clearAskState(){
+  STATE.chat.messages = [];
+  STATE.chat.history = [];
+  STATE.chat.histPos = null;
+  STATE.chat.turnSeq = 0;
+  STATE.evidence = {};
+  $("#chatGlosses").innerHTML = "";
+  saveAskHistory();
+  renderAskHistory();
+  renderChat();
+}
+
+function appCommand(text){
+  const q = (text || "").toLowerCase().replace(/[-_]/g, " ");
+  const clearHistory = /\b(clear|reset|wipe)\b.*\b(history|conversation|chat)\b/.test(q);
+  const reindex = /\b(reindex|re index|rescan|scan|refresh index)\b/.test(q);
+  if (clearHistory && reindex) return "clear_history_reindex";
+  if (clearHistory) return "clear_history";
+  if (reindex) return "reindex";
+  return null;
+}
+
+async function runAppCommand(command){
+  if (command === "clear_history" || command === "clear_history_reindex"){
+    clearAskState();
+  }
+  if (command === "clear_history"){
+    STATE.chat.messages.push({
+      role: "assistant",
+      content: "History cleared."
+    });
+    renderChat();
+    return;
+  }
+
+  STATE.chat.busy = true; $("#btnAsk").disabled = true;
+  const pending = {
+    role: "assistant",
+    content: command === "clear_history_reindex"
+      ? "History cleared. Scanning for changes now..."
+      : "Scanning for changes now...",
+    pending: true,
+  };
+  STATE.chat.messages.push(pending);
+  renderChat();
+  try {
+    const scan = runJob("/api/rescan", {}, $("#asklog"), (e, box) => {
+      if (e.type === "stage") logLine(box, e.stage);
+      if (e.type === "done"){
+        const s = e.summary;
+        logLine(box, `${s.new.length} new, ${s.updated.length} updated, ` +
+                     `${s.removed.length} removed. ${s.chunks} chunks indexed.`);
+      }
+    });
+    const timeout = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("scan timeout")), 90000);
+    });
+    const ev = await Promise.race([scan, timeout]);
+    const s = ev.summary || {};
+    pending.content = `Done. ${s.new?.length || 0} new, ${s.updated?.length || 0} updated, ${s.removed?.length || 0} removed, ${s.unchanged?.length || 0} unchanged. ${s.chunks || 0} chunks indexed.`;
+    pending.pending = false;
+    renderChat();
+    loadStatus().catch(() => {});
+  } catch(e){
+    try {
+      const res = await fetch("/api/status");
+      const status = await res.json();
+      pending.content = `The scan is still running or the progress stream did not finish. The current index reports ${status.chunks || 0} chunks.`;
+    } catch(statusError) {
+      pending.content = "I couldn't complete the scan.";
+    }
+    pending.pending = false;
+    renderChat();
+  } finally {
+    STATE.chat.busy = false; $("#btnAsk").disabled = false;
+  }
+}
+
 function renderAskHistory(){
   const sel = $("#askHistory"); if (!sel) return;
   sel.innerHTML = "";
@@ -1511,7 +1589,7 @@ $("#askHistory").onchange = e => {
 };
 $("#btnClearChat").onclick = () => {
   if (STATE.chat.messages.length && !confirm("Clear this conversation?")) return;
-  STATE.chat.messages = []; renderChat();
+  clearAskState();
 };
 $("#contextToggle").onchange = e => {
   STATE.showContext = e.target.checked;
@@ -1529,6 +1607,14 @@ async function sendAsk(){
   const input = $("#askInput");
   const text = input.value.trim();
   if (!text) return;
+
+  const command = appCommand(text);
+  if (command){
+    input.value = ""; autoResize(input);
+    await runAppCommand(command);
+    return;
+  }
+
   if (!STATE.project) return toast("Pick a project first");
 
   rememberAskPrompt(text);

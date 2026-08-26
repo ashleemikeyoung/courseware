@@ -303,7 +303,7 @@ def rescan():
         s = scan_documents(verbose=False)
         emit({"type": "done", "summary": {
             "new": s["new"], "updated": s["updated"], "removed": s["removed"],
-            "chunks": collection.count()}})
+            "unchanged": s["unchanged"], "chunks": collection.count()}})
     return jsonify({"job": start_job(work)})
 
 

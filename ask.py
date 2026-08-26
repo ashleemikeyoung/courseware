@@ -212,6 +212,10 @@ CONTENT_SEARCH_RE = re.compile(
     r"\b(?:article|articles|document|documents|source|sources|file|files)\b",
     re.IGNORECASE,
 )
+APP_COMMAND_RE = re.compile(
+    r"\b(?:clear|reset|wipe|re[-\s]?index|rescan|refresh\s+index)\b",
+    re.IGNORECASE,
+)
 CONTENT_QUESTION_RE = re.compile(
     r"\b(?:argues?|covers?|discuss(?:es)?|says?|explain|summarize|summary|"
     r"compare|contrast|synthesize|analyze)\b",
@@ -1439,6 +1443,28 @@ def _document_reference_scan(question: str, registry: CitationRegistry,
     return [registry.register("document-index", -20, -20, text)]
 
 
+def _answer_app_command_guard(question: str) -> dict:
+    if not APP_COMMAND_RE.search(question or ""):
+        return None
+    if not (
+        re.search(r"\b(?:history|conversation|chat)\b", question or "", re.I)
+        or re.search(r"\b(?:re[-\s]?index|rescan|refresh\s+index)\b",
+                     question or "", re.I)
+    ):
+        return None
+    return {
+        "text": (
+            "That looks like an app command, so I did not search your "
+            "documents for an answer. Use the Home command path or the "
+            "Settings controls to clear history or re-index."
+        ),
+        "evidence": {},
+        "grounded": False,
+        "passages_offered": 0,
+        "metrics": {"route": "app_command_guard"},
+    }
+
+
 def ask(messages: list, model: str = None, project: str = None, ground: bool = True,
         turn_id: str = None, on_token=None, echo: bool = False,
         num_ctx: int = 8192, num_predict: int = 1200,
@@ -1463,6 +1489,10 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     last_user = messages[-1]["content"]
     recent_context = " ".join(m.get("content", "") for m in messages[-8:])
     plan = _plan_query(last_user, recent_context)
+
+    app_command = _answer_app_command_guard(last_user)
+    if app_command:
+        return app_command
 
     if ground and last_user.strip():
         bibliography = _answer_annotated_bibliography(
