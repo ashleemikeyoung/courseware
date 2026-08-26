@@ -668,6 +668,27 @@ def _answer_redaction_request(question: str, project: str = None) -> dict:
     ):
         return None
 
+    source = summarize.detect_file_reference(question, project=project)
+    if source:
+        return {
+            "text": (
+                "I found the exact file for that redaction request. I did not "
+                "print the contents or private details back into chat.\n\n"
+                f"- {source}\n\n"
+                "The Ask view can identify the file, but the redaction "
+                "exporter is not wired into this workflow yet."
+            ),
+            "evidence": {},
+            "grounded": True,
+            "passages_offered": 0,
+            "metrics": {
+                "redaction_request": True,
+                "exact_file": True,
+                "count": 1,
+                "sources": [source],
+            },
+        }
+
     query = _redaction_search_query(question)
     try:
         sources = summarize.find_documents(query, project=project)
