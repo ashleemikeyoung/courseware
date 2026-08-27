@@ -919,6 +919,56 @@ DEFAULT_SEARCH_CRITERIA = [
         ]
     ],
     *[
+        {"criteria_type": "redaction_profile", "term": term}
+        for term in [
+            "legal_privileged",
+            "education_ferpa",
+            "medical_hipaa",
+            "military_confidential",
+        ]
+    ],
+    *[
+        {"criteria_type": "redaction_rule", "group_name": group, "term": term}
+        for group, terms in {
+            "legal_privileged": [
+                "person", "email", "phone", "ssn", "credit_card",
+                "street_address", "highway_address", "city_state_zip",
+                "zip_code",
+            ],
+            "education_ferpa": [
+                "person", "email", "phone", "ssn", "street_address",
+                "zip_code", "student_id", "date",
+            ],
+            "medical_hipaa": [
+                "person", "email", "phone", "ssn", "credit_card",
+                "street_address", "zip_code", "date", "medical_record_number",
+            ],
+            "military_confidential": [
+                "person", "email", "phone", "ssn", "street_address",
+                "zip_code", "rank_serial", "unit_identifier",
+            ],
+        }.items()
+        for term in terms
+    ],
+    *[
+        {"criteria_type": "redaction_protection", "group_name": group, "term": term}
+        for group, terms in {
+            "legal_privileged": [
+                "legal_authority", "short_statute", "court_name", "case_number",
+            ],
+            "education_ferpa": [
+                "institution_name", "course_code",
+            ],
+            "medical_hipaa": [
+                "medical_authority", "facility_type",
+            ],
+            "military_confidential": [
+                "public_military_authority",
+            ],
+        }.items()
+        for term in terms
+    ],
+    *[
         {"criteria_type": "domain_trigger", "group_name": "healthcare", "term": term}
         for term in [
             "healthcare", "health", "medical", "clinical", "patient",

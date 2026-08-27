@@ -315,12 +315,14 @@ CRITERIA_TYPES = {
     "stopword", "low_signal", "source_low_signal", "section_noise",
     "domain_trigger", "domain_term", "document_section", "genre_marker",
     "theme_marker", "subject_stop_label", "ask_route", "genre_alias",
-    "source_lookup_stopword", "relation_target",
+    "source_lookup_stopword", "relation_target", "redaction_profile",
+    "redaction_rule", "redaction_protection",
 }
 TUNING_SETTING_KEYS = {
     "rag_chunk_size", "rag_chunk_overlap", "rag_auto_reindex_on_tuning",
     "rag_supported_extensions", "rag_ignored_dirs",
     "rag_topic_min_domain_hits", "rag_external_search_enabled",
+    "rag_redaction_profiles",
 }
 
 
@@ -345,6 +347,8 @@ def api_tuning():
                 "rag_auto_reindex_on_tuning", "off"),
             "rag_external_search_enabled": get_setting(
                 "rag_external_search_enabled", "off"),
+            "rag_redaction_profiles": get_setting(
+                "rag_redaction_profiles", "legal_privileged"),
             "rag_topic_min_domain_hits": get_setting(
                 "rag_topic_min_domain_hits", "5"),
             "rag_supported_extensions": get_setting(
@@ -383,7 +387,10 @@ def api_tuning_criteria():
         return jsonify({"error": "term is required"}), 400
     if (
         criteria_type.startswith("domain_")
-        or criteria_type in {"ask_route", "genre_alias"}
+        or criteria_type in {
+            "ask_route", "genre_alias", "redaction_rule",
+            "redaction_protection",
+        }
     ) and not group_name:
         return jsonify({"error": f"{criteria_type} criteria need a group"}), 400
 
@@ -406,6 +413,17 @@ def api_tuning_settings():
             continue
         if key in {"rag_auto_reindex_on_tuning", "rag_external_search_enabled"}:
             value = "on" if body.get(key) in (True, "on", "true", "1", 1) else "off"
+            saved[key] = value
+            set_setting(key, value)
+            continue
+        if key == "rag_redaction_profiles":
+            raw = str(body.get(key) or "")
+            values = [
+                item.strip().lower()
+                for item in raw.replace("\n", ",").split(",")
+                if item.strip()
+            ]
+            value = ",".join(dict.fromkeys(values))
             saved[key] = value
             set_setting(key, value)
             continue

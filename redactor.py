@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import sys
 import tempfile
 import zipfile
 from dataclasses import dataclass
@@ -23,21 +24,75 @@ from config import BASE_DIR
 import pii
 import summarize
 
+sys.path.insert(0, str(BASE_DIR / "memory"))
+try:
+    from memory_client import get_search_criteria, get_setting
+except Exception:
+    get_search_criteria = None
+    get_setting = None
+
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W_NS}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 DEFAULT_MASK_CHAR = "X"
-LEGAL_AUTHORITY_RE = re.compile(
-    r"\b(?:[A-Z][A-Za-z'.-]+\s+)?Code\s+Annotated\b"
-    r"(?:\s+§{1,2}\s*[\w.-]+(?:\s+et\s+seq\.?)?)?",
-    re.IGNORECASE,
-)
-SHORT_STATUTE_RE = re.compile(
-    r"\b(?:T\.?\s*C\.?\s*A\.?|Tenn\.?\s+Code\s+Ann\.?)\s+"
-    r"§{1,2}\s*[\w.-]+(?:\s+et\s+seq\.?)?",
-    re.IGNORECASE,
-)
+DEFAULT_REDACTION_PROFILES = ["legal_privileged"]
+BUILTIN_PROTECTION_PATTERNS = {
+    "legal_authority": (
+        r"\b(?:[A-Z][A-Za-z'.-]+\s+)?Code\s+Annotated\b"
+        r"(?:\s+§{1,2}\s*[\w.-]+(?:\s+et\s+seq\.?)?)?"
+    ),
+    "short_statute": (
+        r"\b(?:T\.?\s*C\.?\s*A\.?|Tenn\.?\s+Code\s+Ann\.?)\s+"
+        r"§{1,2}\s*[\w.-]+(?:\s+et\s+seq\.?)?"
+    ),
+    "court_name": (
+        r"\b(?:IN\s+THE\s+)?(?:[A-Z][A-Za-z'.-]*\s+){0,8}"
+        r"(?:Court|COURT)\s+(?:for|of)\s+"
+        r"[A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+){0,4}"
+        r"(?:,\s+[A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+){0,2})?"
+    ),
+    "case_number": r"\bCase\s+No\.?:\s*[\w-]+\b",
+    "institution_name": r"\b[A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+){0,5}\s+(?:University|College|School|District)\b",
+    "course_code": r"\b[A-Z]{2,5}\s*-?\s*\d{2,5}\b",
+    "medical_authority": r"\b(?:HIPAA|Health\s+Insurance\s+Portability\s+and\s+Accountability\s+Act)\b",
+    "facility_type": r"\b(?:hospital|clinic|medical\s+center|health\s+system)\b",
+    "public_military_authority": r"\b(?:Department\s+of\s+Defense|DoD|U\.S\.\s+Army|U\.S\.\s+Navy|U\.S\.\s+Air\s+Force|U\.S\.\s+Marine\s+Corps)\b",
+}
+BUILTIN_RULE_PATTERNS = {
+    "email": r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b",
+    "phone": r"(?:(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?)\d{3}[\s.-]?\d{4}",
+    "ssn": r"\b\d{3}-\d{2}-\d{4}\b",
+    "credit_card": r"\b(?:\d[ -]*?){13,16}\b",
+    "street_address": (
+        r"\b\d{1,6}\s+(?:[A-Z][A-Za-z0-9'.-]*\s+){1,6}"
+        r"(?:Street|St\.?|Road|Rd\.?|Avenue|Ave\.?|Boulevard|Blvd\.?|"
+        r"Drive|Dr\.?|Lane|Ln\.?|Court|Ct\.?|Circle|Cir\.?|Way|"
+        r"Highway|Hwy\.?|Trail|Trl\.?|Place|Pl\.?)\b"
+    ),
+    "highway_address": r"\b\d{1,6}\s+(?:Highway|Hwy\.?|Route|Rt\.?)\s+\d+[A-Za-z]?\b",
+    "city_state_zip": (
+        r"\b[A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+){0,3},\s+"
+        r"[A-Z][A-Za-z'.-]+(?:\s+\d{5}(?:-\d{4})?)?\b",
+        0,
+    ),
+    "zip_code": r"\b\d{5}(?:-\d{4})?\b",
+    "student_id": r"\b(?:student\s+id|student\s+number)[:#]?\s*[A-Z0-9-]+\b",
+    "medical_record_number": r"\b(?:MRN|medical\s+record\s+number)[:#]?\s*[A-Z0-9-]+\b",
+    "rank_serial": r"\b(?:service\s+number|serial\s+number)[:#]?\s*[A-Z0-9-]+\b",
+    "unit_identifier": r"\b(?:unit|squadron|battalion|brigade)[:#]?\s+[A-Z0-9 -]+\b",
+}
+PII_ENTITY_BY_RULE = {
+    "person": "PERSON",
+    "location": "LOCATION",
+    "date": "DATE_TIME",
+    "email": "EMAIL_ADDRESS",
+    "phone": "PHONE_NUMBER",
+    "ssn": "US_SSN",
+    "credit_card": "CREDIT_CARD",
+    "driver_license": "US_DRIVER_LICENSE",
+    "passport": "US_PASSPORT",
+}
 SOURCE_TERM_STOPWORDS = {
     "affidavit",
     "case",
@@ -69,6 +124,58 @@ class UnsupportedRedactionError(RedactionError):
 class RedactionRule:
     pattern: re.Pattern[str]
     label: str
+
+
+def _active_profiles() -> set[str]:
+    if get_setting is None:
+        return set(DEFAULT_REDACTION_PROFILES)
+    try:
+        raw = get_setting("rag_redaction_profiles", ",".join(DEFAULT_REDACTION_PROFILES))
+    except Exception:
+        raw = ",".join(DEFAULT_REDACTION_PROFILES)
+    profiles = {
+        item.strip().lower()
+        for item in (raw or "").replace("\n", ",").split(",")
+        if item.strip()
+    }
+    return profiles or set(DEFAULT_REDACTION_PROFILES)
+
+
+def _policy_terms(criteria_type: str, profiles: set[str]) -> set[str]:
+    if get_search_criteria is None:
+        return set()
+    try:
+        rows = get_search_criteria(criteria_type, enabled_only=True)
+    except Exception:
+        return set()
+    return {
+        (row.get("term") or "").strip().lower()
+        for row in rows
+        if (row.get("group_name") or "").strip().lower() in profiles
+        and row.get("term")
+    }
+
+
+def _compile_known_patterns(terms: set[str], mapping: dict) -> list[RedactionRule]:
+    rules: list[RedactionRule] = []
+    for term in sorted(terms):
+        pattern = None
+        label = term
+        if term.startswith("regex:"):
+            pattern = term.removeprefix("regex:").strip()
+            label = "custom_regex"
+        else:
+            pattern = mapping.get(term)
+        if not pattern:
+            continue
+        flags = re.IGNORECASE
+        if isinstance(pattern, tuple):
+            pattern, flags = pattern
+        try:
+            rules.append(RedactionRule(re.compile(pattern, flags), label))
+        except re.error:
+            continue
+    return rules
 
 
 def _unzip_docx(docx_path: Path, out_dir: Path) -> None:
@@ -138,10 +245,10 @@ def _mask_text(text: str, spans: list[tuple[int, int, str]],
     return "".join(out)
 
 
-def _protected_spans(text: str) -> list[tuple[int, int]]:
+def _protected_spans(text: str, rules: list[RedactionRule]) -> list[tuple[int, int]]:
     spans = []
-    for pattern in (LEGAL_AUTHORITY_RE, SHORT_STATUTE_RE):
-        for match in pattern.finditer(text or ""):
+    for rule in rules:
+        for match in rule.pattern.finditer(text or ""):
             spans.append((match.start(), match.end()))
     return [(start, end) for start, end, _label in _merge_spans(
         [(start, end, "protected") for start, end in spans]
@@ -177,48 +284,21 @@ def _subtract_protected(
     return remaining
 
 
-def _pii_spans(text: str, score_threshold: float) -> list[tuple[int, int, str]]:
+def _pii_spans(text: str, score_threshold: float,
+               entities: list[str]) -> list[tuple[int, int, str]]:
+    if not entities:
+        return []
     try:
-        findings = pii.analyze_text(text, score_threshold=score_threshold)
+        findings = pii.analyze_text(
+            text, entities=entities, score_threshold=score_threshold)
     except Exception:
         return []
     return [(f["start"], f["end"], f["entity_type"]) for f in findings]
 
 
-def _regex_rules(source: str | None, extra_terms: list[str] | None) -> list[RedactionRule]:
-    rules = [
-        RedactionRule(
-            re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I),
-            "email",
-        ),
-        RedactionRule(
-            re.compile(
-                r"(?:(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?)\d{3}[\s.-]?\d{4}",
-                re.I,
-            ),
-            "phone",
-        ),
-        RedactionRule(re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "ssn"),
-        RedactionRule(re.compile(r"\b(?:\d[ -]*?){13,16}\b"), "card_like_number"),
-        RedactionRule(
-            re.compile(
-                r"\b\d{1,6}\s+(?:[A-Z][A-Za-z0-9'.-]*\s+){1,6}"
-                r"(?:Street|St\.?|Road|Rd\.?|Avenue|Ave\.?|Boulevard|Blvd\.?|"
-                r"Drive|Dr\.?|Lane|Ln\.?|Court|Ct\.?|Circle|Cir\.?|Way|"
-                r"Highway|Hwy\.?|Trail|Trl\.?|Place|Pl\.?)\b"
-            ),
-            "street_address",
-        ),
-        RedactionRule(
-            re.compile(
-                r"\b[A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+){0,3},\s+"
-                r"[A-Z][A-Za-z'.-]+(?:\s+\d{5}(?:-\d{4})?)?\b"
-            ),
-            "city_state_zip",
-        ),
-        RedactionRule(re.compile(r"\b\d{5}(?:-\d{4})?\b"), "zip_code"),
-    ]
-
+def _regex_rules(source: str | None, extra_terms: list[str] | None,
+                 policy_terms: set[str]) -> list[RedactionRule]:
+    rules = _compile_known_patterns(policy_terms, BUILTIN_RULE_PATTERNS)
     tokens: set[str] = set()
     for value in [source or "", *(extra_terms or [])]:
         for token in re.split(r"[^A-Za-z]+", value):
@@ -245,6 +325,8 @@ def _regex_spans(text: str, rules: list[RedactionRule]) -> list[tuple[int, int, 
 def _apply_redactions_to_paragraph(
     paragraph: etree._Element,
     rules: list[RedactionRule],
+    protection_rules: list[RedactionRule],
+    pii_entities: list[str],
     score_threshold: float,
     mask_char: str,
 ) -> int:
@@ -256,9 +338,10 @@ def _apply_redactions_to_paragraph(
     if not full_text:
         return 0
 
-    spans = _pii_spans(full_text, score_threshold=score_threshold)
+    spans = _pii_spans(
+        full_text, score_threshold=score_threshold, entities=pii_entities)
     spans.extend(_regex_spans(full_text, rules))
-    spans = _subtract_protected(spans, _protected_spans(full_text))
+    spans = _subtract_protected(spans, _protected_spans(full_text, protection_rules))
     chosen = _merge_spans(spans)
     if not chosen:
         return 0
@@ -296,7 +379,26 @@ def redact_docx_file(
     if not input_docx.exists():
         raise FileNotFoundError(input_docx)
 
-    rules = _regex_rules(source=source, extra_terms=extra_terms)
+    profiles = _active_profiles()
+    policy_terms = _policy_terms("redaction_rule", profiles)
+    protection_terms = _policy_terms("redaction_protection", profiles)
+    if not policy_terms:
+        policy_terms = {
+            "person", "email", "phone", "ssn", "credit_card",
+            "street_address", "zip_code",
+        }
+    if not protection_terms:
+        protection_terms = {"legal_authority", "short_statute", "court_name"}
+
+    rules = _regex_rules(
+        source=source, extra_terms=extra_terms, policy_terms=policy_terms)
+    protection_rules = _compile_known_patterns(
+        protection_terms, BUILTIN_PROTECTION_PATTERNS)
+    pii_entities = sorted({
+        PII_ENTITY_BY_RULE[term]
+        for term in policy_terms
+        if term in PII_ENTITY_BY_RULE
+    })
     with tempfile.TemporaryDirectory(prefix="rag_docx_redact_") as td:
         tmp = Path(td)
         _unzip_docx(input_docx, tmp)
@@ -318,6 +420,8 @@ def redact_docx_file(
                 matches = _apply_redactions_to_paragraph(
                     paragraph,
                     rules=rules,
+                    protection_rules=protection_rules,
+                    pii_entities=pii_entities,
                     score_threshold=score_threshold,
                     mask_char=mask_char,
                 )

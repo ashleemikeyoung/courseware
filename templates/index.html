@@ -684,6 +684,9 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
             <option value="genre_alias">Genre alias</option>
             <option value="source_lookup_stopword">Source lookup stopword</option>
             <option value="relation_target">Relation target</option>
+            <option value="redaction_profile">Redaction profile</option>
+            <option value="redaction_rule">Redaction rule</option>
+            <option value="redaction_protection">Redaction protection</option>
           </select>
           <input type="text" id="critFilterText" placeholder="Filter term or group">
         </div>
@@ -715,6 +718,9 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
             <option value="genre_alias">Genre alias</option>
             <option value="source_lookup_stopword">Source lookup stopword</option>
             <option value="relation_target">Relation target</option>
+            <option value="redaction_profile">Redaction profile</option>
+            <option value="redaction_rule">Redaction rule</option>
+            <option value="redaction_protection">Redaction protection</option>
           </select></div>
         <div class="row">
           <div class="field" style="flex:1;min-width:120px"><label for="critGroup">Group</label>
@@ -752,6 +758,13 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
           <textarea id="ignoredDirs" placeholder=".git, node_modules, .trash"></textarea></div>
         <button class="btn ghost" id="btnSaveIndexing">Save indexing</button>
         <div class="tiny" style="margin-top:10px">Re-index after changing extensions, ignored folders, or chunking.</div>
+      </div>
+
+      <div class="slab" style="margin-bottom:18px">
+        <p class="eyebrow" style="margin-bottom:12px">Redaction profiles</p>
+        <div id="redactionProfilesWrap"></div>
+        <button class="btn ghost small" id="btnSaveRedactionProfiles">Save redaction profiles</button>
+        <div class="tiny" style="margin-top:10px">Rules and protections are editable above under redaction criteria.</div>
       </div>
 
       <div class="slab" style="margin-bottom:18px">
@@ -1758,11 +1771,47 @@ async function loadTuning(){
       STATE.tuning.settings.rag_auto_reindex_on_tuning === "on";
     $("#externalSearchToggle").checked =
       STATE.tuning.settings.rag_external_search_enabled === "on";
+    renderRedactionProfiles();
     renderCriteria();
     renderMisses();
   } catch(e){
     toast("Could not load tuning");
   }
+}
+
+function redactionProfileLabel(value){
+  const labels = {
+    legal_privileged: "Legal (privileged)",
+    education_ferpa: "Education (FERPA)",
+    medical_hipaa: "Medical (HIPAA)",
+    military_confidential: "Military (confidential)",
+  };
+  return labels[value] || value.replaceAll("_", " ");
+}
+
+function renderRedactionProfiles(){
+  const wrap = $("#redactionProfilesWrap"); if (!wrap) return;
+  const active = new Set(
+    (STATE.tuning.settings.rag_redaction_profiles || "legal_privileged")
+      .split(",").map(s => s.trim()).filter(Boolean));
+  const profiles = STATE.tuning.criteria
+    .filter(r => r.criteria_type === "redaction_profile" && r.enabled)
+    .map(r => r.term)
+    .filter(Boolean);
+  const unique = Array.from(new Set(profiles.length ? profiles : ["legal_privileged"]));
+  wrap.innerHTML = "";
+  unique.forEach(profile => {
+    const label = el("label", "toggle");
+    label.style.marginBottom = "10px";
+    const input = el("input");
+    input.type = "checkbox";
+    input.className = "redactionProfileToggle";
+    input.value = profile;
+    input.checked = active.has(profile);
+    label.appendChild(input);
+    label.appendChild(el("span", "", redactionProfileLabel(profile)));
+    wrap.appendChild(label);
+  });
 }
 
 function renderCriteria(){
@@ -1854,6 +1903,20 @@ async function saveIndexing(){
   STATE.tuning.settings = Object.assign(STATE.tuning.settings, r.settings || {});
   toast("Indexing saved");
   maybeAutoReindex();
+}
+
+async function saveRedactionProfiles(){
+  const profiles = Array.from(document.querySelectorAll(".redactionProfileToggle"))
+    .filter(input => input.checked)
+    .map(input => input.value)
+    .join(",");
+  const r = await (await fetch("/api/tuning/settings", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(withProject({ rag_redaction_profiles: profiles })),
+  })).json();
+  if (r.error) return toast(r.error);
+  STATE.tuning.settings.rag_redaction_profiles = profiles;
+  toast("Redaction profiles saved");
 }
 
 async function saveAutoReindex(){
@@ -1949,6 +2012,7 @@ $("#critFilterText").oninput = renderCriteria;
 $("#btnSaveCrit").onclick = saveCriterion;
 $("#btnClearCrit").onclick = clearCriterionForm;
 $("#btnSaveIndexing").onclick = saveIndexing;
+$("#btnSaveRedactionProfiles").onclick = saveRedactionProfiles;
 $("#btnSubmitMiss").onclick = submitMiss;
 $("#autoReindexToggle").onchange = saveAutoReindex;
 $("#externalSearchToggle").onchange = saveExternalSearch;
