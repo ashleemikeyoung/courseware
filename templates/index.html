@@ -398,6 +398,37 @@ textarea{resize:vertical;min-height:74px}
 .chatmsg .bubble{white-space:pre-wrap}
 .chatmsg .bubble p{margin:0 0 1em}
 .chatmsg .bubble p:last-child{margin-bottom:0}
+.chatmsg .bubble pre,.chatmsg .bubble code{font-family:var(--mono)}
+.chatmsg .bubble p code,.chatmsg .bubble li code{
+  background:var(--paper-2);border:1px solid var(--rule-soft);
+  border-radius:2px;padding:.05em .32em;font-size:.86em;
+}
+.codeblock{
+  border:1px solid var(--rule);background:var(--paper-2);
+  border-radius:2px;margin:1em 0;overflow:hidden;white-space:normal;
+}
+.codebar{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  border-bottom:1px solid var(--rule-soft);background:var(--paper-3);
+  color:var(--ink-faint);font-family:var(--mono);font-size:10px;
+  letter-spacing:.1em;text-transform:uppercase;padding:7px 10px;
+}
+.copy-code{
+  background:none;border:1px solid var(--rule);color:var(--ink-soft);
+  cursor:pointer;border-radius:2px;padding:3px 7px;font:inherit;
+}
+.copy-code:hover{color:var(--ink);border-color:var(--ink-soft)}
+.codeblock pre{
+  margin:0;padding:14px 16px;overflow:auto;max-height:32rem;
+  font-size:12.5px;line-height:1.65;white-space:pre;tab-size:2;
+}
+.tok-comment{color:var(--ink-faint);font-style:italic}
+.tok-string{color:var(--green)}
+.tok-keyword{color:var(--blue);font-weight:600}
+.tok-number{color:var(--red)}
+.tok-command{color:var(--blue)}
+.tok-add{color:var(--green)}
+.tok-del{color:var(--red)}
 .chatmsg .bubble.bibliography p{margin:0 0 .9em}
 .chatmsg .bubble.bibliography p:first-child{
   font-weight:700;margin-bottom:1.25em;
@@ -565,8 +596,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 <section class="panel on" id="p-ask"><div class="wrap">
   <p class="eyebrow">Open-ended</p>
   <h1 class="bakash-title">
-    <span class="word">Bakash</span>
-    <span class="definition">(bah-KAHSH): Meaning to request, ask for, or seek out</span>
+    <span class="word">El Roi</span>
   </h1>
   <p class="lede" id="askLede">A plain conversation. Turn grounding on to pull
     answers from the current project's documents, or leave it off and talk to
@@ -1177,8 +1207,9 @@ function stripHiddenCitations(md){
 function mdToHtml(md, opts = {}){
   const showCitations = opts.showCitations !== false;
   if (!showCitations) md = stripHiddenCitations(md);
-  const lines = md.split("\n"); let out = [], list = null;
+  const lines = md.split("\n"); let out = [], list = null, code = null;
   const inline = t => esc(t)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|\W)\*(?!\s)(.+?)\*/g, "$1<em>$2</em>")
     // Chat markers are prefixed per turn ("t1-C3") so citations from different
@@ -1187,6 +1218,18 @@ function mdToHtml(md, opts = {}){
     .replace(/\[([\w-]*C\d+)\]/g, (m, c) => showCitations ? citeHtml(c) : "");
   const close = () => { if (list){ out.push(`</${list}>`); list = null; } };
   for (const raw of lines){
+    let fence = raw.match(/^\s*```\s*([\w.+-]*)\s*$/);
+    if (fence){
+      close();
+      if (code){
+        out.push(codeBlockHtml(code.lang, code.lines.join("\n")));
+        code = null;
+      } else {
+        code = {lang: (fence[1] || "text").toLowerCase(), lines: []};
+      }
+      continue;
+    }
+    if (code){ code.lines.push(raw); continue; }
     const l = raw.trim();
     if (!l) { close(); continue; }
     let m;
@@ -1200,7 +1243,64 @@ function mdToHtml(md, opts = {}){
       out.push(`<li>${inline(m[1])}</li>`);
     } else { close(); out.push(`<p>${inline(l)}</p>`); }
   }
+  if (code) out.push(codeBlockHtml(code.lang, code.lines.join("\n")));
   close(); return out.join("");
+}
+
+function codeBlockHtml(lang, code){
+  const label = lang || "text";
+  return `<div class="codeblock" data-code="${escAttr(code)}">` +
+    `<div class="codebar"><span>${esc(label)}</span>` +
+    `<button class="copy-code" type="button">Copy</button></div>` +
+    `<pre><code class="language-${escAttr(label)}">${highlightCode(code, label)}</code></pre>` +
+    `</div>`;
+}
+
+function highlightCode(code, lang){
+  const l = (lang || "").toLowerCase();
+  if (l === "diff" || l === "patch") {
+    return code.split("\n").map(line => {
+      const cls = line.startsWith("+") && !line.startsWith("+++") ? "tok-add" :
+                  line.startsWith("-") && !line.startsWith("---") ? "tok-del" : "";
+      return cls ? `<span class="${cls}">${esc(line)}</span>` : esc(line);
+    }).join("\n");
+  }
+  if (l === "json") return esc(code)
+    .replace(/(&quot;[^&]*?&quot;)(\s*:)/g, '<span class="tok-keyword">$1</span>$2')
+    .replace(/\b(true|false|null)\b/g, '<span class="tok-keyword">$1</span>')
+    .replace(/\b(-?\d+(?:\.\d+)?)\b/g, '<span class="tok-number">$1</span>');
+  return code.split("\n").map(line => highlightLine(line, l)).join("\n");
+}
+
+function highlightLine(line, lang){
+  const commentAt = line.search(lang === "bash" || lang === "sh" ? /(^|\s)#/ : /\/\//);
+  const head = commentAt >= 0 ? line.slice(0, commentAt) : line;
+  const tail = commentAt >= 0 ? line.slice(commentAt) : "";
+  const stringRe = /(["'])(?:\\.|(?!\1).)*\1/g;
+  let html = "", last = 0, match;
+  while ((match = stringRe.exec(head))){
+    html += highlightPlainCode(head.slice(last, match.index), lang);
+    html += `<span class="tok-string">${esc(match[0])}</span>`;
+    last = match.index + match[0].length;
+  }
+  html += highlightPlainCode(head.slice(last), lang);
+  return html + (tail ? `<span class="tok-comment">${esc(tail)}</span>` : "");
+}
+
+function highlightPlainCode(text, lang){
+  let html = esc(text)
+    .replace(/\b(function|const|let|var|return|if|else|for|while|try|catch|import|from|def|class|with|as|in|elif|fi|then|do|done)\b/g,
+      '<span class="tok-keyword">$1</span>')
+    .replace(/\b(-?\d+(?:\.\d+)?)\b/g, '<span class="tok-number">$1</span>');
+  if (lang === "bash" || lang === "sh") {
+    html = html.replace(/^(\s*)([A-Za-z_][\w.-]*)\b/,
+      '$1<span class="tok-command">$2</span>');
+  }
+  return html;
+}
+
+function escAttr(s){
+  return esc(s).replace(/"/g, "&quot;");
 }
 function citeHtml(c){
   const known = !!STATE.evidence[c];
@@ -1213,6 +1313,16 @@ function citeHtml(c){
    so the two views cannot drift apart on what a click does. */
 function wireCitations(containerEl, glossesEl){
   containerEl.addEventListener("click", e => {
+    const copy = e.target.closest(".copy-code");
+    if (copy){
+      const block = copy.closest(".codeblock");
+      const code = block ? block.dataset.code || "" : "";
+      navigator.clipboard.writeText(code).then(() => {
+        copy.textContent = "Copied";
+        setTimeout(() => copy.textContent = "Copy", 1200);
+      }).catch(() => toast("Could not copy code"));
+      return;
+    }
     const b = e.target.closest(".cite"); if (!b) return;
     if (containerEl.id === "chatColumn" && !STATE.showContext) return;
     containerEl.querySelectorAll(".cite.active").forEach(x => x.classList.remove("active"));
