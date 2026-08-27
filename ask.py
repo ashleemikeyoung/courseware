@@ -79,6 +79,15 @@ If no source material is given, or none of it is relevant, answer from your
 own knowledge. Do not cite a marker under any circumstance if no source
 material was provided."""
 
+UNGROUNDED_CHAT_SYSTEM = """You are a direct, capable assistant. Answer plainly,
+without restating the question, and without padding for length.
+
+The user has turned document grounding off for this turn. Do not require local
+source material, do not refuse because no documents were provided, and do not
+cite local document markers. Answer from your general knowledge and writing
+ability. If the user asks for a draft, paper, explanation, or code sample, write
+it directly."""
+
 BIBLIOGRAPHY_SYSTEM = """You write APA 7 annotated bibliography entries.
 Use only the provided document text. Do not invent authors, dates, journal
 names, findings, methods, or implications that are not present in the text.
@@ -2439,7 +2448,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                     last_user, plan, scope, deep_searched=deep_searched,
                     improvements=improvements)
 
-    system = CHAT_SYSTEM
+    system = CHAT_SYSTEM if ground else UNGROUNDED_CHAT_SYSTEM
     if evidence:
         system += "\n\nSource material:\n\n" + evidence_block(evidence, char_budget=10000)
     elif ground:

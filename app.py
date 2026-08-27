@@ -610,7 +610,11 @@ def api_ask():
     proj = active(request.json)
     body = request.json
     messages = body.get("messages") or []
-    ground = bool(body.get("ground", True))
+    ground_value = body.get("ground", True)
+    if isinstance(ground_value, str):
+        ground = ground_value.strip().lower() not in {"0", "false", "no", "off"}
+    else:
+        ground = bool(ground_value)
     # Omitting model entirely (rather than falling back to writer.DRAFT_MODEL
     # here) lets ask.ask() apply its own default, config.ASK_MODEL -- one
     # place decides what "no model specified" means, not this route.
