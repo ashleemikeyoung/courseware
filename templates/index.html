@@ -252,7 +252,14 @@ h1{font-size:1.85rem;font-weight:600;letter-spacing:-.01em;margin:0 0 6px;line-h
 h2{font-size:1.2rem;font-weight:600;margin:0 0 4px}
 .lede{color:var(--ink-soft);margin:0 0 26px;max-width:44rem}
 .bakash-title{margin-bottom:10px}
-.bakash-title .word{display:block;font-size:2.1rem;line-height:1.05}
+.bakash-title .word{
+  display:block;font-size:2.35rem;line-height:1.05;font-weight:500;
+  letter-spacing:.01em;
+}
+.bakash-title .accent{
+  color:var(--blue);font-family:var(--mono);font-size:.82em;
+  letter-spacing:.08em;
+}
 .bakash-title .definition{
   display:block;font-family:var(--mono);font-size:12px;font-weight:400;
   letter-spacing:.03em;color:var(--ink-soft);margin-top:7px;
@@ -596,7 +603,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 <section class="panel on" id="p-ask"><div class="wrap">
   <p class="eyebrow">Open-ended</p>
   <h1 class="bakash-title">
-    <span class="word">El Roi</span>
+    <span class="word">El <span class="accent">ROI</span></span>
   </h1>
   <p class="lede" id="askLede">A plain conversation. Turn grounding on to pull
     answers from the current project's documents, or leave it off and talk to
