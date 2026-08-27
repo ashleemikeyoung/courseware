@@ -251,6 +251,12 @@ nav button:focus-visible,.btn:focus-visible,.cite:focus-visible{
 h1{font-size:1.85rem;font-weight:600;letter-spacing:-.01em;margin:0 0 6px;line-height:1.2}
 h2{font-size:1.2rem;font-weight:600;margin:0 0 4px}
 .lede{color:var(--ink-soft);margin:0 0 26px;max-width:44rem}
+.bakash-title{margin-bottom:10px}
+.bakash-title .word{display:block;font-size:2.1rem;line-height:1.05}
+.bakash-title .definition{
+  display:block;font-family:var(--mono);font-size:12px;font-weight:400;
+  letter-spacing:.03em;color:var(--ink-soft);margin-top:7px;
+}
 
 .btn{
   background:var(--ink);color:var(--paper);border:0;padding:9px 20px;cursor:pointer;
@@ -460,6 +466,33 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 .criteria-row{cursor:pointer}
 .criteria-row.off td{color:var(--ink-faint)}
 .criteria-row.off td:first-child{text-decoration:line-through}
+.criteria-summary{
+  display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px;
+  font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);
+}
+.criteria-summary button{
+  background:var(--paper);border:1px solid var(--rule);color:var(--ink-soft);
+  cursor:pointer;border-radius:2px;padding:5px 8px;font:inherit;
+}
+.criteria-summary button:hover{border-color:var(--ink-soft);color:var(--ink)}
+.criteria-groups{display:grid;gap:10px}
+.criteria-group{
+  border:1px solid var(--rule);background:var(--paper);border-radius:2px;
+  overflow:hidden;
+}
+.criteria-group summary{
+  cursor:pointer;list-style:none;padding:10px 12px;
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  font-family:var(--mono);font-size:11px;color:var(--ink);
+}
+.criteria-group summary::-webkit-details-marker{display:none}
+.criteria-group summary::before{
+  content:"+";color:var(--ink-faint);margin-right:2px;
+}
+.criteria-group[open] summary::before{content:"-"}
+.criteria-group .group-title{flex:1}
+.criteria-group .group-count{color:var(--ink-faint);font-size:10px}
+.criteria-group table{border-top:1px solid var(--rule-soft)}
 .tiny{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)}
 
 @media(max-width:880px){
@@ -532,7 +565,10 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 <!-- ASK -->
 <section class="panel on" id="p-ask"><div class="wrap">
   <p class="eyebrow">Open-ended</p>
-  <h1>Home</h1>
+  <h1 class="bakash-title">
+    <span class="word">Bakash</span>
+    <span class="definition">(bah-KAHSH): Meaning to request, ask for, or seek out</span>
+  </h1>
   <p class="lede" id="askLede">A plain conversation. Turn grounding on to pull
     answers from the current project's documents, or leave it off and talk to
     the model directly.</p>
@@ -1827,23 +1863,60 @@ function renderCriteria(){
     wrap.appendChild(el("div", "empty", "No matching criteria."));
     return;
   }
-  const tb = el("table");
-  tb.innerHTML = "<thead><tr>" +
-    ["Term","Type","Group","Weight","State"].map(h => `<th>${h}</th>`).join("") +
-    "</tr></thead>";
-  const body = el("tbody");
-  rows.forEach(r => {
-    const tr = el("tr", "criteria-row" + (r.enabled ? "" : " off"));
-    tr.onclick = () => fillCriterionForm(r);
-    tr.appendChild(el("td", "", r.term));
-    tr.appendChild(el("td", "", r.criteria_type.replace("_", " ")));
-    tr.appendChild(el("td", "", r.group_name || ""));
-    tr.appendChild(el("td", "num", String(r.weight ?? 1)));
-    tr.appendChild(el("td", "", r.enabled ? "on" : "off"));
-    body.appendChild(tr);
+
+  const typeCounts = new Map();
+  rows.forEach(r => typeCounts.set(r.criteria_type, (typeCounts.get(r.criteria_type) || 0) + 1));
+  const summary = el("div", "criteria-summary");
+  Array.from(typeCounts.entries()).sort().forEach(([criteriaType, count]) => {
+    const b = el("button", "", `${criteriaLabel(criteriaType)} ${count}`);
+    b.onclick = () => { $("#critFilterType").value = criteriaType; renderCriteria(); };
+    summary.appendChild(b);
   });
-  tb.appendChild(body);
-  wrap.appendChild(tb);
+  wrap.appendChild(summary);
+
+  const groups = new Map();
+  rows.forEach(r => {
+    const key = `${r.criteria_type}||${r.group_name || "Ungrouped"}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  });
+
+  const groupWrap = el("div", "criteria-groups");
+  Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b)).forEach(([key, groupRows], index) => {
+    const [criteriaType, groupName] = key.split("||");
+    const details = el("details", "criteria-group");
+    details.open = !!needle || rows.length <= 30 || index < 4;
+    const summaryRow = el("summary");
+    summaryRow.appendChild(el("span", "group-title",
+      `${criteriaLabel(criteriaType)} · ${groupName}`));
+    summaryRow.appendChild(el("span", "group-count",
+      `${groupRows.length} item${groupRows.length === 1 ? "" : "s"}`));
+    details.appendChild(summaryRow);
+
+    const tb = el("table");
+    tb.innerHTML = "<thead><tr>" +
+      ["Term","Weight","State"].map(h => `<th>${h}</th>`).join("") +
+      "</tr></thead>";
+    const body = el("tbody");
+    groupRows
+      .sort((a, b) => `${a.term}`.localeCompare(`${b.term}`))
+      .forEach(r => {
+        const tr = el("tr", "criteria-row" + (r.enabled ? "" : " off"));
+        tr.onclick = () => fillCriterionForm(r);
+        tr.appendChild(el("td", "", r.term));
+        tr.appendChild(el("td", "num", String(r.weight ?? 1)));
+        tr.appendChild(el("td", "", r.enabled ? "on" : "off"));
+        body.appendChild(tr);
+      });
+    tb.appendChild(body);
+    details.appendChild(tb);
+    groupWrap.appendChild(details);
+  });
+  wrap.appendChild(groupWrap);
+}
+
+function criteriaLabel(value){
+  return (value || "").replaceAll("_", " ");
 }
 
 function fillCriterionForm(r){
