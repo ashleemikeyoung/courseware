@@ -28,6 +28,16 @@ W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W_NS}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 DEFAULT_MASK_CHAR = "X"
+LEGAL_AUTHORITY_RE = re.compile(
+    r"\b(?:[A-Z][A-Za-z'.-]+\s+)?Code\s+Annotated\b"
+    r"(?:\s+§{1,2}\s*[\w.-]+(?:\s+et\s+seq\.?)?)?",
+    re.IGNORECASE,
+)
+SHORT_STATUTE_RE = re.compile(
+    r"\b(?:T\.?\s*C\.?\s*A\.?|Tenn\.?\s+Code\s+Ann\.?)\s+"
+    r"§{1,2}\s*[\w.-]+(?:\s+et\s+seq\.?)?",
+    re.IGNORECASE,
+)
 SOURCE_TERM_STOPWORDS = {
     "affidavit",
     "case",
@@ -128,6 +138,45 @@ def _mask_text(text: str, spans: list[tuple[int, int, str]],
     return "".join(out)
 
 
+def _protected_spans(text: str) -> list[tuple[int, int]]:
+    spans = []
+    for pattern in (LEGAL_AUTHORITY_RE, SHORT_STATUTE_RE):
+        for match in pattern.finditer(text or ""):
+            spans.append((match.start(), match.end()))
+    return [(start, end) for start, end, _label in _merge_spans(
+        [(start, end, "protected") for start, end in spans]
+    )]
+
+
+def _subtract_protected(
+    spans: list[tuple[int, int, str]],
+    protected: list[tuple[int, int]],
+) -> list[tuple[int, int, str]]:
+    if not protected:
+        return spans
+
+    remaining: list[tuple[int, int, str]] = []
+    for start, end, label in spans:
+        pieces = [(start, end)]
+        for protected_start, protected_end in protected:
+            next_pieces = []
+            for piece_start, piece_end in pieces:
+                if protected_end <= piece_start or protected_start >= piece_end:
+                    next_pieces.append((piece_start, piece_end))
+                    continue
+                if piece_start < protected_start:
+                    next_pieces.append((piece_start, protected_start))
+                if protected_end < piece_end:
+                    next_pieces.append((protected_end, piece_end))
+            pieces = next_pieces
+            if not pieces:
+                break
+        remaining.extend((piece_start, piece_end, label)
+                         for piece_start, piece_end in pieces
+                         if piece_end > piece_start)
+    return remaining
+
+
 def _pii_spans(text: str, score_threshold: float) -> list[tuple[int, int, str]]:
     try:
         findings = pii.analyze_text(text, score_threshold=score_threshold)
@@ -209,6 +258,7 @@ def _apply_redactions_to_paragraph(
 
     spans = _pii_spans(full_text, score_threshold=score_threshold)
     spans.extend(_regex_spans(full_text, rules))
+    spans = _subtract_protected(spans, _protected_spans(full_text))
     chosen = _merge_spans(spans)
     if not chosen:
         return 0
