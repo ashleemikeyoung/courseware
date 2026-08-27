@@ -502,14 +502,30 @@ def _trim_history(messages: list, max_words: int = 3000) -> list:
     return list(reversed(kept))
 
 
+WORD_COUNT_RANGE_RE = re.compile(
+    r"\b(\d{3,5})\s*(?:-|–|—|\bto\b)\s*(\d{3,5})\s*words?\b",
+    re.IGNORECASE,
+)
 WORD_COUNT_RE = re.compile(
     r"\b(?:(?:about|around|approximately|roughly)\s+)?"
-    r"(\d{3,5})\s*(?:-|–)?\s*word\b",
+    r"(\d{3,5})\s*(?:-|–)?\s*words?\b",
     re.IGNORECASE,
 )
 
 
-def _requested_word_count(text: str) -> int | None:
+def _requested_word_range(text: str) -> tuple[int, int] | None:
+    range_match = WORD_COUNT_RANGE_RE.search(text or "")
+    if range_match:
+        try:
+            low = int(range_match.group(1))
+            high = int(range_match.group(2))
+        except ValueError:
+            return None
+        if low > high:
+            low, high = high, low
+        if 100 <= low <= high <= 20000:
+            return low, high
+
     match = WORD_COUNT_RE.search(text or "")
     if not match:
         return None
@@ -517,15 +533,21 @@ def _requested_word_count(text: str) -> int | None:
         count = int(match.group(1))
     except ValueError:
         return None
-    return count if 100 <= count <= 20000 else None
+    if not 100 <= count <= 20000:
+        return None
+    return int(count * 0.9), int(count * 1.1)
 
 
-def _num_predict_for_word_count(current: int, words: int | None) -> int:
-    if not words:
+def _word_count(text: str) -> int:
+    return len(re.findall(r"\b[\w'-]+\b", text or ""))
+
+
+def _num_predict_for_word_range(current: int, word_range: tuple[int, int] | None) -> int:
+    if not word_range:
         return current
     # A rough words-to-token cushion. This is intentionally generous because
     # stopping early is worse than leaving unused generation budget.
-    return max(current, min(8192, int(words * 2.4) + 400))
+    return max(current, min(8192, int(word_range[1] * 2.4) + 500))
 
 
 def _plan_query(question: str, context: str = "") -> dict:
@@ -2286,7 +2308,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     last_user = messages[-1]["content"]
     recent_context = " ".join(m.get("content", "") for m in messages[-8:])
     plan = _plan_query(last_user, recent_context)
-    requested_words = _requested_word_count(last_user)
+    requested_word_range = _requested_word_range(last_user)
 
     app_command = _answer_app_command_guard(last_user)
     if app_command:
@@ -2483,13 +2505,13 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                    "For document-grounded questions, say plainly that the "
                    "local documents did not provide enough evidence instead "
                    "of presenting a guess as a sourced answer.")
-    if requested_words:
-        lower = int(requested_words * 0.9)
-        upper = int(requested_words * 1.1)
+    if requested_word_range:
+        lower, upper = requested_word_range
         system += (
-            f"\n\nThe user requested about {requested_words} words. Write a "
-            f"complete response in the {lower}-{upper} word range unless the "
-            "user explicitly asks for a shorter answer."
+            f"\n\nThe user requested {lower}-{upper} words. Write a complete "
+            f"response inside that range. Do not conclude before reaching at "
+            f"least {lower} words unless the user explicitly asks for a "
+            "shorter answer."
         )
 
     # When there's real evidence to report, this has become a fact-reporting
@@ -2501,7 +2523,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     # get more deterministic behavior while ungrounded chat keeps its
     # original feel.
     effective_temperature = min(temperature, 0.25) if evidence else temperature
-    effective_num_predict = _num_predict_for_word_count(num_predict, requested_words)
+    effective_num_predict = _num_predict_for_word_range(num_predict, requested_word_range)
 
     full = [{"role": "system", "content": system}] + _trim_history(
         _sanitize_history(messages))
@@ -2511,6 +2533,33 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
         temperature=effective_temperature, think=False, on_token=on_token, echo=echo,
     )
     text = strip_thinking(text)
+
+    if requested_word_range and _word_count(text) < requested_word_range[0]:
+        minimum, maximum = requested_word_range
+        remaining = max(150, minimum - _word_count(text) + 80)
+        continuation_prompt = (
+            f"The draft is under the requested minimum of {minimum} words. "
+            f"Continue the same paper without a new title or preamble. Add "
+            f"enough substantive content to bring the combined answer into "
+            f"the {minimum}-{maximum} word range, then stop."
+        )
+        continuation, continuation_metrics = ask_ollama_chat(
+            full + [
+                {"role": "assistant", "content": text},
+                {"role": "user", "content": continuation_prompt},
+            ],
+            model,
+            num_ctx=num_ctx,
+            num_predict=_num_predict_for_word_range(remaining, (remaining, remaining)),
+            temperature=effective_temperature,
+            think=False,
+            echo=echo,
+        )
+        continuation = strip_thinking(continuation)
+        if continuation:
+            text = text.rstrip() + "\n\n" + continuation.lstrip()
+            metrics = continuation_metrics or metrics
+            improvements.append("continued_under_length_generation")
 
     if _is_degenerate(text):
         # Retry once, cooler and with a repetition penalty, since that's a
