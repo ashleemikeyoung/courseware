@@ -502,6 +502,32 @@ def _trim_history(messages: list, max_words: int = 3000) -> list:
     return list(reversed(kept))
 
 
+WORD_COUNT_RE = re.compile(
+    r"\b(?:(?:about|around|approximately|roughly)\s+)?"
+    r"(\d{3,5})\s*(?:-|–)?\s*word\b",
+    re.IGNORECASE,
+)
+
+
+def _requested_word_count(text: str) -> int | None:
+    match = WORD_COUNT_RE.search(text or "")
+    if not match:
+        return None
+    try:
+        count = int(match.group(1))
+    except ValueError:
+        return None
+    return count if 100 <= count <= 20000 else None
+
+
+def _num_predict_for_word_count(current: int, words: int | None) -> int:
+    if not words:
+        return current
+    # A rough words-to-token cushion. This is intentionally generous because
+    # stopping early is worse than leaving unused generation budget.
+    return max(current, min(8192, int(words * 2.4) + 400))
+
+
 def _plan_query(question: str, context: str = "") -> dict:
     q = question or ""
     if _is_coder_request(q):
@@ -2260,6 +2286,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     last_user = messages[-1]["content"]
     recent_context = " ".join(m.get("content", "") for m in messages[-8:])
     plan = _plan_query(last_user, recent_context)
+    requested_words = _requested_word_count(last_user)
 
     app_command = _answer_app_command_guard(last_user)
     if app_command:
@@ -2456,6 +2483,14 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                    "For document-grounded questions, say plainly that the "
                    "local documents did not provide enough evidence instead "
                    "of presenting a guess as a sourced answer.")
+    if requested_words:
+        lower = int(requested_words * 0.9)
+        upper = int(requested_words * 1.1)
+        system += (
+            f"\n\nThe user requested about {requested_words} words. Write a "
+            f"complete response in the {lower}-{upper} word range unless the "
+            "user explicitly asks for a shorter answer."
+        )
 
     # When there's real evidence to report, this has become a fact-reporting
     # task, not an open conversation -- sampling variance that's harmless
@@ -2466,12 +2501,13 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     # get more deterministic behavior while ungrounded chat keeps its
     # original feel.
     effective_temperature = min(temperature, 0.25) if evidence else temperature
+    effective_num_predict = _num_predict_for_word_count(num_predict, requested_words)
 
     full = [{"role": "system", "content": system}] + _trim_history(
         _sanitize_history(messages))
 
     text, metrics = ask_ollama_chat(
-        full, model, num_ctx=num_ctx, num_predict=num_predict,
+        full, model, num_ctx=num_ctx, num_predict=effective_num_predict,
         temperature=effective_temperature, think=False, on_token=on_token, echo=echo,
     )
     text = strip_thinking(text)
@@ -2486,7 +2522,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
         # final text, which replaces whatever partial garbage it displayed
         # while the first attempt was still streaming in.
         retry_text, retry_metrics = ask_ollama_chat(
-            full, model, num_ctx=num_ctx, num_predict=num_predict,
+            full, model, num_ctx=num_ctx, num_predict=effective_num_predict,
             temperature=0.2, think=False, repeat_penalty=1.3, echo=echo,
         )
         retry_text = strip_thinking(retry_text)
