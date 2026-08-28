@@ -1,10 +1,13 @@
 __pycache__/
 *.pyc
+.venv-offlineimap/
 .env
 .env-bak
 chroma_db/
 lancedb/
 documents/
+Offline Email/
+.offlineimaprc
 projects/*/output/
 projects/*/plans/
 plans/

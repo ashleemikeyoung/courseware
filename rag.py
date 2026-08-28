@@ -8,6 +8,9 @@ import subprocess
 import time
 import requests
 from datetime import datetime, timezone
+from email import policy
+from email.parser import BytesParser
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -117,6 +120,7 @@ except ImportError:
     print("  [Warning] rawpy not installed. RAW camera files will be skipped.")
 
 SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "30"))
+EMAIL_SOURCE_PREFIX = "mail/"
 
 # Documents folder — absolute, anchored to BASE_DIR
 _docs_env = os.getenv("DOCUMENTS_FOLDER")
@@ -166,6 +170,20 @@ def supported_extensions() -> set:
 
 def ignored_dirs() -> set:
     return _csv_setting("rag_ignored_dirs", DEFAULT_IGNORED_DIRS)
+
+
+def email_maildir_roots() -> list:
+    """
+    Maildirs produced by OfflineIMAP/offlineimap3. Configure with
+    IMAP_MAILDIR_ROOTS=/path/to/Maildir,/path/to/another/Maildir.
+    """
+    raw = os.getenv("IMAP_MAILDIR_ROOTS", "")
+    roots = []
+    for item in raw.replace("\n", ",").split(","):
+        value = item.strip()
+        if value:
+            roots.append(Path(value).expanduser().resolve())
+    return roots
 
 
 # Backward-compatible export for older call sites. Active scans use the
@@ -648,12 +666,20 @@ def file_hash(file: Path) -> str:
     return hashlib.md5(file.read_bytes()).hexdigest()
 
 
-def get_indexed_sources() -> dict:
+def _metadata_source_type(meta: dict) -> str:
+    source = meta.get("source") or ""
+    return meta.get("source_type") or (
+        "email" if source.startswith(EMAIL_SOURCE_PREFIX) else "file")
+
+
+def get_indexed_sources(source_type: str = None) -> dict:
     if collection.count() == 0:
         return {}
     results = collection.get(include=["metadatas"])
     indexed = {}
     for meta in results["metadatas"]:
+        if source_type and _metadata_source_type(meta) != source_type:
+            continue
         source = meta.get("source")
         hash_val = meta.get("file_hash")
         if source and hash_val:
@@ -691,14 +717,58 @@ def _mtime_iso(file: Path) -> str:
         file.stat().st_mtime, tz=timezone.utc).isoformat()
 
 
-def index_file(file: Path, current_hash: str, file_identity: dict = None) -> int:
-    text = load_file(file)
+def index_text_source(
+    source: str,
+    text: str,
+    source_hash: str,
+    *,
+    project: str,
+    filename: str,
+    source_ext: str,
+    source_stem: str,
+    source_type: str = "file",
+    extra_metadata: dict = None,
+) -> int:
     if not text.strip():
-        print(f"  Skipping {file.name} (empty or unreadable)")
+        print(f"  Skipping {filename} (empty or unreadable)")
         return 0
 
     chunks = chunk_text(text)
     if not chunks:
+        return 0
+
+    extra_metadata = dict(extra_metadata or {})
+    ids = [f"{source}::{i}" for i in range(len(chunks))]
+    embeddings = embedder.encode(chunks).tolist()
+    collection.add(
+        ids=ids,
+        embeddings=embeddings,
+        documents=chunks,
+        metadatas=[
+            {
+                **extra_metadata,
+                "source": source,
+                "project": project,
+                "filename": filename,
+                "file_hash": source_hash,
+                "chunk_index": i,
+                "chunk_count": len(chunks),
+                "word_count": len(chunk.split()),
+                "char_count": len(chunk),
+                "source_ext": source_ext,
+                "source_stem": source_stem,
+                "source_type": source_type,
+            }
+            for i, chunk in enumerate(chunks)
+        ],
+    )
+    return len(chunks)
+
+
+def index_file(file: Path, current_hash: str, file_identity: dict = None) -> int:
+    text = load_file(file)
+    if not text.strip():
+        print(f"  Skipping {file.name} (empty or unreadable)")
         return 0
 
     # Source is the path relative to the documents root, so two projects can
@@ -710,37 +780,26 @@ def index_file(file: Path, current_hash: str, file_identity: dict = None) -> int
     project = _project_of(rel)
     file_identity = dict(file_identity or {})
 
-    ids = [f"{rel}::{i}" for i in range(len(chunks))]
-    embeddings = embedder.encode(chunks).tolist()
-
-    collection.add(
-        ids=ids,
-        embeddings=embeddings,
-        documents=chunks,
-        metadatas=[
-            {
-                "source": rel,
-                "project": project,
-                "filename": file.name,
-                "file_hash": current_hash,
-                "chunk_index": i,
-                "chunk_count": len(chunks),
-                "word_count": len(chunk.split()),
-                "char_count": len(chunk),
-                "source_ext": file.suffix.lower(),
-                "source_stem": file.stem,
-                "file_id": file_identity.get("file_id"),
-                "file_version_id": file_identity.get("file_version_id"),
-                "storage_root_id": file_identity.get("storage_root_id"),
-                "storage_object_id": file_identity.get("storage_object_id"),
-            }
-            for i, chunk in enumerate(chunks)
-        ],
+    count = index_text_source(
+        rel,
+        text,
+        current_hash,
+        project=project,
+        filename=file.name,
+        source_ext=file.suffix.lower(),
+        source_stem=file.stem,
+        source_type="file",
+        extra_metadata={
+            "file_id": file_identity.get("file_id"),
+            "file_version_id": file_identity.get("file_version_id"),
+            "storage_root_id": file_identity.get("storage_root_id"),
+            "storage_object_id": file_identity.get("storage_object_id"),
+        },
     )
     record_document_profile(
         rel, text, project, source_hash=current_hash,
         file_identity=file_identity)
-    return len(chunks)
+    return count
 
 
 def scan_documents(folder: str = None, verbose: bool = True,
@@ -777,7 +836,7 @@ def scan_documents(folder: str = None, verbose: bool = True,
                     for part in f.relative_to(folder_path).parts[:-1])
     }
 
-    indexed = get_indexed_sources()
+    indexed = get_indexed_sources(source_type="file")
     summary = {"new": [], "updated": [], "removed": [], "unchanged": []}
     file_identities = {}
 
@@ -924,6 +983,233 @@ def ingest_content(filename: str, content: str, project: str = None) -> tuple:
     if chunk_count:
         collection.ensure_indexes()
     return rel, chunk_count
+
+
+# ---------------------------------------------------------------------------
+# Email / Maildir indexing
+# ---------------------------------------------------------------------------
+
+def _safe_source_part(value: str, fallback: str = "item") -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._@+-]+", "-", (value or "").strip())
+    cleaned = cleaned.strip("-.")
+    return cleaned[:120] or fallback
+
+
+def _maildir_name(root: Path, maildir_path: Path) -> str:
+    try:
+        rel = maildir_path.resolve().relative_to(root.resolve())
+    except ValueError:
+        rel = Path(maildir_path.name)
+    parts = [p for p in rel.parts if p not in ("cur", "new", "tmp")]
+    return "/".join(parts) if parts else "INBOX"
+
+
+def _discover_maildirs(root: Path) -> list:
+    if not root.exists():
+        return []
+    maildirs = []
+    for path in [root, *root.rglob("*")]:
+        if not path.is_dir():
+            continue
+        if all((path / name).is_dir() for name in ("cur", "new", "tmp")):
+            maildirs.append(path)
+    return sorted(set(maildirs))
+
+
+def _message_body_text(msg) -> tuple:
+    body_parts = []
+    attachments = []
+
+    def payload_text(part):
+        try:
+            content = part.get_content()
+        except Exception:
+            payload = part.get_payload(decode=True)
+            if payload is None:
+                return ""
+            charset = part.get_content_charset() or "utf-8"
+            content = payload.decode(charset, errors="replace")
+        if part.get_content_type() == "text/html":
+            content = re.sub(r"(?is)<(script|style).*?</\1>", " ", content)
+            content = re.sub(r"(?s)<[^>]+>", " ", content)
+            content = re.sub(r"&nbsp;", " ", content)
+        return re.sub(r"\s+", " ", content).strip()
+
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.is_multipart():
+                continue
+            disposition = (part.get_content_disposition() or "").lower()
+            ctype = part.get_content_type()
+            filename = part.get_filename()
+            if disposition == "attachment" or filename:
+                attachments.append(
+                    f"{filename or 'unnamed'} ({ctype})")
+                continue
+            if ctype in ("text/plain", "text/html"):
+                text = payload_text(part)
+                if text:
+                    body_parts.append(text)
+    else:
+        if msg.get_content_type() in ("text/plain", "text/html"):
+            text = payload_text(msg)
+            if text:
+                body_parts.append(text)
+
+    return "\n\n".join(body_parts), attachments
+
+
+def _format_email_text(msg, account: str, mailbox_name: str,
+                       local_path: Path) -> tuple:
+    headers = {
+        "Subject": msg.get("subject", ""),
+        "From": msg.get("from", ""),
+        "To": msg.get("to", ""),
+        "Cc": msg.get("cc", ""),
+        "Bcc": msg.get("bcc", ""),
+        "Date": msg.get("date", ""),
+        "Message-ID": msg.get("message-id", ""),
+        "In-Reply-To": msg.get("in-reply-to", ""),
+        "References": msg.get("references", ""),
+    }
+    body, attachments = _message_body_text(msg)
+    lines = [
+        "Email message",
+        f"Account: {account}",
+        f"Mailbox: {mailbox_name}",
+    ]
+    for label, value in headers.items():
+        clean = re.sub(r"\s+", " ", value or "").strip()
+        if clean:
+            lines.append(f"{label}: {clean}")
+    if attachments:
+        lines.append("Attachments: " + ", ".join(attachments))
+    lines.extend(["", body])
+    text = "\n".join(lines).strip()
+
+    try:
+        date_value = parsedate_to_datetime(headers["Date"]).isoformat()
+    except Exception:
+        date_value = ""
+    return text, {
+        "email_account": account,
+        "email_mailbox": mailbox_name,
+        "email_subject": headers["Subject"],
+        "email_from": headers["From"],
+        "email_to": headers["To"],
+        "email_cc": headers["Cc"],
+        "email_date": date_value or headers["Date"],
+        "email_message_id": headers["Message-ID"],
+        "email_local_path": str(local_path),
+        "email_attachment_count": len(attachments),
+    }
+
+
+def _iter_maildir_messages(root: Path):
+    account = _safe_source_part(root.name, "mail")
+    for maildir_path in _discover_maildirs(root):
+        mailbox_name = _maildir_name(root, maildir_path)
+        for subdir in ("new", "cur"):
+            folder = maildir_path / subdir
+            for message_path in sorted(folder.iterdir()):
+                if not message_path.is_file() or message_path.name.startswith("."):
+                    continue
+                try:
+                    with message_path.open("rb") as fh:
+                        msg = BytesParser(policy=policy.default).parse(fh)
+                    text, meta = _format_email_text(
+                        msg, account, mailbox_name, message_path)
+                    stable_id = (msg.get("message-id") or "").strip()
+                    if not stable_id:
+                        stable_id = str(message_path.resolve().relative_to(root))
+                    digest = hashlib.sha1(stable_id.encode("utf-8")).hexdigest()[:24]
+                    source = (
+                        f"{EMAIL_SOURCE_PREFIX}{account}/"
+                        f"{_safe_source_part(mailbox_name, 'INBOX')}/{digest}.eml"
+                    )
+                    source_hash = hashlib.md5(text.encode("utf-8")).hexdigest()
+                    yield source, source_hash, text, meta
+                except Exception as e:
+                    print(f"  [Warning] could not read email {message_path}: {e}")
+
+
+def scan_mailboxes(roots: list = None, verbose: bool = True,
+                   force: bool = False) -> dict:
+    roots = [Path(r).expanduser().resolve() for r in (roots or email_maildir_roots())]
+    indexed = get_indexed_sources(source_type="email")
+    current = {}
+    scanned_accounts = set()
+    summary = {"new": [], "updated": [], "removed": [], "unchanged": []}
+
+    if not roots:
+        if verbose:
+            print("  [Warning] no mail roots configured; set IMAP_MAILDIR_ROOTS")
+        return summary
+
+    for root in roots:
+        if not root.exists():
+            if verbose:
+                print(f"  [Warning] mail root does not exist: {root}")
+            continue
+        scanned_accounts.add(_safe_source_part(root.name, "mail"))
+        for source, source_hash, text, meta in _iter_maildir_messages(root):
+            current[source] = source_hash
+            if source not in indexed:
+                if verbose:
+                    print(f"  [+] Indexing new email: {source}")
+                count = index_text_source(
+                    source, text, source_hash,
+                    project="email",
+                    filename=meta.get("email_subject") or Path(source).name,
+                    source_ext=".eml",
+                    source_stem=Path(source).stem,
+                    source_type="email",
+                    extra_metadata=meta,
+                )
+                if verbose:
+                    print(f"      Added {count} chunks")
+                summary["new"].append(source)
+            elif force or indexed[source] != source_hash:
+                if verbose:
+                    reason = "forced" if force else "changed"
+                    print(f"  [~] Re-indexing {reason} email: {source}")
+                remove_source(source)
+                count = index_text_source(
+                    source, text, source_hash,
+                    project="email",
+                    filename=meta.get("email_subject") or Path(source).name,
+                    source_ext=".eml",
+                    source_stem=Path(source).stem,
+                    source_type="email",
+                    extra_metadata=meta,
+                )
+                if verbose:
+                    print(f"      Updated with {count} chunks")
+                summary["updated"].append(source)
+            else:
+                summary["unchanged"].append(source)
+
+    for source in indexed:
+        account = Path(source).parts[1] if len(Path(source).parts) > 1 else ""
+        if account in scanned_accounts and source not in current:
+            if verbose:
+                print(f"  [-] Removing deleted email: {source}")
+            remove_source(source)
+            summary["removed"].append(source)
+
+    if summary["new"] or summary["updated"] or summary["removed"]:
+        collection.ensure_indexes()
+    return summary
+
+
+def read_indexed_source_text(source: str) -> str:
+    results = collection.get(where={"source": source},
+                             include=["documents", "metadatas"])
+    rows = sorted(
+        zip(results.get("documents", []), results.get("metadatas", [])),
+        key=lambda pair: int(pair[1].get("chunk_index", 0) or 0),
+    )
+    return "\n\n".join(doc for doc, _meta in rows if doc)
 
 # ---------------------------------------------------------------------------
 # Document registry

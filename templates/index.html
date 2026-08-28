@@ -829,6 +829,38 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
       </div>
 
       <div class="slab" style="margin-bottom:18px">
+        <p class="eyebrow" style="margin-bottom:12px">Mail source</p>
+        <div class="row">
+          <div class="field" style="flex:1;min-width:120px"><label for="mailAccount">Account name</label>
+            <input type="text" id="mailAccount" placeholder="Personal"></div>
+          <div class="field" style="flex:1;min-width:180px"><label for="mailHost">IMAP host</label>
+            <input type="text" id="mailHost" placeholder="imap.gmail.com"></div>
+        </div>
+        <div class="field"><label for="mailUser">Email address</label>
+          <input type="text" id="mailUser" placeholder="you@example.com"></div>
+        <div class="row">
+          <div class="field" style="flex:1;min-width:120px"><label for="mailMaxAge">Days back</label>
+            <input type="number" id="mailMaxAge" min="1" max="3650" step="30"></div>
+          <div class="field" style="flex:1;min-width:120px"><label for="mailMaxSize">Max message bytes</label>
+            <input type="number" id="mailMaxSize" min="10000" max="50000000" step="100000"></div>
+        </div>
+        <div class="field"><label for="mailFolders">Folders</label>
+          <textarea id="mailFolders" placeholder="INBOX, Sent"></textarea></div>
+        <div class="field"><label for="mailCert">Certificate file</label>
+          <input type="text" id="mailCert" placeholder="/opt/homebrew/etc/openssl@3/cert.pem"></div>
+        <label class="toggle" style="margin-bottom:14px">
+          <input type="checkbox" id="mailSsl" checked>
+          <span>Use SSL</span>
+        </label>
+        <div class="row">
+          <button class="btn ghost" id="btnSaveMail">Save mail settings</button>
+          <button class="btn" id="btnRescanMail">Index synced mail</button>
+        </div>
+        <div class="tiny" id="mailInfo" style="margin-top:10px"></div>
+        <div class="log" id="maillog" style="display:none;margin-top:14px"></div>
+      </div>
+
+      <div class="slab" style="margin-bottom:18px">
         <p class="eyebrow" style="margin-bottom:12px">Redaction profiles</p>
         <div id="redactionProfilesWrap"></div>
         <button class="btn ghost small" id="btnSaveRedactionProfiles">Save redaction profiles</button>
@@ -875,6 +907,7 @@ const esc = s => (s ?? "").replace(/[&<>"]/g, c =>
 let STATE = { outline:null, evidence:{}, models:[], busy:false,
               project:null, projects:[], showContext:false };
 STATE.tuning = { criteria: [], misses: [], settings: {} };
+STATE.mail = { settings: {} };
 
 /* Every request carries the project explicitly. The server holds no session,
    so there is no way to be looking at one project and writing into another. */
@@ -1922,9 +1955,65 @@ async function loadTuning(){
     renderRedactionProfiles();
     renderCriteria();
     renderMisses();
+    loadMailConfig();
   } catch(e){
     toast("Could not load tuning");
   }
+}
+
+async function loadMailConfig(){
+  try {
+    const j = await (await fetch("/api/mail/config")).json();
+    if (j.error) return toast(j.error);
+    STATE.mail.settings = j.settings || {};
+    $("#mailAccount").value = STATE.mail.settings.account || "Personal";
+    $("#mailHost").value = STATE.mail.settings.remotehost || "";
+    $("#mailUser").value = STATE.mail.settings.remoteuser || "";
+    $("#mailMaxAge").value = STATE.mail.settings.maxage || 365;
+    $("#mailMaxSize").value = STATE.mail.settings.maxsize || 2000000;
+    $("#mailFolders").value =
+      (STATE.mail.settings.folders || "INBOX,Sent").split(",").join(", ");
+    $("#mailCert").value = STATE.mail.settings.sslcacertfile || "";
+    $("#mailSsl").checked = (STATE.mail.settings.ssl || "yes") !== "no";
+    $("#mailInfo").textContent =
+      `${j.maildir_root || STATE.mail.settings.maildir_roots || ""}` +
+      (STATE.mail.settings.has_auth ? " · auth configured" : " · add auth in .offlineimaprc");
+  } catch(e){
+    toast("Could not load mail settings");
+  }
+}
+
+async function saveMailConfig(){
+  const payload = {
+    account: $("#mailAccount").value,
+    remotehost: $("#mailHost").value,
+    remoteuser: $("#mailUser").value,
+    maxage: $("#mailMaxAge").value,
+    maxsize: $("#mailMaxSize").value,
+    folders: $("#mailFolders").value,
+    sslcacertfile: $("#mailCert").value,
+    ssl: $("#mailSsl").checked ? "yes" : "no",
+  };
+  const r = await (await fetch("/api/mail/config", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(payload),
+  })).json();
+  if (r.error) return toast(r.error);
+  STATE.mail.settings = r.settings || {};
+  toast("Mail settings saved");
+  loadMailConfig();
+}
+
+function runMailRescan(){
+  return runJob("/api/mail/rescan", {}, $("#maillog"), (ev, box) => {
+    if (ev.type === "stage") logLine(box, ev.stage);
+    if (ev.type === "done"){
+      const s = ev.summary;
+      logLine(box, `${s.new.length} new, ${s.updated.length} updated, ` +
+                   `${s.removed.length} removed. ${s.chunks} chunks indexed.`);
+      loadStatus();
+    }
+  });
 }
 
 function redactionProfileLabel(value){
@@ -2197,6 +2286,8 @@ $("#critFilterText").oninput = renderCriteria;
 $("#btnSaveCrit").onclick = saveCriterion;
 $("#btnClearCrit").onclick = clearCriterionForm;
 $("#btnSaveIndexing").onclick = saveIndexing;
+$("#btnSaveMail").onclick = saveMailConfig;
+$("#btnRescanMail").onclick = runMailRescan;
 $("#btnSaveRedactionProfiles").onclick = saveRedactionProfiles;
 $("#btnSubmitMiss").onclick = submitMiss;
 $("#autoReindexToggle").onchange = saveAutoReindex;

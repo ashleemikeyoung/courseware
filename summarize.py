@@ -293,6 +293,40 @@ def summarize_file(path, model: str = None, max_chars: int = 20000,
     }
 
 
+def summarize_source(source: str, model: str = None, max_chars: int = 20000,
+                     on_token=None, echo: bool = False) -> dict:
+    if source.startswith("mail/"):
+        model = model or ASK_MODEL
+        indexed = rag.get_indexed_sources()
+        source_hash = indexed.get(source, "")
+        cached = _cached_summary(
+            source, source_hash, model, max_chars, on_token=on_token)
+        if cached:
+            cached["path"] = source
+            return cached
+        text = rag.read_indexed_source_text(source)
+        if not text.strip():
+            raise ValueError(f"Indexed email source has no readable text: {source}")
+        total_chars = len(text)
+        truncated = total_chars > max_chars
+        if truncated:
+            text = text[:max_chars]
+        summary, metrics = summarize_text(
+            text, model=model, on_token=on_token, echo=echo)
+        _remember_summary(
+            source, source_hash, model, max_chars, total_chars, truncated, summary)
+        return {
+            "path": source,
+            "chars": total_chars,
+            "truncated": truncated,
+            "summary": summary,
+            "metrics": metrics,
+        }
+    return summarize_file(
+        resolve_path(source), model=model, max_chars=max_chars,
+        on_token=on_token, echo=echo)
+
+
 # ---------------------------------------------------------------------------
 # Search + summarize, chained -- the shared entry point
 # ---------------------------------------------------------------------------
@@ -309,11 +343,11 @@ def summarize_search(term: str, project: str = None, model: str = None,
     sources = find_documents(term, project=project)
     results = []
     for source in sources:
-        path = resolve_path(source)
         try:
-            result = summarize_file(path, model=model, max_chars=max_chars)
+            result = summarize_source(source, model=model, max_chars=max_chars)
             result["source"] = source
         except (FileNotFoundError, ValueError) as e:
+            path = source if source.startswith("mail/") else str(resolve_path(source))
             result = {"source": source, "path": str(path), "error": str(e)}
         results.append(result)
     return results

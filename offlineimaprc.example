@@ -1,0 +1,31 @@
+[general]
+accounts = Personal
+metadata = /Users/ash/Development/RAG/Offline Email/.metadata
+ui = basic
+
+[Account Personal]
+localrepository = PersonalLocal
+remoterepository = PersonalRemote
+
+# Storage safety limits. maxage is days, or use a date like 2026-01-01.
+# maxsize is bytes; 2000000 is roughly 2 MB and skips large attachments.
+maxage = 365
+maxsize = 2000000
+
+[Repository PersonalLocal]
+type = Maildir
+localfolders = /Users/ash/Development/RAG/Offline Email/Personal
+
+[Repository PersonalRemote]
+type = IMAP
+remotehost = imap.example.com
+remoteuser = you@example.com
+ssl = yes
+sslcacertfile = /opt/homebrew/etc/openssl@3/cert.pem
+
+# Keep the first sync narrow. Add folders once storage usage looks sane.
+folderfilter = lambda foldername: foldername in ['INBOX', 'Sent']
+
+# Prefer a keychain-backed helper or an app-specific password.
+# Do not commit real passwords or OAuth tokens here.
+# remotepasseval = get_password("you@example.com")

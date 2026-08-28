@@ -163,12 +163,16 @@ def stats(collection=None) -> list:
     ignored = ignored_dirs()
 
     by_project = {}
+    sources_by_project = {}
     total_chunks = 0
     if collection is not None and collection.count():
         got = collection.get(include=["metadatas"])
         for meta in got["metadatas"]:
             proj = meta.get("project") or project_of(meta.get("source", ""))
             by_project[proj] = by_project.get(proj, 0) + 1
+            source = meta.get("source")
+            if source:
+                sources_by_project.setdefault(proj, set()).add(source)
             total_chunks += 1
 
     out = []
@@ -178,19 +182,25 @@ def stats(collection=None) -> list:
         and not any(part in ignored or part.startswith(".")
                     for part in f.relative_to(DOCUMENTS_ROOT).parts[:-1])
     ] if DOCUMENTS_ROOT.exists() else []
+    indexed_sources = set().union(*sources_by_project.values()) if sources_by_project else set()
     out.append({
         "name": ALL,
         "label": "All projects",
-        "files": len(all_files),
+        "files": len(set(str(f.relative_to(DOCUMENTS_ROOT)) for f in all_files)
+                     | indexed_sources),
         "chunks": total_chunks,
         "documents": 0,
         "has_plan": False,
         "path": str(DOCUMENTS_ROOT),
     })
 
-    for name in discover():
+    discovered = set(discover())
+    indexed_only = set(sources_by_project) - discovered - {ALL}
+    for name in sorted(discovered | indexed_only):
         root = source_root(name)
-        if name == UNFILED:
+        if name not in discovered:
+            files = []
+        elif name == UNFILED:
             files = [f for f in root.iterdir()
                      if f.is_file() and f.suffix.lower() in extensions]
         else:
@@ -203,7 +213,8 @@ def stats(collection=None) -> list:
         out.append({
             "name": name,
             "label": name,
-            "files": len(files),
+            "files": len(set(str(f.relative_to(DOCUMENTS_ROOT)) for f in files)
+                         | sources_by_project.get(name, set())),
             "chunks": by_project.get(name, 0),
             "documents": len(list(p["output"].glob("*.md"))) if p["output"].exists() else 0,
             "has_plan": p["plan"].exists(),

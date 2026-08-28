@@ -24,6 +24,7 @@ import threading
 import time
 import traceback
 import uuid
+import configparser
 from datetime import datetime
 from pathlib import Path
 
@@ -53,6 +54,9 @@ app = Flask(__name__, static_folder=str(BASE_DIR / "static"))
 # browser's cache. Harmless to leave on permanently -- one file mtime
 # check per request, not a real cost.
 app.config["TEMPLATES_AUTO_RELOAD"] = True
+MAIL_CONFIG_PATH = BASE_DIR / ".offlineimaprc"
+MAIL_CONFIG_EXAMPLE_PATH = BASE_DIR / "offlineimaprc.example"
+DEFAULT_MAILDIR_ROOT = BASE_DIR / "Offline Email"
 
 # Recolour the wordmark for each theme at startup. The source navy scores 1.51
 # contrast against the dark background, so a single file would leave the Q
@@ -160,6 +164,161 @@ def plan_file():
 
 def _specific_project_required():
     return jsonify({"error": "choose a specific project for this action"}), 400
+
+
+def _env_path() -> Path:
+    return BASE_DIR / ".env"
+
+
+def _set_env_value(key: str, value: str):
+    path = _env_path()
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    prefix = f"{key}="
+    updated = False
+    out = []
+    for line in lines:
+        if line.startswith(prefix):
+            out.append(f"{key}={value}")
+            updated = True
+        else:
+            out.append(line)
+    if not updated:
+        out.append(f"{key}={value}")
+    path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+    os.environ[key] = value
+
+
+def _mail_auth_lines() -> list:
+    if not MAIL_CONFIG_PATH.exists():
+        return []
+    lines = []
+    for line in MAIL_CONFIG_PATH.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if (
+            stripped.startswith("remotepass")
+            or stripped.startswith("remotepasseval")
+            or stripped.startswith("oauth2_")
+        ):
+            lines.append(line)
+    return lines
+
+
+def _mail_config_parser() -> configparser.ConfigParser:
+    parser = configparser.RawConfigParser()
+    parser.optionxform = str
+    if MAIL_CONFIG_PATH.exists():
+        parser.read(MAIL_CONFIG_PATH)
+    return parser
+
+
+def _mail_settings_from_config() -> dict:
+    parser = _mail_config_parser()
+    account = parser["general"].get("accounts", "Personal") if parser.has_section("general") else "Personal"
+    account = account.split(",", 1)[0].strip() or "Personal"
+    account_section = f"Account {account}"
+    local_repo = parser[account_section].get("localrepository", "PersonalLocal") if parser.has_section(account_section) else "PersonalLocal"
+    remote_repo = parser[account_section].get("remoterepository", "PersonalRemote") if parser.has_section(account_section) else "PersonalRemote"
+    local_section = f"Repository {local_repo}"
+    remote_section = f"Repository {remote_repo}"
+    localfolders = (
+        parser[local_section].get("localfolders", str(DEFAULT_MAILDIR_ROOT / account))
+        if parser.has_section(local_section) else str(DEFAULT_MAILDIR_ROOT / account)
+    )
+    folderfilter = (
+        parser[remote_section].get("folderfilter", "")
+        if parser.has_section(remote_section) else ""
+    )
+    folders = ""
+    match = re.search(r"\[(.*)\]", folderfilter)
+    if match:
+        folders = ",".join(
+            item.strip().strip("\"'")
+            for item in match.group(1).split(",")
+            if item.strip()
+        )
+    return {
+        "account": account,
+        "remotehost": (
+            parser[remote_section].get("remotehost", "imap.example.com")
+            if parser.has_section(remote_section) else "imap.example.com"
+        ),
+        "remoteuser": (
+            parser[remote_section].get("remoteuser", "you@example.com")
+            if parser.has_section(remote_section) else "you@example.com"
+        ),
+        "ssl": (
+            parser[remote_section].get("ssl", "yes")
+            if parser.has_section(remote_section) else "yes"
+        ),
+        "sslcacertfile": (
+            parser[remote_section].get("sslcacertfile", "/opt/homebrew/etc/openssl@3/cert.pem")
+            if parser.has_section(remote_section) else "/opt/homebrew/etc/openssl@3/cert.pem"
+        ),
+        "maxage": (
+            parser[account_section].get("maxage", "365")
+            if parser.has_section(account_section) else "365"
+        ),
+        "maxsize": (
+            parser[account_section].get("maxsize", "2000000")
+            if parser.has_section(account_section) else "2000000"
+        ),
+        "folders": folders or "INBOX,Sent",
+        "localfolders": localfolders,
+        "maildir_roots": os.getenv("IMAP_MAILDIR_ROOTS", str(DEFAULT_MAILDIR_ROOT)),
+        "has_auth": bool(_mail_auth_lines()),
+    }
+
+
+def _write_mail_config(settings: dict):
+    account = re.sub(r"[^A-Za-z0-9._-]+", "-", settings["account"]).strip("-.") or "Personal"
+    local_repo = f"{account}Local"
+    remote_repo = f"{account}Remote"
+    folders = [
+        f.strip() for f in str(settings.get("folders") or "").replace("\n", ",").split(",")
+        if f.strip()
+    ]
+    folder_list = ", ".join(repr(f) for f in folders[:50])
+    auth_lines = _mail_auth_lines()
+    localfolders = str(DEFAULT_MAILDIR_ROOT / account)
+    config_lines = [
+        "[general]",
+        f"accounts = {account}",
+        f"metadata = {DEFAULT_MAILDIR_ROOT}/.metadata",
+        "ui = basic",
+        "",
+        f"[Account {account}]",
+        f"localrepository = {local_repo}",
+        f"remoterepository = {remote_repo}",
+        f"maxage = {settings['maxage']}",
+        f"maxsize = {settings['maxsize']}",
+        "",
+        f"[Repository {local_repo}]",
+        "type = Maildir",
+        f"localfolders = {localfolders}",
+        "",
+        f"[Repository {remote_repo}]",
+        "type = IMAP",
+        f"remotehost = {settings['remotehost']}",
+        f"remoteuser = {settings['remoteuser']}",
+        f"ssl = {settings['ssl']}",
+        f"sslcacertfile = {settings['sslcacertfile']}",
+    ]
+    if folders:
+        config_lines.append(f"folderfilter = lambda foldername: foldername in [{folder_list}]")
+    if auth_lines:
+        config_lines.extend(["", *auth_lines])
+    else:
+        config_lines.extend([
+            "",
+            "# Add authentication locally, for example:",
+            "# remotepass = your-app-password",
+            "# remotepasseval = get_password(\"you@example.com\")",
+        ])
+    MAIL_CONFIG_PATH.write_text("\n".join(config_lines).rstrip() + "\n", encoding="utf-8")
+    DEFAULT_MAILDIR_ROOT.mkdir(parents=True, exist_ok=True)
+    (DEFAULT_MAILDIR_ROOT / ".metadata").mkdir(parents=True, exist_ok=True)
+    Path(localfolders).mkdir(parents=True, exist_ok=True)
+    _set_env_value("IMAP_MAILDIR_ROOTS", str(DEFAULT_MAILDIR_ROOT))
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +460,70 @@ def rescan():
         from rag import scan_documents
         emit({"type": "stage", "stage": "scanning documents"})
         s = scan_documents(verbose=False)
+        emit({"type": "done", "summary": {
+            "new": s["new"], "updated": s["updated"], "removed": s["removed"],
+            "unchanged": s["unchanged"], "chunks": collection.count()}})
+    return jsonify({"job": start_job(work)})
+
+
+@app.get("/api/mail/config")
+def api_mail_config():
+    if not MAIL_CONFIG_PATH.exists():
+        _write_mail_config(_mail_settings_from_config())
+    return jsonify({
+        "settings": _mail_settings_from_config(),
+        "config_path": str(MAIL_CONFIG_PATH),
+        "maildir_root": str(DEFAULT_MAILDIR_ROOT),
+        "offlineimap": str(BASE_DIR / ".venv-offlineimap" / "bin" / "offlineimap"),
+    })
+
+
+@app.post("/api/mail/config")
+def api_mail_config_save():
+    body = request.json or {}
+    settings = {
+        "account": (body.get("account") or "Personal").strip(),
+        "remotehost": (body.get("remotehost") or "").strip(),
+        "remoteuser": (body.get("remoteuser") or "").strip(),
+        "ssl": "yes" if body.get("ssl") in (True, "yes", "on", "true", "1", 1) else "no",
+        "sslcacertfile": (body.get("sslcacertfile") or "").strip(),
+        "maxage": str(body.get("maxage") or "").strip(),
+        "maxsize": str(body.get("maxsize") or "").strip(),
+        "folders": (body.get("folders") or "").strip(),
+    }
+    if not settings["remotehost"]:
+        return jsonify({"error": "IMAP host is required"}), 400
+    if not settings["remoteuser"]:
+        return jsonify({"error": "email address is required"}), 400
+    if not settings["sslcacertfile"]:
+        return jsonify({"error": "certificate file path is required"}), 400
+    try:
+        maxage = int(settings["maxage"])
+        maxsize = int(settings["maxsize"])
+    except ValueError:
+        return jsonify({"error": "age and size limits must be whole numbers"}), 400
+    if not 1 <= maxage <= 3650:
+        return jsonify({"error": "age limit must be between 1 and 3650 days"}), 400
+    if not 10000 <= maxsize <= 50000000:
+        return jsonify({"error": "size limit must be between 10 KB and 50 MB"}), 400
+    if not settings["folders"]:
+        return jsonify({"error": "at least one folder is required"}), 400
+    _write_mail_config(settings)
+    return jsonify({
+        "settings": _mail_settings_from_config(),
+        "config_path": str(MAIL_CONFIG_PATH),
+    })
+
+
+@app.post("/api/mail/rescan")
+def api_mail_rescan():
+    body = request.json or {}
+    force = bool(body.get("force", False))
+
+    def work(emit):
+        from rag import scan_mailboxes
+        emit({"type": "stage", "stage": "scanning mailboxes"})
+        s = scan_mailboxes(verbose=False, force=force)
         emit({"type": "done", "summary": {
             "new": s["new"], "updated": s["updated"], "removed": s["removed"],
             "unchanged": s["unchanged"], "chunks": collection.count()}})
@@ -664,15 +887,16 @@ def api_summarize():
         results = []
         for source in sources:
             emit({"type": "document_start", "source": source})
-            path = summarize.resolve_path(source)
             try:
-                result = summarize.summarize_file(
-                    path, model=model,
+                result = summarize.summarize_source(
+                    source, model=model,
                     on_token=lambda t, source=source: emit(
                         {"type": "token", "source": source, "text": t}),
                 )
                 result["source"] = source
             except (FileNotFoundError, ValueError) as e:
+                path = source if source.startswith("mail/") else str(
+                    summarize.resolve_path(source))
                 result = {"source": source, "path": str(path), "error": str(e)}
             results.append(result)
             emit({"type": "document_done", "result": result})

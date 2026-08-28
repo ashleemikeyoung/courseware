@@ -26,10 +26,12 @@ import projects
 from rag import (
     search,
     scan_documents,
+    scan_mailboxes,
     get_indexed_sources,
     collection,
     DOCUMENTS_FOLDER,
     ingest_content,
+    read_indexed_source_text,
 )
 import citations
 
@@ -137,6 +139,35 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {},
+                "required": [],
+            },
+        ),
+        Tool(
+            name="rescan_mailboxes",
+            description=(
+                "Index local Maildir mailboxes synced from IMAP by OfflineIMAP "
+                "or offlineimap3. Configure mailbox roots with IMAP_MAILDIR_ROOTS "
+                "as a comma-separated list of Maildir/account directories, then "
+                "call this tool to add or refresh email messages in the same "
+                "semantic index used by search_documents and ask_local."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "roots": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Optional absolute Maildir root paths. If omitted, "
+                            "IMAP_MAILDIR_ROOTS is used."
+                        ),
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "Re-index messages even if their content hash has not changed.",
+                        "default": False,
+                    },
+                },
                 "required": [],
             },
         ),
@@ -460,6 +491,9 @@ async def call_tool(name: str, arguments: dict) -> CallToolResult:
     elif name == "rescan_documents":
         return await handle_rescan()
 
+    elif name == "rescan_mailboxes":
+        return await handle_rescan_mailboxes(arguments or {})
+
     elif name == "ingest_content":
         return await handle_ingest_content(arguments or {})
 
@@ -663,6 +697,40 @@ async def handle_rescan() -> CallToolResult:
         )
 
 
+async def handle_rescan_mailboxes(arguments: dict) -> CallToolResult:
+    try:
+        roots = arguments.get("roots") or None
+        force = bool(arguments.get("force", False))
+        summary = scan_mailboxes(roots=roots, verbose=False, force=force)
+        lines = [
+            "Mailbox rescan complete:",
+            f"  New messages indexed:     {len(summary['new'])}",
+            f"  Updated messages:         {len(summary['updated'])}",
+            f"  Removed messages:         {len(summary['removed'])}",
+            f"  Unchanged messages:       {len(summary['unchanged'])}",
+            f"  Total chunks now:         {collection.count()}",
+        ]
+        if summary["new"]:
+            lines.append(f"\nNew messages: {', '.join(summary['new'][:20])}")
+            if len(summary["new"]) > 20:
+                lines.append(f"... and {len(summary['new']) - 20} more")
+        if summary["updated"]:
+            lines.append(f"Updated messages: {', '.join(summary['updated'][:20])}")
+            if len(summary["updated"]) > 20:
+                lines.append(f"... and {len(summary['updated']) - 20} more")
+        if summary["removed"]:
+            lines.append(f"Removed messages: {', '.join(summary['removed'][:20])}")
+            if len(summary["removed"]) > 20:
+                lines.append(f"... and {len(summary['removed']) - 20} more")
+        return CallToolResult(
+            content=[TextContent(type="text", text="\n".join(lines))]
+        )
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Mailbox rescan error: {str(e)}")]
+        )
+
+
 async def handle_ingest_content(arguments: dict) -> CallToolResult:
     filename = (arguments.get("filename") or "").strip()
     content = arguments.get("content") or ""
@@ -834,15 +902,19 @@ async def handle_read_document(arguments: dict) -> CallToolResult:
             )]
         )
 
-    try:
-        import rag as rag_module
-        import summarize
-        path = summarize.resolve_path(source)
-        text = rag_module.load_file(path) or ""
-    except Exception as e:
-        return CallToolResult(
-            content=[TextContent(type="text", text=f"Read error: {str(e)}")]
-        )
+    if source.startswith("mail/"):
+        path = source
+        text = read_indexed_source_text(source) or ""
+    else:
+        try:
+            import rag as rag_module
+            import summarize
+            path = summarize.resolve_path(source)
+            text = rag_module.load_file(path) or ""
+        except Exception as e:
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"Read error: {str(e)}")]
+            )
 
     total_chars = len(text)
     end = min(start + max_chars, total_chars)
