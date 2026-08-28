@@ -526,7 +526,8 @@ def api_mail_rescan():
         s = scan_mailboxes(verbose=False, force=force)
         emit({"type": "done", "summary": {
             "new": s["new"], "updated": s["updated"], "removed": s["removed"],
-            "unchanged": s["unchanged"], "chunks": collection.count()}})
+            "unchanged": s["unchanged"], "roots": s.get("roots", []),
+            "maildirs": s.get("maildirs", []), "chunks": collection.count()}})
     return jsonify({"job": start_job(work)})
 
 

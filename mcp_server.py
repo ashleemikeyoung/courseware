@@ -704,12 +704,16 @@ async def handle_rescan_mailboxes(arguments: dict) -> CallToolResult:
         summary = scan_mailboxes(roots=roots, verbose=False, force=force)
         lines = [
             "Mailbox rescan complete:",
+            f"  Mailbox folders scanned: {len(summary.get('maildirs', []))}",
             f"  New messages indexed:     {len(summary['new'])}",
             f"  Updated messages:         {len(summary['updated'])}",
             f"  Removed messages:         {len(summary['removed'])}",
             f"  Unchanged messages:       {len(summary['unchanged'])}",
             f"  Total chunks now:         {collection.count()}",
         ]
+        if not summary.get("maildirs"):
+            roots = ", ".join(summary.get("roots", [])) or "(none configured)"
+            lines.append(f"\nNo Maildir folders found under: {roots}")
         if summary["new"]:
             lines.append(f"\nNew messages: {', '.join(summary['new'][:20])}")
             if len(summary["new"]) > 20:

@@ -2010,7 +2010,12 @@ function runMailRescan(){
     if (ev.type === "done"){
       const s = ev.summary;
       logLine(box, `${s.new.length} new, ${s.updated.length} updated, ` +
-                   `${s.removed.length} removed. ${s.chunks} chunks indexed.`);
+                   `${s.unchanged.length} unchanged, ${s.removed.length} removed. ` +
+                   `${s.chunks} chunks indexed.`);
+      if (s.maildirs && s.maildirs.length)
+        logLine(box, `${s.maildirs.length} mailbox folder(s) scanned`);
+      else if (s.roots && s.roots.length)
+        logLine(box, `No mailbox folders found under ${s.roots.join(", ")}`, "bad");
       loadStatus();
     }
   });

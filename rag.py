@@ -1139,7 +1139,11 @@ def scan_mailboxes(roots: list = None, verbose: bool = True,
     indexed = get_indexed_sources(source_type="email")
     current = {}
     scanned_accounts = set()
-    summary = {"new": [], "updated": [], "removed": [], "unchanged": []}
+    summary = {
+        "new": [], "updated": [], "removed": [], "unchanged": [],
+        "roots": [str(root) for root in roots],
+        "maildirs": [],
+    }
 
     if not roots:
         if verbose:
@@ -1152,6 +1156,7 @@ def scan_mailboxes(roots: list = None, verbose: bool = True,
                 print(f"  [Warning] mail root does not exist: {root}")
             continue
         scanned_accounts.add(_safe_source_part(root.name, "mail"))
+        summary["maildirs"].extend(str(p) for p in _discover_maildirs(root))
         for source, source_hash, text, meta in _iter_maildir_messages(root):
             current[source] = source_hash
             if source not in indexed:
