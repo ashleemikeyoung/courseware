@@ -2008,6 +2008,53 @@ def _source_matches(source: str, words: list, question: str = "") -> int:
     return score
 
 
+EMAIL_PERSON_RE = re.compile(
+    r"\b(from|to|cc|sent by|sent from)\s+([A-Za-z0-9._%+-]+(?:\s+[A-Za-z0-9._%+-]+){0,3})",
+    re.I,
+)
+
+
+def _email_intent(question: str) -> dict:
+    lower = (question or "").lower()
+    wants_mail = any(term in lower for term in ("email", "mail", "message"))
+    fields = {}
+    for field, value in EMAIL_PERSON_RE.findall(question or ""):
+        normalized = "from" if field in {"from", "sent by", "sent from"} else field
+        name = " ".join(value.split()).strip(" .,;:!?")
+        if name:
+            fields[normalized] = name
+            wants_mail = True
+    return {"wants_mail": wants_mail, "fields": fields}
+
+
+def _email_match_score(meta: dict, question: str) -> float:
+    if _metadata_source_type(meta) != "email":
+        return 0.0
+    intent = _email_intent(question)
+    score = 0.0
+    if intent["wants_mail"]:
+        score += 1.5
+    field_map = {
+        "from": "email_from",
+        "to": "email_to",
+        "cc": "email_cc",
+    }
+    for field, value in intent["fields"].items():
+        haystack = (meta.get(field_map.get(field, "")) or "").lower()
+        terms = _terms(value)
+        if terms and all(term in haystack for term in terms):
+            score += 30.0
+        elif terms and any(term in haystack for term in terms):
+            score += 10.0
+    try:
+        dt = datetime.fromisoformat((meta.get("email_date") or "").replace("Z", "+00:00"))
+        age_days = max(0.0, (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds() / 86400)
+        score += max(0.0, 6.0 - min(age_days, 365.0) / 60.0)
+    except Exception:
+        pass
+    return score
+
+
 def _metadata_source(meta: dict) -> str:
     return meta.get("source", "")
 
@@ -2359,8 +2406,12 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
             continue
         source_score = _source_matches(source, words, question=question)
         content_score = _word_count_score(doc, words) + _phrase_score(doc, question)
+        email_score = _email_match_score(meta, question)
         if _is_reference_like(doc) and not allow_reference_chunks:
             content_score = 0
+        if email_score:
+            _add_candidate(
+                candidates, doc, meta, email_score, "email", cid)
         if source_score:
             _add_candidate(
                 candidates, doc, meta, 2.0 + source_score / 4, "source", cid)
@@ -2403,6 +2454,7 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
             "citation" in c["signals"],
             "document_registry" in c["signals"],
             "fulltext" in c["signals"],
+            "email" in c["signals"],
             "source" in c["signals"],
         ),
         reverse=True,
