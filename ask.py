@@ -228,7 +228,16 @@ DOCUMENT_METADATA_RE = re.compile(
 )
 CONTENT_SEARCH_RE = re.compile(
     r"\b(?:which|what|find|show|identify)\b.*"
-    r"\b(?:article|articles|document|documents|source|sources|file|files)\b",
+    r"\b(?:article|articles|document|documents|source|sources|file|files|"
+    r"email|emails|mail|message|messages)\b",
+    re.IGNORECASE,
+)
+EMAIL_LOOKUP_RE = re.compile(
+    r"\b(?:email|emails|mail|message|messages)\b", re.IGNORECASE
+)
+EVIDENCE_LOOKUP_RE = re.compile(
+    r"\b(?:do|does|did|can|could)\s+you\s+"
+    r"(?:see|find|locate|have|know)\b",
     re.IGNORECASE,
 )
 APP_COMMAND_RE = re.compile(
@@ -589,7 +598,9 @@ def _plan_query(question: str, context: str = "") -> dict:
     elif SUMMARIZE_RE.search(q) and _has_known_source_reference(q, context):
         intent = "document_content"
         primary = "document_store"
-    elif CONTENT_SEARCH_RE.search(q):
+    elif CONTENT_SEARCH_RE.search(q) or (
+        EMAIL_LOOKUP_RE.search(q) and EVIDENCE_LOOKUP_RE.search(q)
+    ):
         intent = "cross_document_search"
         primary = "document_store"
     elif (
@@ -618,6 +629,31 @@ def _plan_query(question: str, context: str = "") -> dict:
             "chroma_role": "passage_index_not_source_of_truth",
         },
     }
+
+
+def _retrieval_query_text(question: str, prior_user_turns: list[str] = None) -> str:
+    """
+    Keep conversational wrappers out of retrieval for email lookups.
+
+    "Do you see an email from Aurora that includes artifacts..." is a natural
+    UI question, but the extra helper words can drown out the mail header
+    signals. The original question still goes to the model; this is only the
+    search query.
+    """
+    q = question or ""
+    if EMAIL_LOOKUP_RE.search(q):
+        q = EVIDENCE_LOOKUP_RE.sub("", q)
+        q = re.sub(r"\b(?:an?|the|any)\s+(email|emails|mail|message|messages)\b",
+                   r"\1", q, flags=re.IGNORECASE)
+        q = re.sub(r"\bthat\s+(?:includes?|contains?|has|mentions?)\b",
+                   " ", q, flags=re.IGNORECASE)
+        q = re.sub(r"\b(?:please|kindly|for me|do you)\b", " ", q,
+                   flags=re.IGNORECASE)
+        q = re.sub(r"[?.!]+", " ", q)
+        q = re.sub(r"\s+", " ", q).strip()
+    pieces = [p for p in (prior_user_turns or []) if p]
+    pieces.append(q or question or "")
+    return " ".join(pieces).strip()
 
 
 def _is_coder_request(question: str) -> bool:
@@ -2304,10 +2340,12 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
         raise ValueError("messages must end with a user turn")
 
     model = model or ASK_MODEL
-    scope = projects.ALL if project == projects.ALL else (project or CURRENT_PROJECT)
     last_user = messages[-1]["content"]
     recent_context = " ".join(m.get("content", "") for m in messages[-8:])
     plan = _plan_query(last_user, recent_context)
+    scope = projects.ALL if project == projects.ALL else (project or CURRENT_PROJECT)
+    if EMAIL_LOOKUP_RE.search(last_user) and scope == projects.UNFILED:
+        scope = "email"
     requested_word_range = _requested_word_range(last_user)
 
     app_command = _answer_app_command_guard(last_user)
@@ -2454,7 +2492,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             # and keyword matching; it is never shown to the model verbatim.
             prior_user_turns = [m["content"] for m in messages[:-1]
                                 if m.get("role") == "user"][-4:]
-            query_text = " ".join(prior_user_turns + [last_user])
+            query_text = _retrieval_query_text(last_user, prior_user_turns)
             evidence = (
                 _document_reference_scan(
                     last_user, registry, project=scope,
