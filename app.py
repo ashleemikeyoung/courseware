@@ -26,7 +26,10 @@ import traceback
 import uuid
 import configparser
 from datetime import datetime
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from flask import Flask, Response, jsonify, render_template, request
 
@@ -321,6 +324,99 @@ def _write_mail_config(settings: dict):
     _set_env_value("IMAP_MAILDIR_ROOTS", str(DEFAULT_MAILDIR_ROOT))
 
 
+def _mail_source_meta(source: str) -> dict:
+    if not source.startswith("mail/"):
+        return {}
+    try:
+        data = collection.get(where={"source": source}, include=["metadatas"])
+    except Exception:
+        return {}
+    for meta in data.get("metadatas") or []:
+        if meta.get("source") == source:
+            return meta
+    return {}
+
+
+def _mail_source_path(source: str) -> Path | None:
+    meta = _mail_source_meta(source)
+    path_value = meta.get("email_local_path") or ""
+    if not path_value:
+        return None
+    try:
+        path = Path(path_value).resolve()
+        roots = [
+            Path(p.strip()).resolve()
+            for p in os.getenv("IMAP_MAILDIR_ROOTS", str(DEFAULT_MAILDIR_ROOT)).split(",")
+            if p.strip()
+        ]
+        if roots and not any(path.is_relative_to(root) for root in roots):
+            return None
+        return path if path.exists() else None
+    except Exception:
+        return None
+
+
+def _mail_attachment_items(source: str, include_payload: bool = False) -> list:
+    path = _mail_source_path(source)
+    if not path:
+        return []
+    try:
+        msg = BytesParser(policy=policy.default).parsebytes(path.read_bytes())
+    except Exception:
+        return []
+
+    items = []
+    for part_index, part in enumerate(msg.walk()):
+        if part.is_multipart():
+            continue
+        raw_filename = part.get_filename()
+        filename = raw_filename or f"attachment-{part_index}"
+        content_type = part.get_content_type() or "application/octet-stream"
+        disposition = (part.get_content_disposition() or "").lower()
+        payload = part.get_payload(decode=True)
+        if not payload:
+            continue
+        if not (raw_filename or disposition == "attachment" or content_type.startswith("image/")):
+            continue
+        item = {
+            "part": part_index,
+            "filename": filename,
+            "content_type": content_type,
+            "size": len(payload),
+            "image": content_type.startswith("image/"),
+            "url": (
+                "/api/mail/attachment"
+                f"?source={quote_plus(source)}&part={part_index}"
+            ),
+        }
+        if include_payload:
+            item["payload"] = payload
+        items.append(item)
+    return items
+
+
+def _attachments_for_evidence(evidence: dict, text: str = "") -> list:
+    seen = set()
+    attachments = []
+    cited = {
+        marker for marker in (evidence or {})
+        if not text or f"[{marker}]" in text
+    }
+    for marker, ev in (evidence or {}).items():
+        if marker not in cited:
+            continue
+        source = ev.get("source") or ""
+        if not source.startswith("mail/"):
+            continue
+        for item in _mail_attachment_items(source):
+            key = (item["filename"], item["size"])
+            if key in seen:
+                continue
+            seen.add(key)
+            attachments.append({**item, "source": source})
+    return attachments
+
+
 # ---------------------------------------------------------------------------
 # Jobs
 # ---------------------------------------------------------------------------
@@ -529,6 +625,31 @@ def api_mail_rescan():
             "unchanged": s["unchanged"], "roots": s.get("roots", []),
             "maildirs": s.get("maildirs", []), "chunks": collection.count()}})
     return jsonify({"job": start_job(work)})
+
+
+@app.get("/api/mail/attachments")
+def api_mail_attachments():
+    source = (request.args.get("source") or "").strip()
+    return jsonify({"attachments": _mail_attachment_items(source)})
+
+
+@app.get("/api/mail/attachment")
+def api_mail_attachment():
+    source = (request.args.get("source") or "").strip()
+    try:
+        part_index = int(request.args.get("part") or "-1")
+    except ValueError:
+        part_index = -1
+    for item in _mail_attachment_items(source, include_payload=True):
+        if item["part"] != part_index:
+            continue
+        payload = item.pop("payload")
+        headers = {
+            "Content-Disposition": f"inline; filename=\"{item['filename']}\"",
+            "X-Content-Type-Options": "nosniff",
+        }
+        return Response(payload, mimetype=item["content_type"], headers=headers)
+    return jsonify({"error": "attachment not found"}), 404
 
 
 # ---------------------------------------------------------------------------
@@ -855,6 +976,8 @@ def api_ask():
             messages, model, project=proj, ground=ground, turn_id=turn_id,
             on_token=lambda t: emit({"type": "token", "text": t}),
         )
+        result["attachments"] = _attachments_for_evidence(
+            result.get("evidence") or {}, result.get("text") or "")
         emit({"type": "done", **result})
 
     return jsonify({"job": start_job(work)})
