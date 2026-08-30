@@ -1704,15 +1704,39 @@ def _crossref_date_year(item: dict) -> int:
     return 0
 
 
+def _apa_author_parts(author: dict) -> tuple:
+    family = (author.get("family") or "").strip()
+    given = (author.get("given") or "").strip()
+    literal = (author.get("name") or "").strip()
+    if (not family or not given) and literal:
+        if "," in literal:
+            left, right = [part.strip() for part in literal.split(",", 1)]
+            family = family or left
+            given = given or right
+        else:
+            parts = re.findall(r"[A-Za-z][A-Za-z'-]*", literal)
+            if len(parts) >= 2:
+                family = family or parts[-1]
+                given = given or " ".join(parts[:-1])
+            elif parts:
+                family = family or parts[0]
+    return family, given
+
+
+def _apa_initials(given: str) -> str:
+    initials = []
+    for part in re.findall(r"[A-Za-z]+", given or ""):
+        if part:
+            initials.append(f"{part[0].upper()}.")
+    return " ".join(initials)
+
+
 def _crossref_author_text(authors: list, max_authors: int = 20) -> str:
     names = []
     for author in (authors or [])[:max_authors]:
-        family = (author.get("family") or "").strip()
-        given = (author.get("given") or "").strip()
+        family, given = _apa_author_parts(author)
         literal = (author.get("name") or "").strip()
-        initials = " ".join(
-            f"{part[0]}." for part in re.findall(r"[A-Za-z]+", given)
-        )
+        initials = _apa_initials(given)
         if family and initials:
             names.append(f"{family}, {initials}")
         elif family:
@@ -1730,9 +1754,9 @@ def _crossref_author_text(authors: list, max_authors: int = 20) -> str:
 
 def _crossref_citation_seed(authors: list, year: int) -> str:
     families = [
-        (author.get("family") or author.get("name") or "").strip()
+        _apa_author_parts(author)[0]
         for author in (authors or [])
-        if (author.get("family") or author.get("name") or "").strip()
+        if _apa_author_parts(author)[0]
     ]
     if not families:
         return f"(Title, {year})" if year else "(Title, n.d.)"
@@ -1762,9 +1786,9 @@ def _crossref_apa_reference(item: dict) -> str:
     date_part = f"({year})." if year else "(n.d.)."
     source = ""
     if journal:
-        source = journal
+        source = f"*{journal}*"
         if volume:
-            source += f", {volume}"
+            source += f", *{volume}*"
             if issue:
                 source += f"({issue})"
         if pages:
