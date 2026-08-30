@@ -78,6 +78,15 @@ library or, when explicitly enabled, external web search results. When you are:
   - Write in full sentences. Citation markers support specific claims; they
     are never the answer by themselves.
 
+For academic-writing revisions, preserve the user's accumulated requirements
+across turns. If the user asks for APA 7 formatting, make each body paragraph
+at least three sentences, do not begin or end a paragraph with a citation, and
+place citations inside paragraphs where they support specific claims. Do not
+fix a citation-placement problem by deleting necessary citations. Every
+reference-list entry must be cited in the body, and every body citation must
+have a matching reference. If a requested source cannot be verified from local
+or external evidence, say what is missing rather than inventing a reference.
+
 If no source material is given, or none of it is relevant, answer from your
 own knowledge. Do not cite a marker under any circumstance if no source
 material was provided."""
@@ -298,6 +307,18 @@ SOURCE_FOLLOWUP_RE = re.compile(
 SOURCE_FOLLOWUP_HINT_RE = re.compile(
     r"(?:additionally|also|another|other|that|this)\s+[^.!?]*"
     r"(?:source|article|document|file)[^.!?]*[.!?]?",
+    re.IGNORECASE,
+)
+ACADEMIC_FORMAT_RE = re.compile(
+    r"\b(?:apa\s*7|apa|references?|citations?|cite|rewrite|re-write|"
+    r"paragraphs?|peer[-\s]?reviewed)\b",
+    re.IGNORECASE,
+)
+CURRENT_SCHOLARLY_SOURCE_RE = re.compile(
+    r"\b(?:peer[-\s]?reviewed|scholarly|journal|articles?)\b.*"
+    r"\b(?:202[4-9]|newer|recent|current)\b|"
+    r"\b(?:202[4-9]|newer|recent|current)\b.*"
+    r"\b(?:peer[-\s]?reviewed|scholarly|journal|articles?)\b",
     re.IGNORECASE,
 )
 SOURCE_LOOKUP_STOPWORDS = {
@@ -2590,6 +2611,18 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                     used_external_search = True
                     improvements.append("added_external_search_for_research_mode")
             if (
+                CURRENT_SCHOLARLY_SOURCE_RE.search(last_user)
+                and _external_search_enabled()
+            ):
+                external_query = (
+                    f"{query_text} peer reviewed scholarly article 2024 2025"
+                )
+                external = _external_search_evidence(external_query, registry)
+                if external:
+                    evidence.extend(external)
+                    used_external_search = True
+                    improvements.append("added_external_search_for_current_scholarly_sources")
+            if (
                 plan["intent"] in {"cross_document_search", "document_content"}
                 and not evidence
             ):
@@ -2614,6 +2647,22 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             f"response inside that range. Do not conclude before reaching at "
             f"least {lower} words unless the user explicitly asks for a "
             "shorter answer."
+        )
+    if ACADEMIC_FORMAT_RE.search(last_user) or ACADEMIC_FORMAT_RE.search(recent_context):
+        system += (
+            "\n\nAcademic formatting reminder: preserve all earlier assignment "
+            "constraints that are still in force. For APA 7-style writing, use "
+            "body paragraphs of at least three sentences, avoid citations as "
+            "the first or final element of a paragraph, keep in-text citations "
+            "supporting the claims they belong to, and keep the reference list "
+            "and body citations in one-to-one agreement. When revising, fix the "
+            "latest user-identified defect without breaking the earlier "
+            "requirements. Do not invent author names, years, article titles, "
+            "journal names, DOIs, URLs, or peer-reviewed status. Use only "
+            "sources visible in the provided local or external evidence; if "
+            "the evidence does not verify enough sources, say which reference "
+            "requirement still needs source verification instead of fabricating "
+            "a complete reference."
         )
 
     # When there's real evidence to report, this has become a fact-reporting
