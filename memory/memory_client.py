@@ -124,6 +124,72 @@ def recent_turns(n: int = 10, project: str = None):
 
 
 # ---------------------------------------------------------------------------
+# Ask conversation state -- durable visible chat for the local web UI
+# ---------------------------------------------------------------------------
+
+def load_ask_conversation(project: str):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        result = client.execute(
+            "SELECT messages, turn_seq, updated_at, cleared_at "
+            "FROM ask_conversations WHERE project = ?",
+            [project or ""],
+        )
+        if not result.rows:
+            return {
+                "messages": [],
+                "turn_seq": 0,
+                "updated_at": None,
+                "cleared_at": None,
+            }
+        row = dict(zip(result.columns, result.rows[0]))
+        try:
+            messages = json.loads(row.get("messages") or "[]")
+        except Exception:
+            messages = []
+        return {
+            "messages": messages if isinstance(messages, list) else [],
+            "turn_seq": int(row.get("turn_seq") or 0),
+            "updated_at": row.get("updated_at"),
+            "cleared_at": row.get("cleared_at"),
+        }
+    finally:
+        client.close()
+
+
+def save_ask_conversation(project: str, messages: list, turn_seq: int = 0):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        client.execute(
+            "INSERT INTO ask_conversations "
+            "(project, messages, turn_seq, updated_at, cleared_at) "
+            "VALUES (?, ?, ?, datetime('now'), NULL) "
+            "ON CONFLICT(project) DO UPDATE SET "
+            "messages=excluded.messages, turn_seq=excluded.turn_seq, "
+            "updated_at=datetime('now'), cleared_at=NULL",
+            [project or "", json.dumps(messages or []), int(turn_seq or 0)],
+        )
+    finally:
+        client.close()
+
+
+def clear_ask_conversation(project: str):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        client.execute(
+            "INSERT INTO ask_conversations "
+            "(project, messages, turn_seq, updated_at, cleared_at) "
+            "VALUES (?, '[]', 0, datetime('now'), datetime('now')) "
+            "ON CONFLICT(project) DO UPDATE SET "
+            "messages='[]', turn_seq=0, updated_at=datetime('now'), "
+            "cleared_at=datetime('now')",
+            [project or ""],
+        )
+    finally:
+        client.close()
+
+
+# ---------------------------------------------------------------------------
 # Verified citations -- durable ground truth, independent of sessions/turns
 # and independent of whatever chroma_db's ranking does or doesn't surface.
 # See schema.sql for the reasoning. Plain module-level functions, not part

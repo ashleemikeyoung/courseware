@@ -88,10 +88,13 @@ MEMORY_AVAILABLE = False
 try:
     sys.path.insert(0, str(BASE_DIR / "memory"))
     from memory_client import (
+        clear_ask_conversation,
         get_search_criteria,
         get_setting,
         list_retrieval_misses,
+        load_ask_conversation,
         record_retrieval_miss,
+        save_ask_conversation,
         set_setting,
         upsert_search_criterion,
     )
@@ -677,6 +680,20 @@ def _memory_required():
     return jsonify({"error": "memory database is not available"}), 503
 
 
+def _clean_chat_message(message: dict) -> dict:
+    if not isinstance(message, dict):
+        return {}
+    role = message.get("role")
+    if role not in {"user", "assistant"}:
+        return {}
+    return {"role": role, "content": str(message.get("content") or "")}
+
+
+def _clean_chat_messages(messages: list) -> list:
+    cleaned = [_clean_chat_message(m) for m in (messages or [])]
+    return [m for m in cleaned if m.get("role") and m.get("content", "").strip()]
+
+
 @app.get("/api/tuning")
 def api_tuning():
     unavailable = _memory_required()
@@ -949,6 +966,41 @@ def make_outline():
 # ---------------------------------------------------------------------------
 # Draft
 # ---------------------------------------------------------------------------
+
+@app.get("/api/ask/conversation")
+def api_ask_conversation():
+    unavailable = _memory_required()
+    if unavailable:
+        return unavailable
+    proj = active()
+    return jsonify(load_ask_conversation(proj))
+
+
+@app.post("/api/ask/conversation")
+def api_save_ask_conversation():
+    unavailable = _memory_required()
+    if unavailable:
+        return unavailable
+    proj = active(request.json)
+    body = request.json or {}
+    messages = _clean_chat_messages(body.get("messages") or [])
+    try:
+        turn_seq = int(body.get("turn_seq") or 0)
+    except (TypeError, ValueError):
+        turn_seq = 0
+    save_ask_conversation(proj, messages, turn_seq=turn_seq)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/ask/conversation/clear")
+def api_clear_ask_conversation():
+    unavailable = _memory_required()
+    if unavailable:
+        return unavailable
+    proj = active(request.json)
+    clear_ask_conversation(proj)
+    return jsonify({"ok": True})
+
 
 @app.post("/api/ask")
 def api_ask():

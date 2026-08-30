@@ -327,8 +327,12 @@ PROJECT_READING_RE = re.compile(
     r"([A-Z]{2,}-\d{3})\b",
     re.IGNORECASE,
 )
+WEEK_READING_RE = re.compile(
+    r"\bweek\s+(\d{1,2})\s+(?:reading|readings?|course material|source)\b",
+    re.IGNORECASE,
+)
 PEER_REVIEWED_COUNT_RE = re.compile(
-    r"\bat least\s+(\w+|\d+)\s+peer[-\s]?reviewed\b",
+    r"\b(?:at least\s+)?(\w+|\d+)\s+peer[-\s]?reviewed\b",
     re.IGNORECASE,
 )
 _COUNT_WORDS = {
@@ -778,6 +782,11 @@ def _active_assignment_requirements(messages: list) -> list:
         requirements.append(
             f"Use at least one source from the {project_hits[-1]} reading when available."
         )
+    week_hits = [m.group(1) for m in WEEK_READING_RE.finditer(user_text)]
+    if week_hits:
+        requirements.append(
+            f"Use at least one source from the week {week_hits[-1]} reading when available."
+        )
     peer_counts = [
         _count_value(m.group(1)) for m in PEER_REVIEWED_COUNT_RE.finditer(user_text)
     ]
@@ -819,6 +828,41 @@ def _has_external_evidence(evidence: list) -> bool:
         getattr(ev, "source", "").startswith(("http://", "https://"))
         for ev in evidence or []
     )
+
+
+def _missing_current_scholarly_sources_result(requirements: list, external_allowed: bool,
+                                              improvements: list) -> dict:
+    if external_allowed:
+        reason = (
+            "I tried to look for current scholarly source evidence, but I do "
+            "not have verified 2024-or-newer peer-reviewed results available "
+            "for this turn."
+        )
+    else:
+        reason = (
+            "External search is currently off, and the local project material "
+            "does not verify the two 2024-or-newer peer-reviewed sources the "
+            "assignment asks for."
+        )
+    text = (
+        f"{reason}\n\n"
+        "To write this correctly, please either turn on external search, paste "
+        "the two peer-reviewed sources you want used, or tell me to draft with "
+        "clearly marked citation placeholders. I can use the course reading "
+        "requirement separately once the source is available in the selected "
+        "project."
+    )
+    return {
+        "text": text,
+        "evidence": {},
+        "grounded": False,
+        "passages_offered": 0,
+        "requirements": requirements,
+        "metrics": {
+            "route": "needs_verified_sources",
+            "improvements": improvements + ["paused_for_verified_current_sources"],
+        },
+    }
 
 
 def _is_coder_request(question: str) -> bool:
@@ -2633,6 +2677,9 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     evidence = []
     improvements = []
     used_external_search = False
+    external_allowed = _external_search_enabled()
+    needs_current_scholarly = _needs_current_scholarly_sources(
+        active_requirements, recent_context)
 
     use_local_evidence = ground
 
@@ -2692,7 +2739,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             if (
                 plan["intent"] in {"cross_document_search", "document_content"}
                 and not evidence
-                and _external_search_enabled()
+                and external_allowed
             ):
                 external = _external_search_evidence(query_text, registry)
                 if external:
@@ -2701,16 +2748,14 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                     improvements.append("used_external_search_after_local_exhaustion")
             if (
                 plan["intent"] == "general_qa"
-                and _external_search_enabled()
+                and external_allowed
             ):
                 external = _external_search_evidence(query_text, registry)
                 if external:
                     evidence.extend(external)
                     used_external_search = True
                     improvements.append("added_external_search_for_research_mode")
-            needs_current_scholarly = _needs_current_scholarly_sources(
-                active_requirements, recent_context)
-            if needs_current_scholarly and _external_search_enabled():
+            if needs_current_scholarly and external_allowed:
                 external_query = (
                     f"{query_text} peer reviewed scholarly article 2024 2025"
                 )
@@ -2727,6 +2772,9 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 return _insufficient_local_answer(
                     last_user, plan, scope, deep_searched=deep_searched,
                     improvements=improvements)
+            if needs_current_scholarly and not _has_external_evidence(evidence):
+                return _missing_current_scholarly_sources_result(
+                    active_requirements, external_allowed, improvements)
 
     system = CHAT_SYSTEM if ground else UNGROUNDED_CHAT_SYSTEM
     if evidence:

@@ -1556,7 +1556,10 @@ function renderBench(results, drafts){
    into one STATE.evidence map, two different turns' [C1] would otherwise be
    indistinguishable and the wrong source would surface on click. -------- */
 
-STATE.chat = { messages: [], busy: false, turnSeq: 0, history: [], histPos: null };
+STATE.chat = {
+  messages: [], busy: false, turnSeq: 0, history: [], histPos: null,
+  loadedProject: null
+};
 
 function loadAskHistory(){
   try {
@@ -1596,6 +1599,49 @@ function clearAskState(){
   renderChat();
 }
 
+async function loadAskConversation(){
+  if (!STATE.project) return;
+  try {
+    const saved = await (await fetch(qp("/api/ask/conversation"))).json();
+    STATE.chat.messages = Array.isArray(saved.messages) ? saved.messages : [];
+    STATE.chat.turnSeq = Number(saved.turn_seq || 0);
+    STATE.chat.loadedProject = STATE.project;
+    STATE.evidence = {};
+    $("#chatGlosses").innerHTML = "";
+  } catch(e){
+    STATE.chat.messages = [];
+    STATE.chat.turnSeq = 0;
+    STATE.chat.loadedProject = STATE.project;
+  }
+  renderChat();
+}
+
+async function saveAskConversation(){
+  if (!STATE.project || STATE.chat.busy) return;
+  try {
+    await fetch("/api/ask/conversation", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        project: STATE.project,
+        messages: STATE.chat.messages,
+        turn_seq: STATE.chat.turnSeq
+      })
+    });
+  } catch(e){}
+}
+
+async function clearAskConversation(){
+  if (!STATE.project) return;
+  try {
+    await fetch("/api/ask/conversation/clear", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({project: STATE.project})
+    });
+  } catch(e){}
+}
+
 function appCommand(text){
   const q = (text || "").toLowerCase().replace(/[-_]/g, " ");
   const clearHistory = /\b(clear|reset|wipe)\b.*\b(history|conversation|chat)\b/.test(q);
@@ -1628,6 +1674,7 @@ async function runAppCommand(command){
   }
   if (command === "clear_history" || command === "clear_history_reindex"){
     clearAskState();
+    await clearAskConversation();
   }
   if (command === "clear_history"){
     STATE.chat.messages.push({
@@ -1868,6 +1915,7 @@ $("#askHistory").onchange = e => {
 $("#btnClearChat").onclick = () => {
   if (STATE.chat.messages.length && !confirm("Clear this conversation?")) return;
   clearAskState();
+  clearAskConversation();
 };
 $("#contextToggle").onchange = e => {
   STATE.showContext = e.target.checked;
@@ -1928,6 +1976,7 @@ async function sendAsk(){
     pending.requirements = ev.requirements || [];
     Object.assign(STATE.evidence, ev.evidence || {});
     renderChat();
+    saveAskConversation();
   } catch(err){
     STATE.chat.messages.pop();
     STATE.chat.messages.pop();
@@ -2528,12 +2577,13 @@ async function switchProject(name){
   STATE.project = name; localStorage_set(name);
   STATE.outline = null; STATE.evidence = {};
   STATE.tuning = { criteria: [], misses: [], settings: {} };
-  STATE.chat.messages = []; STATE.chat.turnSeq = 0;
+  STATE.chat.messages = []; STATE.chat.turnSeq = 0; STATE.chat.loadedProject = null;
   $("#topic").value = ""; $("#brief").value = "";
   $("#docWrap").innerHTML = ""; $("#benchWrap").innerHTML = ""; $("#chatColumn").innerHTML = "";
   $("#chatGlosses").innerHTML = ""; renderChat();
   $("#draftlog").style.display = "none"; $("#outlog").style.display = "none";
   await loadStatus();
+  await loadAskConversation();
   if (STATE.project === "__all__"){
     STATE.outline = null; renderOutline();
     toast("Searching all projects");
@@ -2563,7 +2613,7 @@ $("#btnNewProj").onclick = async () => {
 (async () => {
   await loadProjects();
   await loadStatus();
-  renderChat();
+  await loadAskConversation();
   checkUpdateStatus();
   setInterval(checkUpdateStatus, 15000);
   if (STATE.project){

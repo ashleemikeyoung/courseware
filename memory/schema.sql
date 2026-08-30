@@ -213,6 +213,27 @@ CREATE INDEX IF NOT EXISTS idx_retrieval_misses_status
 
 
 -- ---------------------------------------------------------------------------
+-- Ask conversation state -- the durable "current chat" for the Ask tab.
+--
+-- Prompt history is just input recall. This table is the actual conversation
+-- transcript the UI should keep feeding back to ask.ask() until the user
+-- explicitly clears the chat. One row per project keeps project switching
+-- unsurprising: each selected project resumes its own last conversation.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS ask_conversations (
+    project     TEXT PRIMARY KEY,
+    messages    TEXT NOT NULL DEFAULT '[]', -- JSON array of chat messages
+    turn_seq    INTEGER NOT NULL DEFAULT 0,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    cleared_at  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_ask_conversations_updated
+    ON ask_conversations(updated_at);
+
+
+-- ---------------------------------------------------------------------------
 -- Documents -- one row per indexed source, holding an LLM-generated
 -- synopsis. This is the "context aware storage" piece: as files get
 -- ingested, a synopsis lands here so it can be checked alongside chroma_db's
