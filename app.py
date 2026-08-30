@@ -1027,6 +1027,7 @@ def api_ask():
         result = ask.ask(
             messages, model, project=proj, ground=ground, turn_id=turn_id,
             on_token=lambda t: emit({"type": "token", "text": t}),
+            external_policy="pull",
         )
         result["attachments"] = _attachments_for_evidence(
             result.get("evidence") or {}, result.get("text") or "")

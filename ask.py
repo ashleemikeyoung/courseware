@@ -331,8 +331,10 @@ WEEK_READING_RE = re.compile(
     r"\bweek\s+(\d{1,2})\s+(?:reading|readings?|course material|source)\b",
     re.IGNORECASE,
 )
+PEER_COUNT_TOKEN = r"\d+|one|two|three|four|five|six|seven|eight|nine|ten"
 PEER_REVIEWED_COUNT_RE = re.compile(
-    r"\b(?:at least\s+)?(\w+|\d+)\s+peer[-\s]?reviewed\b",
+    rf"\b(?:at least\s+)?({PEER_COUNT_TOKEN})\s+"
+    r"(?:peer[-\s]?reviewed|citations?\s+peer[-\s]?reviewed)\b",
     re.IGNORECASE,
 )
 _COUNT_WORDS = {
@@ -842,6 +844,84 @@ def _needs_external_evidence(question: str, requirements: list,
     )
 
 
+SCHOLARLY_QUERY_STOPWORDS = GENERAL_RESEARCH_STOPWORDS | {
+    "above", "apa", "begin", "briefly", "citation", "citations", "cite",
+    "considering", "consists", "define", "during", "end", "format",
+    "formatting", "identified", "include", "means", "might", "phenomenon",
+    "paragraph", "paragraphs", "provide", "references", "roughly", "section",
+    "sentences", "support", "through", "view", "week", "words", "write",
+    "researcher", "interested", "plans", "conduct", "better", "understand",
+    "have", "these", "their", "this", "with", "recently", "attend", "period",
+}
+
+
+def _scholarly_external_query(question: str, prior_user_turns: list[str] = None) -> str:
+    text = "\n".join([*(prior_user_turns or []), question or ""])
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    topic = next(
+        (p for p in paragraphs
+         if len(p.split()) >= 8
+         and not re.search(r"\b(?:APA|citations?|references?|words?)\b",
+                           p, re.IGNORECASE)),
+        text,
+    )
+    topic = re.split(
+        r"\b(?:APA|references?|citations?|cite|formatting|write|rewrite|"
+        r"provide roughly|include a proper)\b",
+        topic,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    phrases = []
+    if re.search(r"\binternational\s+students\b", topic, re.IGNORECASE):
+        phrases.extend(["international", "students"])
+    if re.search(r"\bunited\s+states\b", topic, re.IGNORECASE):
+        phrases.extend(["United", "States"])
+    if re.search(r"\bcollege\b.*\btransition\b|\btransition\b.*\bcollege\b",
+                 topic, re.IGNORECASE | re.DOTALL):
+        phrases.extend(["college", "transition"])
+    words = []
+    for word in re.findall(r"[A-Za-z][A-Za-z'-]{2,}", topic):
+        word = word.lower()
+        if len(word) < 4 or word in SCHOLARLY_QUERY_STOPWORDS:
+            continue
+        if word not in words:
+            words.append(word)
+        if len(words) >= 12:
+            break
+    if not words:
+        words = [
+            word.lower() for word in summarize.rag.meaningful_words(question or "")
+            if len(word) >= 4 and word.lower() not in SCHOLARLY_QUERY_STOPWORDS
+        ][:12]
+    terms = list(dict.fromkeys([*phrases, *words]))
+    return " ".join(terms + ["peer reviewed", "scholarly article", "2024"]).strip()
+
+
+def _external_query_text(question: str, prior_user_turns: list[str] = None,
+                         scholarly: bool = False) -> str:
+    if scholarly:
+        return _scholarly_external_query(question, prior_user_turns)
+    text = "\n".join([*(prior_user_turns or []), question or ""])
+    text = re.split(
+        r"\b(?:APA|references?|citations?|cite|formatting|write|rewrite|"
+        r"provide roughly|include a proper)\b",
+        text,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    words = []
+    for word in summarize.rag.meaningful_words(text):
+        word = word.lower()
+        if len(word) < 4 or word in SCHOLARLY_QUERY_STOPWORDS:
+            continue
+        if word not in words:
+            words.append(word)
+        if len(words) >= 14:
+            break
+    return " ".join(words) or (question or "")
+
+
 def _missing_current_scholarly_sources_result(requirements: list, external_allowed: bool,
                                               improvements: list) -> dict:
     if external_allowed:
@@ -875,6 +955,41 @@ def _missing_current_scholarly_sources_result(requirements: list, external_allow
             "improvements": improvements + ["paused_for_verified_current_sources"],
         },
     }
+
+
+def _requested_week_numbers(requirements: list) -> set:
+    weeks = set()
+    for item in requirements or []:
+        for match in re.finditer(r"\bweek\s+(\d{1,2})\b", item, re.IGNORECASE):
+            weeks.add(match.group(1))
+    return weeks
+
+
+def _prioritize_combined_evidence(evidence: list, requirements: list) -> list:
+    if not evidence:
+        return []
+    weeks = _requested_week_numbers(requirements)
+
+    def rank(ev):
+        source = (getattr(ev, "source", "") or "").lower()
+        if weeks and any(re.search(rf"/week\s*{re.escape(week)}/", source)
+                         for week in weeks):
+            return 0
+        if source.startswith(("http://", "https://")):
+            return 1
+        return 2
+
+    ordered = [
+        ev for _, ev in
+        sorted(enumerate(evidence), key=lambda item: (rank(item[1]), item[0]))
+    ]
+    if not any((getattr(ev, "source", "") or "").startswith(("http://", "https://"))
+               for ev in ordered):
+        return ordered
+    requested_week = [ev for ev in ordered if rank(ev) == 0][:4]
+    external = [ev for ev in ordered if rank(ev) == 1][:6]
+    rest = [ev for ev in ordered if rank(ev) == 2]
+    return requested_week + external + rest
 
 
 def _is_coder_request(question: str) -> bool:
@@ -1234,6 +1349,12 @@ def _external_search_enabled() -> bool:
     return value in {"1", "true", "yes", "on", "enabled"}
 
 
+def _external_search_allowed(policy: str = None) -> bool:
+    if str(policy or "").strip().lower() == "pull":
+        return True
+    return _external_search_enabled()
+
+
 def _strip_html(value: str) -> str:
     text = re.sub(r"<[^>]+>", " ", value or "")
     return " ".join(html.unescape(text).split())
@@ -1295,6 +1416,8 @@ def _external_search_evidence(question: str, registry: CitationRegistry,
             f"Title: {result.get('title') or ''}",
             f"URL: {result.get('url') or ''}",
             f"Snippet: {result.get('snippet') or ''}",
+            "Reference seed: Use the visible title and URL; do not invent "
+            "missing authors, journal issue details, or DOIs.",
         ]
         evidence.append(registry.register(
             result.get("url") or "external-search", -40, -40,
@@ -2544,7 +2667,7 @@ def _answer_app_command_guard(question: str) -> dict:
 def ask(messages: list, model: str = None, project: str = None, ground: bool = True,
         turn_id: str = None, on_token=None, echo: bool = False,
         num_ctx: int = 8192, num_predict: int = 1200,
-        temperature: float = 0.6) -> dict:
+        temperature: float = 0.6, external_policy: str = None) -> dict:
     """
     messages: full conversation so far, ending in a user turn. Each item is
       {"role": "user"|"assistant", "content": str}. The caller (the web layer)
@@ -2554,6 +2677,10 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     turn_id: an opaque string the caller supplies to make this turn's citation
       markers globally unique across a conversation (see the docstring on
       _prefix_markers below for why that matters).
+
+    external_policy: "pull" means this caller may pull external sources by
+      sending sanitized user-query text outward, but never retrieved chunks,
+      document excerpts, or email text.
 
     Returns {"text", "evidence", "grounded", "metrics"}.
     """
@@ -2621,13 +2748,14 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 metadata, last_user, plan, project=scope,
                 improvements=["used_document_registry_for_metadata"])
 
-        store_search = _answer_document_store_search(
-            last_user, recent_context, project=scope)
-        if store_search:
-            store_search["metrics"]["route"] = "document_store"
-            return _quality_finish(
-                store_search, last_user, plan, project=scope,
-                improvements=["mined_document_store_before_chroma"])
+        if str(external_policy or "").strip().lower() != "pull":
+            store_search = _answer_document_store_search(
+                last_user, recent_context, project=scope)
+            if store_search:
+                store_search["metrics"]["route"] = "document_store"
+                return _quality_finish(
+                    store_search, last_user, plan, project=scope,
+                    improvements=["mined_document_store_before_chroma"])
 
     # A direct file reference ("summarize GCU/EBSCO-FullText-07_26_2026.pdf")
     # names one specific file, not a topic -- gather_evidence() below would
@@ -2689,11 +2817,13 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     evidence = []
     improvements = []
     used_external_search = False
-    external_allowed = _external_search_enabled()
+    external_allowed = _external_search_allowed(external_policy)
     needs_current_scholarly = _needs_current_scholarly_sources(
         active_requirements, recent_context)
-    needs_external_evidence = _needs_external_evidence(
-        last_user, active_requirements, recent_context)
+    needs_external_evidence = (
+        str(external_policy or "").strip().lower() == "pull"
+        or _needs_external_evidence(last_user, active_requirements, recent_context)
+    )
 
     use_local_evidence = ground
 
@@ -2755,7 +2885,8 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 and not evidence
                 and external_allowed
             ):
-                external = _external_search_evidence(query_text, registry)
+                external = _external_search_evidence(
+                    _external_query_text(last_user, prior_user_turns), registry)
                 if external:
                     evidence = external
                     used_external_search = True
@@ -2764,7 +2895,8 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 plan["intent"] == "general_qa"
                 and external_allowed
             ):
-                external = _external_search_evidence(query_text, registry)
+                external = _external_search_evidence(
+                    _external_query_text(last_user, prior_user_turns), registry)
                 if external:
                     evidence.extend(external)
                     used_external_search = True
@@ -2774,15 +2906,15 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 and external_allowed
                 and plan["intent"] != "general_qa"
             ):
-                external = _external_search_evidence(query_text, registry)
+                external = _external_search_evidence(
+                    _external_query_text(last_user, prior_user_turns), registry)
                 if external:
                     evidence.extend(external)
                     used_external_search = True
                     improvements.append("added_external_search_for_requested_external_evidence")
             if needs_current_scholarly and external_allowed:
-                external_query = (
-                    f"{query_text} peer reviewed scholarly article 2024 2025"
-                )
+                external_query = _scholarly_external_query(
+                    last_user, prior_user_turns)
                 external = _external_search_evidence(external_query, registry)
                 if external:
                     evidence.extend(external)
@@ -2800,9 +2932,27 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 return _missing_current_scholarly_sources_result(
                     active_requirements, external_allowed, improvements)
 
+    evidence = _prioritize_combined_evidence(evidence, active_requirements)
+
     system = CHAT_SYSTEM if ground else UNGROUNDED_CHAT_SYSTEM
     if evidence:
-        system += "\n\nSource material:\n\n" + evidence_block(evidence, char_budget=10000)
+        budget = 14000 if _has_external_evidence(evidence) else 10000
+        system += "\n\nSource material:\n\n" + evidence_block(evidence, char_budget=budget)
+        if _has_external_evidence(evidence):
+            system += (
+                "\n\nCombined-source instruction: the source material above "
+                "includes both local project passages and external web search "
+                "results. Treat external search results as available source "
+                "material for this turn; do not say current outside sources "
+                "are unavailable when external entries are present. Use local "
+                "sources for course-reading requirements and external entries "
+                "for current outside-source requirements when their title, URL, "
+                "or snippet supports the claim. Do not invent bibliographic "
+                "details that are not visible in the source entries. If the "
+                "user asks for a References section, include reference entries "
+                "for the cited external sources using the visible title and "
+                "URL rather than replacing the section with a note."
+            )
     elif use_local_evidence:
         system += ("\n\nNo local project passages matched this question. "
                    "Answer from general knowledge or external search evidence "

@@ -31,7 +31,7 @@ import summarize
 # once ask.py's version was generalized -- MCP sessions (which route
 # through ask.py, not this terminal loop) got the fix, terminal sessions
 # didn't. One implementation now, so the two paths can't drift apart again.
-from ask import _reference_terms_from_context
+from ask import _reference_terms_from_context, ask as ask_with_sources
 
 # OLLAMA_URL and every *_MODEL name come from config.py -- see that
 # module's docstring. This also fixes a latent bug: the load_dotenv() this
@@ -220,6 +220,16 @@ def _recent_context_text() -> str:
         parts.append(turn["question"])
         parts.append(turn["answer"])
     return " ".join(parts)
+
+
+def _recent_chat_messages() -> list:
+    messages = []
+    for turn in _recent_turns:
+        if turn.get("question"):
+            messages.append({"role": "user", "content": turn["question"]})
+        if turn.get("answer"):
+            messages.append({"role": "assistant", "content": turn["answer"]})
+    return messages
 
 
 def cmd_incognito():
@@ -723,104 +733,33 @@ def orchestrate(user_question: str, project: str = None) -> dict:
         log_benchmark(timer)
         return direct_list
 
-    # Step 1: RAG retrieval
-    timer.start_phase("rag_retrieval")
-    context, sources, rag_stats = get_rag_context(user_question, project=project)
-    timer.end_phase(rag_stats)
-
-    if not context:
-        return {
-            "answer": (
-                "No documents are indexed yet. "
-                "Add files to the documents folder and type /rescan."
-            ),
-            "sources": [],
-            "routed_to": "none",
-            "routing_reason": "empty database",
-            "ollama_draft": None,
-            "synthesized_by": "none",
-            "timer": timer,
-        }
-
-    # Step 2: Routing
-    routing = route_question(user_question, context, timer)
-    task_type = routing.get("task_type", "direct")
-    subtask_prompt = routing.get("subtask_prompt")
-    routing_reason = routing.get("reasoning", "")
-    ollama_draft = None
-
-    print(f"[Routing as: {task_type} — {routing_reason}]", flush=True)
-
-    # Step 3: Specialist
-    if task_type == "coding" and subtask_prompt:
-        print(f"[Sending to {CODER_MODEL}...]", flush=True)
-        timer.start_phase("specialist_coding")
-        ollama_draft, metrics = ask_ollama(
-            prompt=f"Document context:\n{context}\n\nTask: {subtask_prompt}",
-            model=CODER_MODEL,
-            system="You are a coding specialist. Write clean, well-commented code. Use the provided document context where relevant. Be precise and thorough.",
-        )
-        timer.end_phase(metrics)
-
-    elif task_type == "reasoning" and subtask_prompt:
-        print(f"[Sending to {REASONING_MODEL}...]", flush=True)
-        timer.start_phase("specialist_reasoning")
-        ollama_draft, metrics = ask_ollama(
-            prompt=f"Document context:\n{context}\n\nTask: {subtask_prompt}",
-            model=REASONING_MODEL,
-            system="You are a reasoning specialist. Think through this carefully and methodically. Use the provided document context where relevant. Show your reasoning where it helps.",
-        )
-        timer.end_phase(metrics)
-
-    elif task_type == "general" and subtask_prompt:
-        print(f"[Sending to {GENERAL_MODEL}...]", flush=True)
-        timer.start_phase("specialist_general")
-        ollama_draft, metrics = ask_ollama(
-            prompt=f"Document context:\n{context}\n\nTask: {subtask_prompt}",
-            model=GENERAL_MODEL,
-            system="You are a helpful generalist assistant. Use the provided document context to complete the task accurately and clearly.",
-        )
-        timer.end_phase(metrics)
-
-    # Step 4: Synthesis
-    specialist_block = ""
-    if ollama_draft:
-        model_name = {
-            "coding": CODER_MODEL,
-            "reasoning": REASONING_MODEL,
-            "general": GENERAL_MODEL,
-        }.get(task_type, "specialist model")
-        specialist_block = f"\nWork completed by {model_name}:\n{ollama_draft}\n"
-
-    synthesis_prompt = (
-        f"Document context:\n{context}\n\n"
-        f"User question: {user_question}\n"
-        f"{specialist_block}\n"
-        "Please provide a final, complete answer. "
-        "If specialist work is included above, review it, correct anything "
-        "needed, and present the best version. "
-        "Always cite which document filename your answer came from."
+    print("[Answering with shared Ask engine: local retrieval + external pull]", flush=True)
+    timer.start_phase("ask")
+    messages = _recent_chat_messages() + [{"role": "user", "content": user_question}]
+    result = ask_with_sources(
+        messages,
+        project=project,
+        ground=True,
+        external_policy="pull",
     )
-
-    print(f"[Synthesizing with {SYNTHESIS_MODEL}...]", flush=True)
-    timer.start_phase("synthesis")
-    final_response, metrics = ask_ollama(
-        prompt=synthesis_prompt,
-        model=SYNTHESIS_MODEL,
-        system=SYNTHESIS_SYSTEM,
-    )
-    timer.end_phase(metrics)
-
-    # Log benchmark
+    metrics = result.get("metrics") or {}
+    timer.end_phase({
+        "model": metrics.get("model") or SYNTHESIS_MODEL,
+        "chunks_retrieved": result.get("passages_offered", 0),
+        "chunk_chars": sum(len(e.get("text") or "")
+                           for e in (result.get("evidence") or {}).values()),
+    })
+    sources = sorted({e.get("source") for e in (result.get("evidence") or {}).values()
+                      if e.get("source")})
     log_benchmark(timer)
 
     return {
-        "answer": final_response,
+        "answer": result["text"],
         "sources": sources,
-        "routed_to": task_type,
-        "routing_reason": routing_reason,
-        "ollama_draft": ollama_draft,
-        "synthesized_by": SYNTHESIS_MODEL,
+        "routed_to": "shared_ask",
+        "routing_reason": "app/orchestrator pull-only external policy",
+        "ollama_draft": None,
+        "synthesized_by": metrics.get("model") or "ask.ask",
         "timer": timer,
     }
 
