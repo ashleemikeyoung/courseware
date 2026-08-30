@@ -91,9 +91,12 @@ try:
         clear_ask_conversation,
         get_search_criteria,
         get_setting,
+        list_ask_conversations,
         list_retrieval_misses,
         load_ask_conversation,
+        new_ask_conversation,
         record_retrieval_miss,
+        restore_ask_conversation,
         save_ask_conversation,
         set_setting,
         upsert_search_criterion,
@@ -976,6 +979,15 @@ def api_ask_conversation():
     return jsonify(load_ask_conversation(proj))
 
 
+@app.get("/api/ask/conversations")
+def api_ask_conversations():
+    unavailable = _memory_required()
+    if unavailable:
+        return unavailable
+    proj = active()
+    return jsonify({"conversations": list_ask_conversations(proj)})
+
+
 @app.post("/api/ask/conversation")
 def api_save_ask_conversation():
     unavailable = _memory_required()
@@ -990,6 +1002,28 @@ def api_save_ask_conversation():
         turn_seq = 0
     save_ask_conversation(proj, messages, turn_seq=turn_seq)
     return jsonify({"ok": True})
+
+
+@app.post("/api/ask/conversation/new")
+def api_new_ask_conversation():
+    unavailable = _memory_required()
+    if unavailable:
+        return unavailable
+    proj = active(request.json)
+    return jsonify(new_ask_conversation(proj))
+
+
+@app.post("/api/ask/conversation/restore")
+def api_restore_ask_conversation():
+    unavailable = _memory_required()
+    if unavailable:
+        return unavailable
+    proj = active(request.json)
+    body = request.json or {}
+    restored = restore_ask_conversation(proj, int(body.get("id") or 0))
+    if restored is None:
+        return jsonify({"error": "conversation not found"}), 404
+    return jsonify(restored)
 
 
 @app.post("/api/ask/conversation/clear")

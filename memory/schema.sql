@@ -232,6 +232,19 @@ CREATE TABLE IF NOT EXISTS ask_conversations (
 CREATE INDEX IF NOT EXISTS idx_ask_conversations_updated
     ON ask_conversations(updated_at);
 
+CREATE TABLE IF NOT EXISTS ask_conversation_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project     TEXT NOT NULL,
+    title       TEXT,
+    messages    TEXT NOT NULL DEFAULT '[]',
+    turn_seq    INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    archived_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ask_conversation_history_project_time
+    ON ask_conversation_history(project, archived_at);
+
 
 -- ---------------------------------------------------------------------------
 -- Documents -- one row per indexed source, holding an LLM-generated

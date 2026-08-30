@@ -634,6 +634,8 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
       <span>Show source context</span>
     </label>
     <select id="askModel" title="Model"></select>
+    <select id="askConversationSelect" title="Saved conversations"></select>
+    <button class="btn ghost small" id="btnNewChat">New conversation</button>
     <button class="btn ghost small" id="btnClearChat">Clear conversation</button>
   </div>
 
@@ -1558,7 +1560,7 @@ function renderBench(results, drafts){
 
 STATE.chat = {
   messages: [], busy: false, turnSeq: 0, history: [], histPos: null,
-  loadedProject: null
+  loadedProject: null, conversations: []
 };
 
 function loadAskHistory(){
@@ -1613,7 +1615,30 @@ async function loadAskConversation(){
     STATE.chat.turnSeq = 0;
     STATE.chat.loadedProject = STATE.project;
   }
+  await loadAskConversationList();
   renderChat();
+}
+
+async function loadAskConversationList(){
+  const sel = $("#askConversationSelect");
+  if (!sel || !STATE.project) return;
+  sel.innerHTML = "";
+  sel.appendChild(el("option", "", "Current conversation"));
+  try {
+    const saved = await (await fetch(qp("/api/ask/conversations"))).json();
+    STATE.chat.conversations = Array.isArray(saved.conversations)
+      ? saved.conversations : [];
+  } catch(e){
+    STATE.chat.conversations = [];
+  }
+  STATE.chat.conversations.forEach(c => {
+    const title = c.title || "Untitled conversation";
+    const date = (c.archived_at || "").slice(0, 10);
+    const option = el("option", "", date ? `${title} (${date})` : title);
+    option.value = String(c.id);
+    sel.appendChild(option);
+  });
+  sel.value = "";
 }
 
 async function saveAskConversation(){
@@ -1642,12 +1667,49 @@ async function clearAskConversation(){
   } catch(e){}
 }
 
+async function newAskConversation(){
+  if (!STATE.project) return;
+  try {
+    await fetch("/api/ask/conversation/new", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({project: STATE.project})
+    });
+  } catch(e){}
+  STATE.chat.messages = [];
+  STATE.chat.turnSeq = 0;
+  STATE.evidence = {};
+  $("#chatGlosses").innerHTML = "";
+  await loadAskConversationList();
+  renderChat();
+}
+
+async function restoreAskConversation(id){
+  if (!STATE.project || !id) return;
+  try {
+    const saved = await (await fetch("/api/ask/conversation/restore", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({project: STATE.project, id})
+    })).json();
+    STATE.chat.messages = Array.isArray(saved.messages) ? saved.messages : [];
+    STATE.chat.turnSeq = Number(saved.turn_seq || 0);
+    STATE.evidence = {};
+    $("#chatGlosses").innerHTML = "";
+    renderChat();
+  } catch(e){
+    toast("Could not restore that conversation");
+  }
+}
+
 function appCommand(text){
   const q = (text || "").toLowerCase().replace(/[-_]/g, " ");
   const clearHistory = /\b(clear|reset|wipe)\b.*\b(history|conversation|chat)\b/.test(q);
+  const newConversation = /\b(new|start)\b.*\b(conversation|chat)\b/.test(q);
   const reindex = /\b(reindex|re index|rescan|scan|refresh index)\b/.test(q);
   const showArtifacts = /\b(show|display|open|view)\b.*\b(artifacts?|attachments?|images?|files?)\b/.test(q);
   if (showArtifacts && latestChatAttachments().length) return "show_attachments";
+  if (newConversation) return "new_conversation";
   if (clearHistory && reindex) return "clear_history_reindex";
   if (clearHistory) return "clear_history";
   if (reindex) return "reindex";
@@ -1667,9 +1729,14 @@ async function runAppCommand(command){
     STATE.chat.messages.push({
       role: "assistant",
       content: "Here are the artifacts attached to the cited email.",
-      attachments: latestChatAttachments()
+      attachments: latestChatAttachments(),
+      showAttachments: true
     });
     renderChat();
+    return;
+  }
+  if (command === "new_conversation"){
+    await newAskConversation();
     return;
   }
   if (command === "clear_history" || command === "clear_history_reindex"){
@@ -1819,16 +1886,9 @@ function chatBubble(m){
   bubble.innerHTML = m.role === "user"
     ? esc(m.content).replace(/\n/g, "<br>")
     : mdToHtml(m.content || "", {showCitations: STATE.showContext});
-  if (m.role === "assistant" && m.attachments && m.attachments.length)
+  if (m.role === "assistant" && m.showAttachments && m.attachments && m.attachments.length)
     bubble.appendChild(renderMailAttachments(m.attachments));
-  if (m.role === "assistant" && m.requirements && m.requirements.length)
-    bubble.appendChild(renderActiveRequirements(m.requirements));
   box.appendChild(bubble);
-  if (m.sources && m.sources.length){
-    const s = el("div", "sources qlist" + (STATE.showContext ? "" : " hidden"));
-    m.sources.forEach(c => s.appendChild(el("span", "q", c)));
-    box.appendChild(s);
-  }
   return box;
 }
 
@@ -1913,9 +1973,23 @@ $("#askHistory").onchange = e => {
   e.target.value = "";
 };
 $("#btnClearChat").onclick = () => {
-  if (STATE.chat.messages.length && !confirm("Clear this conversation?")) return;
+  if (STATE.chat.messages.length && !confirm("Delete this conversation from the current slot? Use New conversation to save it first.")) return;
   clearAskState();
   clearAskConversation();
+  loadAskConversationList();
+};
+$("#btnNewChat").onclick = async () => {
+  if (STATE.chat.busy) return;
+  await newAskConversation();
+};
+$("#askConversationSelect").onchange = async e => {
+  const id = e.target.value;
+  if (!id) return;
+  if (STATE.chat.messages.length && !confirm("Load this saved conversation into the current chat?")) {
+    e.target.value = "";
+    return;
+  }
+  await restoreAskConversation(id);
 };
 $("#contextToggle").onchange = e => {
   STATE.showContext = e.target.checked;

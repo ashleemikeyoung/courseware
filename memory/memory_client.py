@@ -173,6 +173,100 @@ def save_ask_conversation(project: str, messages: list, turn_seq: int = 0):
         client.close()
 
 
+def _ask_conversation_title(messages: list) -> str:
+    for message in messages or []:
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        title = " ".join(str(message.get("content") or "").split())
+        if title:
+            return title[:80]
+    return "Untitled conversation"
+
+
+def new_ask_conversation(project: str):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        result = client.execute(
+            "SELECT messages, turn_seq FROM ask_conversations WHERE project = ?",
+            [project or ""],
+        )
+        archived_id = None
+        if result.rows:
+            row = dict(zip(result.columns, result.rows[0]))
+            try:
+                messages = json.loads(row.get("messages") or "[]")
+            except Exception:
+                messages = []
+            messages = messages if isinstance(messages, list) else []
+            if any(str(m.get("content") or "").strip()
+                   for m in messages if isinstance(m, dict)):
+                inserted = client.execute(
+                    "INSERT INTO ask_conversation_history "
+                    "(project, title, messages, turn_seq) VALUES (?, ?, ?, ?)",
+                    [project or "", _ask_conversation_title(messages),
+                     json.dumps(messages), int(row.get("turn_seq") or 0)],
+                )
+                archived_id = inserted.last_insert_rowid
+        client.execute(
+            "INSERT INTO ask_conversations "
+            "(project, messages, turn_seq, updated_at, cleared_at) "
+            "VALUES (?, '[]', 0, datetime('now'), NULL) "
+            "ON CONFLICT(project) DO UPDATE SET "
+            "messages='[]', turn_seq=0, updated_at=datetime('now'), "
+            "cleared_at=NULL",
+            [project or ""],
+        )
+        return {"ok": True, "archived_id": archived_id}
+    finally:
+        client.close()
+
+
+def list_ask_conversations(project: str, limit: int = 30):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        result = client.execute(
+            "SELECT id, title, turn_seq, created_at, archived_at "
+            "FROM ask_conversation_history WHERE project = ? "
+            "ORDER BY archived_at DESC LIMIT ?",
+            [project or "", int(limit or 30)],
+        )
+        return [dict(zip(result.columns, row)) for row in result.rows]
+    finally:
+        client.close()
+
+
+def restore_ask_conversation(project: str, conversation_id: int):
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        result = client.execute(
+            "SELECT messages, turn_seq FROM ask_conversation_history "
+            "WHERE project = ? AND id = ?",
+            [project or "", int(conversation_id)],
+        )
+        if not result.rows:
+            return None
+        row = dict(zip(result.columns, result.rows[0]))
+        messages = row.get("messages") or "[]"
+        turn_seq = int(row.get("turn_seq") or 0)
+        client.execute(
+            "INSERT INTO ask_conversations "
+            "(project, messages, turn_seq, updated_at, cleared_at) "
+            "VALUES (?, ?, ?, datetime('now'), NULL) "
+            "ON CONFLICT(project) DO UPDATE SET "
+            "messages=excluded.messages, turn_seq=excluded.turn_seq, "
+            "updated_at=datetime('now'), cleared_at=NULL",
+            [project or "", messages, turn_seq],
+        )
+        try:
+            parsed = json.loads(messages)
+        except Exception:
+            parsed = []
+        return {"messages": parsed if isinstance(parsed, list) else [],
+                "turn_seq": turn_seq}
+    finally:
+        client.close()
+
+
 def clear_ask_conversation(project: str):
     client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
     try:

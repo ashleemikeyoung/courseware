@@ -1254,8 +1254,8 @@ def _tidy_apa_output(text: str, requirements: list) -> str:
                      r"\s*(?:\[(?:[a-z0-9]+-)?C\d+\])?\s*[.!?]?$",
                      part.strip()):
             paragraphs[i] = part.rstrip() + (
-                " This final synthesis keeps the cited support connected to "
-                "the study's qualitative purpose."
+                " This point returns the paragraph to the study's qualitative "
+                "purpose."
             )
     return "".join(paragraphs).rstrip() + refs
 
@@ -3723,6 +3723,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             # attached to a message that has nothing to do with them.
 
     text, evidence_out = _prefix_markers(text, registry, turn_id, evidence)
+    text = _tidy_apa_output(text, active_requirements)
     if not evidence_out:
         text = CITATION_ARTIFACT_RE.sub("", text)
         text = re.sub(r"\s+([.,;:!?])", r"\1", text)
