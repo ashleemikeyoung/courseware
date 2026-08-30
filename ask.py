@@ -67,11 +67,14 @@ library or, when explicitly enabled, external web search results. When you are:
   - Ground your answer in the material and cite inline with markers like
     [C1] that refer to the numbered passages given to you.
   - Use ONLY markers that were actually given to you. Never invent one.
-  - Only after considering every passage given, if none of them actually
-    answer the question, say so plainly rather than padding around it, and
-    answer from general knowledge if that's reasonable to do, clearly
-    separating the two. Don't declare the material insufficient after
-    reading just the first passage when others were also given to you.
+  - Treat local passages as preferred research context, not as a cage. Only
+    say the local material was insufficient when the user explicitly asks
+    what the local documents/emails/sources contain. For ordinary research,
+    methods, explanation, or drafting questions, use relevant source material
+    when it helps, then continue with general knowledge or external web
+    search evidence when needed.
+  - Don't declare the material insufficient after reading just the first
+    passage when others were also given to you.
   - Write in full sentences. Citation markers support specific claims; they
     are never the answer by themselves.
 
@@ -669,6 +672,35 @@ def _should_ground_with_local_evidence(question: str, plan: dict,
         or re.search(r"\b(?:documents?|files?|sources?|citations?|"
                      r"library|index|indexed|local)\b", q, re.IGNORECASE)
     )
+
+
+GENERAL_RESEARCH_STOPWORDS = {
+    "researcher", "interested", "exploring", "experiences", "experience",
+    "recently", "moved", "attend", "college", "plans", "conduct",
+    "depth", "interviews", "students", "better", "understand",
+    "challenges", "transition", "period", "study", "research",
+}
+
+
+def _filter_general_research_evidence(question: str, evidence: list) -> list:
+    if not evidence:
+        return []
+    terms = [
+        term for term in summarize.rag.meaningful_words(question)
+        if len(term) >= 4 and term not in GENERAL_RESEARCH_STOPWORDS
+    ]
+    if not terms:
+        return []
+    filtered = []
+    for ev in evidence:
+        haystack = f"{ev.source}\n{ev.text}".lower()
+        hits = sum(
+            1 for term in terms
+            if summarize.rag._term_present(haystack, term)
+        )
+        if hits >= min(2, len(terms)):
+            filtered.append(ev)
+    return filtered
 
 
 def _is_coder_request(question: str) -> bool:
@@ -2483,8 +2515,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     improvements = []
     used_external_search = False
 
-    use_local_evidence = ground and _should_ground_with_local_evidence(
-        last_user, plan, recent_context)
+    use_local_evidence = ground
 
     if use_local_evidence:
         if last_user.strip():
@@ -2518,6 +2549,11 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 + gather_evidence([query_text], registry, per_query=6,
                                   window=1, project=scope)
             )
+            if plan["intent"] == "general_qa":
+                filtered = _filter_general_research_evidence(last_user, evidence)
+                if len(filtered) != len(evidence):
+                    evidence = filtered
+                    improvements.append("filtered_weak_project_context")
             source_count = len({
                 ev.source for ev in evidence
                 if ev.source and ev.source != "document-index"
@@ -2545,6 +2581,15 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                     used_external_search = True
                     improvements.append("used_external_search_after_local_exhaustion")
             if (
+                plan["intent"] == "general_qa"
+                and _external_search_enabled()
+            ):
+                external = _external_search_evidence(query_text, registry)
+                if external:
+                    evidence.extend(external)
+                    used_external_search = True
+                    improvements.append("added_external_search_for_research_mode")
+            if (
                 plan["intent"] in {"cross_document_search", "document_content"}
                 and not evidence
             ):
@@ -2557,10 +2602,11 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     if evidence:
         system += "\n\nSource material:\n\n" + evidence_block(evidence, char_budget=10000)
     elif use_local_evidence:
-        system += ("\n\nNothing in the user's documents matched this question. "
-                   "For document-grounded questions, say plainly that the "
-                   "local documents did not provide enough evidence instead "
-                   "of presenting a guess as a sourced answer.")
+        system += ("\n\nNo local project passages matched this question. "
+                   "Answer from general knowledge or external search evidence "
+                   "when appropriate. Only refuse for lack of local evidence "
+                   "when the user explicitly asks what the local documents, "
+                   "emails, files, or sources contain.")
     if requested_word_range:
         lower, upper = requested_word_range
         system += (
