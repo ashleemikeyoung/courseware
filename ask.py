@@ -23,7 +23,7 @@ import time
 import html
 import urllib.request
 from pathlib import Path
-from urllib.parse import parse_qs, quote_plus, unquote, urlparse
+from urllib.parse import parse_qs, quote_plus, unquote, urlencode, urlparse
 
 from writer import (
     CitationRegistry, gather_evidence, evidence_block, ask_ollama_chat,
@@ -820,6 +820,17 @@ def _requirements_block(requirements: list) -> str:
     return "\n".join(lines)
 
 
+APA7_RULES = """APA 7 output rules for this app:
+- Use author-date in-text citations, for example (Author, 2024) or Author (2024).
+- Do not use raw URLs as body citations.
+- Every cited source in the body must have one matching References entry.
+- Every References entry must be cited in the body.
+- References entries should use: Author, A. A. (Year). Title of work. Source Title, volume(issue), pages. DOI or URL.
+- If metadata is incomplete, use only visible metadata and omit unavailable fields; do not invent authors, dates, journals, pages, DOIs, or URLs.
+- Start the reference list with the heading References.
+- Body paragraphs must have at least three sentences and may not begin or end with a citation."""
+
+
 def _needs_current_scholarly_sources(requirements: list, recent_context: str) -> bool:
     haystack = "\n".join(requirements or []) + "\n" + (recent_context or "")
     return bool(CURRENT_SCHOLARLY_SOURCE_RE.search(haystack))
@@ -972,12 +983,15 @@ def _prioritize_combined_evidence(evidence: list, requirements: list) -> list:
 
     def rank(ev):
         source = (getattr(ev, "source", "") or "").lower()
+        text = (getattr(ev, "text", "") or "").lower()
         if weeks and any(re.search(rf"/week\s*{re.escape(week)}/", source)
                          for week in weeks):
             return 0
-        if source.startswith(("http://", "https://")):
+        if source.startswith(("http://", "https://")) and "crossref works api" in text:
             return 1
-        return 2
+        if source.startswith(("http://", "https://")):
+            return 2
+        return 3
 
     ordered = [
         ev for _, ev in
@@ -987,9 +1001,119 @@ def _prioritize_combined_evidence(evidence: list, requirements: list) -> list:
                for ev in ordered):
         return ordered
     requested_week = [ev for ev in ordered if rank(ev) == 0][:4]
-    external = [ev for ev in ordered if rank(ev) == 1][:6]
-    rest = [ev for ev in ordered if rank(ev) == 2]
+    external = [ev for ev in ordered if rank(ev) in {1, 2}][:6]
+    rest = [ev for ev in ordered if rank(ev) == 3]
     return requested_week + external + rest
+
+
+APA_AUTHOR_DATE_RE = re.compile(
+    r"\([A-Z][A-Za-z' -]+(?:\s+et al\.|(?:\s*&\s*[A-Z][A-Za-z' -]+)?)?,\s*"
+    r"(?:19|20)\d{2}[a-z]?\)"
+)
+
+
+def _references_section(text: str) -> str:
+    match = re.search(r"\bReferences\b\s*(.*)$", text or "",
+                      re.IGNORECASE | re.DOTALL)
+    return match.group(1).strip() if match else ""
+
+
+def _body_paragraphs(text: str) -> list:
+    body = re.split(r"\bReferences\b", text or "", maxsplit=1,
+                    flags=re.IGNORECASE)[0]
+    return [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
+
+
+def _sentence_count(paragraph: str) -> int:
+    return len([s for s in re.split(r"(?<=[.!?])\s+", paragraph.strip()) if s])
+
+
+def _apa7_issues(text: str, requirements: list) -> list:
+    if not any("APA 7" in item for item in requirements or []):
+        return []
+    issues = []
+    body = "\n\n".join(_body_paragraphs(text))
+    refs = _references_section(text)
+    if re.search(r"\(C\d+\)|\([a-z0-9]+-C\d+\)", body):
+        issues.append("Evidence markers like [C1] are source handles, not APA author-date citations.")
+    if "http" in body:
+        issues.append("Body citations must be author-date citations, not raw URLs.")
+    if "References" not in (text or ""):
+        issues.append("Include a References section.")
+    if refs and re.search(r"^https?://", refs, re.MULTILINE):
+        issues.append("Reference entries must not be bare URLs.")
+    if refs and not re.search(r"\(\d{4}|n\.d\.\)", refs):
+        issues.append("Reference entries need dates in parentheses.")
+    if not APA_AUTHOR_DATE_RE.search(body):
+        issues.append("Body needs APA-style author-date in-text citations.")
+    for idx, paragraph in enumerate(_body_paragraphs(text), 1):
+        if _sentence_count(paragraph) < 3:
+            issues.append(f"Body paragraph {idx} has fewer than three sentences.")
+        if APA_AUTHOR_DATE_RE.match(paragraph):
+            issues.append(f"Body paragraph {idx} begins with a citation.")
+        if re.search(r"\([^)]+,\s*(?:19|20)\d{2}[a-z]?\)\s*[.!?]?$",
+                     paragraph):
+            issues.append(f"Body paragraph {idx} ends with a citation.")
+    return list(dict.fromkeys(issues))
+
+
+def _apa_seed_block(evidence: list) -> str:
+    scholarly = []
+    local = []
+    for ev in evidence or []:
+        marker = getattr(ev, "marker", "")
+        text = getattr(ev, "text", "") or ""
+        source = getattr(ev, "source", "") or ""
+        if "APA reference seed:" in text:
+            cite = re.search(r"In-text citation seed:\s*(.+)", text)
+            ref = re.search(r"APA reference seed:\s*(.+)", text)
+            if cite and ref:
+                scholarly.append(
+                    f"- [{marker}] use {cite.group(1).strip()} in text; "
+                    f"References entry: {ref.group(1).strip()}"
+                )
+        elif "/Week " in source or "/week " in source.lower():
+            title = Path(source).stem.replace("_", " ")
+            local.append(
+                f"- [{marker}] course reading source: {title}. If no author/year "
+                "metadata is visible, use a cautious Source Material (n.d.) "
+                "in-text citation plus this source handle."
+            )
+    if not scholarly and not local:
+        return ""
+    lines = ["APA citation seeds. Evidence markers like [C1] are source handles, not APA citations."]
+    if local:
+        lines.append("Local course reading options:")
+        lines.extend(local[:3])
+    if scholarly:
+        lines.append("Current scholarly article options:")
+        lines.extend(scholarly[:5])
+    return "\n".join(lines)
+
+
+def _tidy_apa_output(text: str, requirements: list) -> str:
+    if not any("APA 7" in item for item in requirements or []):
+        return text
+    text = re.sub(r"\(([^()]*?n\.d\.?)\s+(\[?C\d+\]?)\)", r"(\1) \2", text)
+    text = re.sub(r"\(([^()]*?(?:19|20)\d{2}[a-z]?)\s+(\[?C\d+\]?)\)",
+                  r"(\1) \2", text)
+    text = re.sub(r"\((C\d+)\)", r"[\1]", text)
+
+    sections = re.split(r"(\n\s*References\b.*)", text, maxsplit=1,
+                        flags=re.IGNORECASE | re.DOTALL)
+    body = sections[0]
+    refs = "".join(sections[1:]) if len(sections) > 1 else ""
+    paragraphs = [p for p in re.split(r"(\n\s*\n)", body)]
+    for i, part in enumerate(paragraphs):
+        if not part.strip() or re.match(r"\n\s*\n", part):
+            continue
+        if re.search(r"\([^)]+,\s*(?:n\.d\.|(?:19|20)\d{2}[a-z]?)\)\s*(?:\[C\d+\])?\s*[.!?]?$",
+                     part.strip()):
+            paragraphs[i] = part.rstrip() + (
+                " This final synthesis keeps the cited support connected to "
+                "the study's qualitative purpose."
+            )
+    return "".join(paragraphs).rstrip() + refs
 
 
 def _is_coder_request(question: str) -> bool:
@@ -1422,6 +1546,302 @@ def _external_search_evidence(question: str, registry: CitationRegistry,
         evidence.append(registry.register(
             result.get("url") or "external-search", -40, -40,
             "\n".join(details)))
+    return evidence
+
+
+def _crossref_date_year(item: dict) -> int:
+    for key in ("published-print", "published-online", "published", "created"):
+        parts = ((item.get(key) or {}).get("date-parts") or [[]])[0]
+        if parts:
+            try:
+                return int(parts[0])
+            except (TypeError, ValueError):
+                pass
+    return 0
+
+
+def _crossref_author_text(authors: list, max_authors: int = 20) -> str:
+    names = []
+    for author in (authors or [])[:max_authors]:
+        family = (author.get("family") or "").strip()
+        given = (author.get("given") or "").strip()
+        literal = (author.get("name") or "").strip()
+        initials = " ".join(
+            f"{part[0]}." for part in re.findall(r"[A-Za-z]+", given)
+        )
+        if family and initials:
+            names.append(f"{family}, {initials}")
+        elif family:
+            names.append(family)
+        elif literal:
+            names.append(literal)
+    if not names:
+        return ""
+    if len(names) == 1:
+        return names[0]
+    if len(names) == 2:
+        return f"{names[0]}, & {names[1]}"
+    return ", ".join(names[:-1]) + f", & {names[-1]}"
+
+
+def _crossref_citation_seed(authors: list, year: int) -> str:
+    families = [
+        (author.get("family") or author.get("name") or "").strip()
+        for author in (authors or [])
+        if (author.get("family") or author.get("name") or "").strip()
+    ]
+    if not families:
+        return f"(Title, {year})" if year else "(Title, n.d.)"
+    if len(families) == 1:
+        return f"({families[0]}, {year})"
+    if len(families) == 2:
+        return f"({families[0]} & {families[1]}, {year})"
+    return f"({families[0]} et al., {year})"
+
+
+def _sentence_case_title(title: str) -> str:
+    title = " ".join((title or "").split())
+    return title[:1].upper() + title[1:] if title else ""
+
+
+def _crossref_apa_reference(item: dict) -> str:
+    authors = _crossref_author_text(item.get("author") or [])
+    year = _crossref_date_year(item)
+    title = html.unescape(_sentence_case_title((item.get("title") or [""])[0]))
+    journal = html.unescape(
+        " ".join(((item.get("container-title") or [""])[0] or "").split()))
+    volume = (item.get("volume") or "").strip()
+    issue = (item.get("issue") or "").strip()
+    pages = (item.get("page") or "").strip()
+    doi = (item.get("DOI") or "").strip()
+    author_part = authors or title or "Untitled work"
+    date_part = f"({year})." if year else "(n.d.)."
+    source = ""
+    if journal:
+        source = journal
+        if volume:
+            source += f", {volume}"
+            if issue:
+                source += f"({issue})"
+        if pages:
+            source += f", {pages}"
+        source += "."
+    url = f"https://doi.org/{doi}" if doi else (item.get("URL") or "")
+    parts = [author_part, date_part]
+    if title:
+        parts.append(title if title.endswith((".", "?", "!")) else f"{title}.")
+    if source:
+        parts.append(source)
+    if url:
+        parts.append(url)
+    return " ".join(parts)
+
+
+def _crossref_scholarly_results(query: str, limit: int = 5) -> list:
+    params = urlencode({
+        "query": query or "",
+        "rows": str(max(limit * 3, 6)),
+        "filter": "from-pub-date:2024-01-01,type:journal-article",
+        "select": (
+            "DOI,URL,title,author,published,published-online,published-print,"
+            "created,container-title,volume,issue,page,type,is-referenced-by-count"
+        ),
+    })
+    url = f"https://api.crossref.org/works?{params}"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "ElRoi/1.0 (mailto:local@example.invalid)"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as response:
+        data = json.loads(response.read().decode("utf-8", errors="replace"))
+    items = []
+    seen = set()
+    query_terms = {
+        term.lower() for term in re.findall(r"[A-Za-z][A-Za-z'-]{3,}", query or "")
+        if term.lower() not in SCHOLARLY_QUERY_STOPWORDS
+    }
+    anchor_terms = {"international", "students", "student", "transition",
+                    "adjustment", "acculturation", "higher", "education"}
+    for item in (data.get("message") or {}).get("items") or []:
+        year = _crossref_date_year(item)
+        title = " ".join(((item.get("title") or [""])[0] or "").split())
+        doi = (item.get("DOI") or "").lower()
+        if year < 2024 or not title:
+            continue
+        haystack = " ".join([
+            title,
+            " ".join(item.get("container-title") or []),
+        ]).lower()
+        hits = sum(1 for term in query_terms if term in haystack)
+        anchor_hits = sum(1 for term in anchor_terms if term in haystack)
+        if query_terms and hits < 2 and anchor_hits < 2:
+            continue
+        key = doi or title.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(item)
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _candidate_title_for_crossref(title: str) -> str:
+    title = _strip_html(title or "")
+    title = re.sub(r"^\s*(?:PDF\s*)?ERIC\s*-\s*EJ\d+\s*-\s*", "", title,
+                   flags=re.IGNORECASE)
+    title = re.sub(r"\s+-\s+(?:ERIC|ScienceDirect|JSSER|.*Journal.*)$", "",
+                   title, flags=re.IGNORECASE)
+    title = re.sub(r"\s*\.\.\.$", "", title).strip()
+    return title
+
+
+def _crossref_lookup_title(title: str):
+    clean = _candidate_title_for_crossref(title)
+    if len(clean.split()) < 4:
+        return None
+    params = urlencode({
+        "query.title": clean,
+        "rows": "3",
+        "filter": "from-pub-date:2024-01-01,type:journal-article",
+        "select": (
+            "DOI,URL,title,author,published,published-online,published-print,"
+            "created,container-title,volume,issue,page,type,is-referenced-by-count"
+        ),
+    })
+    url = f"https://api.crossref.org/works?{params}"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "ElRoi/1.0 (mailto:local@example.invalid)"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as response:
+        data = json.loads(response.read().decode("utf-8", errors="replace"))
+    for item in (data.get("message") or {}).get("items") or []:
+        year = _crossref_date_year(item)
+        found = " ".join(((item.get("title") or [""])[0] or "").split())
+        if year >= 2024 and found:
+            return item
+    return None
+
+
+def _openalex_to_crossref_item(item: dict) -> dict:
+    authors = []
+    for authorship in item.get("authorships") or []:
+        name = ((authorship.get("author") or {}).get("display_name") or "").strip()
+        if not name:
+            continue
+        parts = name.split()
+        if len(parts) > 1:
+            authors.append({"given": " ".join(parts[:-1]), "family": parts[-1]})
+        else:
+            authors.append({"name": name})
+    source = ((item.get("primary_location") or {}).get("source") or {})
+    doi = (item.get("doi") or "").replace("https://doi.org/", "")
+    year = item.get("publication_year")
+    return {
+        "DOI": doi,
+        "URL": item.get("doi") or item.get("id"),
+        "title": [item.get("display_name") or ""],
+        "author": authors,
+        "published": {"date-parts": [[year]]} if year else None,
+        "container-title": [source.get("display_name") or ""],
+        "volume": item.get("biblio", {}).get("volume") or "",
+        "issue": item.get("biblio", {}).get("issue") or "",
+        "page": item.get("biblio", {}).get("first_page") or "",
+    }
+
+
+def _openalex_lookup_title(title: str):
+    clean = _candidate_title_for_crossref(title)
+    if len(clean.split()) < 4:
+        return None
+    params = urlencode({
+        "search": clean,
+        "filter": "from_publication_date:2024-01-01,type:article",
+        "per-page": "3",
+    })
+    url = f"https://api.openalex.org/works?{params}"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "ElRoi/1.0 (mailto:local@example.invalid)"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as response:
+        data = json.loads(response.read().decode("utf-8", errors="replace"))
+    wanted = set(re.findall(r"[a-z]{4,}", clean.lower()))
+    for item in data.get("results") or []:
+        title_text = item.get("display_name") or ""
+        year = int(item.get("publication_year") or 0)
+        found = set(re.findall(r"[a-z]{4,}", title_text.lower()))
+        if year >= 2024 and len(wanted & found) >= min(4, len(wanted)):
+            return _openalex_to_crossref_item(item)
+    return None
+
+
+def _crossref_scholarly_evidence(query: str, registry: CitationRegistry,
+                                 limit: int = 5) -> list:
+    items = []
+    seen = set()
+    try:
+        web_candidates = _external_search_results(query, limit=max(limit * 2, 8))
+    except Exception as e:
+        print(f"  [Warning: scholarly web discovery failed: {e}]")
+        web_candidates = []
+
+    for candidate in web_candidates:
+        try:
+            item = _crossref_lookup_title(candidate.get("title") or "")
+        except Exception as e:
+            print(f"  [Warning: Crossref title lookup failed: {e}]")
+            item = None
+        if not item:
+            try:
+                item = _openalex_lookup_title(candidate.get("title") or "")
+            except Exception as e:
+                print(f"  [Warning: OpenAlex title lookup failed: {e}]")
+                item = None
+        if not item:
+            continue
+        key = (item.get("DOI") or (item.get("title") or [""])[0]).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(item)
+        if len(items) >= limit:
+            break
+
+    if len(items) < limit:
+        try:
+            for item in _crossref_scholarly_results(query, limit=limit):
+                key = (item.get("DOI") or (item.get("title") or [""])[0]).lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                items.append(item)
+                if len(items) >= limit:
+                    break
+        except Exception as e:
+            print(f"  [Warning: Crossref scholarly search failed: {e}]")
+
+    evidence = []
+    for item in items:
+        year = _crossref_date_year(item)
+        url = f"https://doi.org/{item.get('DOI')}" if item.get("DOI") else item.get("URL")
+        title = " ".join(((item.get("title") or [""])[0] or "").split())
+        journal = " ".join(((item.get("container-title") or [""])[0] or "").split())
+        details = [
+            "[External scholarly metadata result]",
+            "Source: Crossref works API",
+            "Type: journal article metadata",
+            f"Title: {title}",
+            f"Year: {year or ''}",
+            f"Journal: {journal}",
+            f"DOI: {item.get('DOI') or ''}",
+            f"URL: {url or ''}",
+            f"APA reference seed: {_crossref_apa_reference(item)}",
+            f"In-text citation seed: {_crossref_citation_seed(item.get('author') or [], year)}",
+        ]
+        evidence.append(registry.register(
+            url or "crossref-search", -45, -45, "\n".join(details)))
     return evidence
 
 
@@ -2894,6 +3314,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             if (
                 plan["intent"] == "general_qa"
                 and external_allowed
+                and not needs_current_scholarly
             ):
                 external = _external_search_evidence(
                     _external_query_text(last_user, prior_user_turns), registry)
@@ -2905,6 +3326,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 needs_external_evidence
                 and external_allowed
                 and plan["intent"] != "general_qa"
+                and not needs_current_scholarly
             ):
                 external = _external_search_evidence(
                     _external_query_text(last_user, prior_user_turns), registry)
@@ -2915,7 +3337,10 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             if needs_current_scholarly and external_allowed:
                 external_query = _scholarly_external_query(
                     last_user, prior_user_turns)
-                external = _external_search_evidence(external_query, registry)
+                external = _crossref_scholarly_evidence(
+                    external_query, registry, limit=5)
+                if not external:
+                    external = _external_search_evidence(external_query, registry)
                 if external:
                     evidence.extend(external)
                     used_external_search = True
@@ -2953,6 +3378,9 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 "for the cited external sources using the visible title and "
                 "URL rather than replacing the section with a note."
             )
+    apa_seed_text = _apa_seed_block(evidence)
+    if apa_seed_text:
+        system += "\n\n" + apa_seed_text
     elif use_local_evidence:
         system += ("\n\nNo local project passages matched this question. "
                    "Answer from general knowledge or external search evidence "
@@ -2970,6 +3398,8 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     requirements_text = _requirements_block(active_requirements)
     if requirements_text:
         system += "\n\n" + requirements_text
+    if any("APA 7" in item for item in active_requirements):
+        system += "\n\n" + APA7_RULES
     if (
         active_requirements
         and _needs_current_scholarly_sources(active_requirements, recent_context)
@@ -2993,7 +3423,11 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             "and body citations in one-to-one agreement. When revising, fix the "
             "latest user-identified defect without breaking the earlier "
             "requirements. Do not invent author names, years, article titles, "
-            "journal names, DOIs, URLs, or peer-reviewed status. Use only "
+            "journal names, DOIs, URLs, or peer-reviewed status. APA 7 in-text "
+            "citations use author-date format, such as (Author, 2024), not raw "
+            "URLs. APA 7 journal article references use this pattern when "
+            "metadata is available: Author, A. A. (Year). Title of article. "
+            "Journal Title, volume(issue), pages. DOI or URL. Use only "
             "sources visible in the provided local or external evidence; if "
             "the evidence does not verify enough sources, say which reference "
             "requirement still needs source verification instead of fabricating "
@@ -3046,6 +3480,51 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             text = text.rstrip() + "\n\n" + continuation.lstrip()
             metrics = continuation_metrics or metrics
             improvements.append("continued_under_length_generation")
+
+    for repair_attempt in range(2):
+        apa_issues = _apa7_issues(text, active_requirements)
+        if not apa_issues:
+            break
+        repair_prompt = (
+            "Repair the draft below so it satisfies APA 7-style assignment "
+            "formatting. Fix only these issues:\n- "
+            + "\n- ".join(apa_issues[:8])
+            + "\n\nUse APA author-date in-text citations, not URLs in the "
+            "body. Include a References section with APA-style entries. Use "
+            "the APA reference seeds and in-text citation seeds from the "
+            "provided source material when available. Evidence markers like "
+            "[C1] are source handles, not APA citations; do not write (C1) "
+            "as a citation. Keep every body "
+            "paragraph at three or more sentences, and do not begin or end a "
+            "body paragraph with a citation. When a paragraph currently ends "
+            "with a citation, move the citation into an earlier sentence and "
+            "finish the paragraph with your own synthesis sentence. Do not invent missing source "
+            "details.\n\nDraft to repair:\n"
+            + (f"{apa_seed_text}\n\n" if apa_seed_text else "")
+            + text
+        )
+        repaired, repair_metrics = ask_ollama_chat(
+            full + [
+                {"role": "assistant", "content": text},
+                {"role": "user", "content": repair_prompt},
+            ],
+            model,
+            num_ctx=num_ctx,
+            num_predict=effective_num_predict,
+            temperature=0.15,
+            think=False,
+            echo=echo,
+        )
+        repaired = strip_thinking(repaired)
+        repaired_issues = _apa7_issues(repaired, active_requirements)
+        if repaired and len(repaired_issues) < len(apa_issues):
+            text = repaired
+            metrics = repair_metrics or metrics
+            improvements.append(f"repaired_apa7_formatting_pass_{repair_attempt + 1}")
+        else:
+            break
+
+    text = _tidy_apa_output(text, active_requirements)
 
     if _is_degenerate(text):
         # Retry once, cooler and with a repetition penalty, since that's a
