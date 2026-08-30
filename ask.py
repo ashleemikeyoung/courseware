@@ -656,6 +656,21 @@ def _retrieval_query_text(question: str, prior_user_turns: list[str] = None) -> 
     return " ".join(pieces).strip()
 
 
+def _should_ground_with_local_evidence(question: str, plan: dict,
+                                       context: str = "") -> bool:
+    intent = plan.get("intent")
+    if intent != "general_qa":
+        return True
+    q = question or ""
+    return bool(
+        EMAIL_LOOKUP_RE.search(q)
+        or CONTENT_SEARCH_RE.search(q)
+        or _has_known_source_reference(q, context)
+        or re.search(r"\b(?:documents?|files?|sources?|citations?|"
+                     r"library|index|indexed|local)\b", q, re.IGNORECASE)
+    )
+
+
 def _is_coder_request(question: str) -> bool:
     return bool(
         CODER_REQUEST_RE.search(question or "")
@@ -2468,7 +2483,10 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     improvements = []
     used_external_search = False
 
-    if ground:
+    use_local_evidence = ground and _should_ground_with_local_evidence(
+        last_user, plan, recent_context)
+
+    if use_local_evidence:
         if last_user.strip():
             # Fold in a short run of RECENT user turns, not just the single
             # immediately-preceding one. One-turn fold-in breaks down
@@ -2538,7 +2556,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     system = CHAT_SYSTEM if ground else UNGROUNDED_CHAT_SYSTEM
     if evidence:
         system += "\n\nSource material:\n\n" + evidence_block(evidence, char_budget=10000)
-    elif ground:
+    elif use_local_evidence:
         system += ("\n\nNothing in the user's documents matched this question. "
                    "For document-grounded questions, say plainly that the "
                    "local documents did not provide enough evidence instead "
@@ -2627,6 +2645,10 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             # attached to a message that has nothing to do with them.
 
     text, evidence_out = _prefix_markers(text, registry, turn_id)
+    if not evidence_out:
+        text = CITATION_ARTIFACT_RE.sub("", text)
+        text = re.sub(r"\s+([.,;:!?])", r"\1", text)
+        text = re.sub(r"[ \t]{2,}", " ", text).strip()
 
     result = {"text": text, "evidence": evidence_out, "grounded": bool(evidence),
               "passages_offered": len(evidence), "metrics": metrics}
