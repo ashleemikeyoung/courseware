@@ -830,6 +830,18 @@ def _has_external_evidence(evidence: list) -> bool:
     )
 
 
+def _needs_external_evidence(question: str, requirements: list,
+                             recent_context: str) -> bool:
+    haystack = (question or "") + "\n" + (recent_context or "")
+    return bool(
+        WEB_SEARCH_RE.search(haystack)
+        or re.search(r"\b(?:outside|external|current|recent|newer)\s+"
+                     r"(?:sources?|references?|citations?|articles?)\b",
+                     haystack, re.IGNORECASE)
+        or _needs_current_scholarly_sources(requirements, recent_context)
+    )
+
+
 def _missing_current_scholarly_sources_result(requirements: list, external_allowed: bool,
                                               improvements: list) -> dict:
     if external_allowed:
@@ -2680,6 +2692,8 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     external_allowed = _external_search_enabled()
     needs_current_scholarly = _needs_current_scholarly_sources(
         active_requirements, recent_context)
+    needs_external_evidence = _needs_external_evidence(
+        last_user, active_requirements, recent_context)
 
     use_local_evidence = ground
 
@@ -2755,6 +2769,16 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                     evidence.extend(external)
                     used_external_search = True
                     improvements.append("added_external_search_for_research_mode")
+            if (
+                needs_external_evidence
+                and external_allowed
+                and plan["intent"] != "general_qa"
+            ):
+                external = _external_search_evidence(query_text, registry)
+                if external:
+                    evidence.extend(external)
+                    used_external_search = True
+                    improvements.append("added_external_search_for_requested_external_evidence")
             if needs_current_scholarly and external_allowed:
                 external_query = (
                     f"{query_text} peer reviewed scholarly article 2024 2025"
