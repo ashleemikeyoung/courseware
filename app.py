@@ -41,6 +41,7 @@ import summarize
 import projects
 import updater
 from writer import BASE_DIR, collection
+from memory_client import list_needs_review, flag_query_quality_event
 
 app = Flask(__name__, static_folder=str(BASE_DIR / "static"))
 # Jinja ties template auto-reload to app.debug by default, and debug stays
@@ -1068,6 +1069,45 @@ def api_ask():
         emit({"type": "done", **result})
 
     return jsonify({"job": start_job(work)})
+
+
+@app.get("/api/review")
+def api_review():
+    """
+    DMAIC "Control", surfaced in the same screen as Ask instead of a
+    separate terminal process (orchestrator.py's /review). Scoped to the
+    active project the same way every other GET here is, via active().
+    """
+    proj = active(request.args)
+    project_filter = None if proj == projects.ALL else proj
+    try:
+        items = list_needs_review(limit=50, project=project_filter)
+    except Exception as e:
+        return jsonify({"error": f"review queue unavailable: {e}"}), 503
+    return jsonify({"items": items})
+
+
+@app.post("/api/flag")
+def api_flag():
+    """
+    Manual flag switch for the Ask tab -- the web equivalent of
+    orchestrator.py's /flag, but against query_quality_events (see
+    memory_client.flag_query_quality_event's docstring for why: ask.ask()
+    never writes to the `turns` table /flag was built for). event_id is
+    the id ask.ask() already hands back in metrics.dmaic.event_id.
+    """
+    body = request.json or {}
+    event_id = body.get("event_id")
+    if not event_id:
+        return jsonify({"error": "event_id required"}), 400
+    notes = (body.get("notes") or "").strip() or None
+    try:
+        flagged = flag_query_quality_event(event_id, notes)
+    except Exception as e:
+        return jsonify({"error": f"could not flag: {e}"}), 503
+    if not flagged:
+        return jsonify({"error": "no matching event"}), 404
+    return jsonify({"ok": True})
 
 
 @app.post("/api/summarize")

@@ -79,7 +79,9 @@ except ImportError:
 # ~/Development/RAG/memory/README.md for what this stores and why it's kept
 # separate from chroma_db.
 sys.path.insert(0, str(BASE_DIR / "memory"))
-from memory_client import start_session, pii_redaction_enabled, find_citation
+from memory_client import (
+    start_session, pii_redaction_enabled, find_citation, record_query_quality,
+)
 
 # pii.py sits at RAG root, same place writer.py itself runs from -- no extra
 # sys.path entry needed. Not wrapped in try/except: if Presidio isn't
@@ -962,6 +964,47 @@ def write_document(topic: str, brief: str = "", outline: dict = None,
             )
         except Exception as e:
             print(f"  [Warning: could not log document/quality to memory-db: {e}]")
+
+        # DMAIC "Analyze"/"Control" for the draft path, same shape and same
+        # query_quality_events table ask.py's chat path writes to (see
+        # _detect_response_defects there) -- one review queue for both, not
+        # a second one just because this module drafts instead of chats.
+        # Thresholds mirror quality.py's own composite() bands: any
+        # fabricated marker, or a length ratio more than 30% off target, or
+        # a quality.py format flag, is worth a human look.
+        bug_types = []
+        if report.get("fabricated_count"):
+            bug_types.append("fabricated_citation")
+        if report.get("flags"):
+            bug_types.append("format_flags")
+        length_ratio = report.get("length_ratio")
+        if length_ratio is not None and abs(1 - length_ratio) > 0.3:
+            bug_types.append("length_drift")
+        try:
+            record_query_quality(
+                project=project,
+                question=topic,
+                intent="draft",
+                define={
+                    "target_words": sum(
+                        int(s.get("target_words", 700))
+                        for s in outline["sections"]
+                    ),
+                    "sections": len(sections),
+                },
+                measure={
+                    "words": report.get("words"),
+                    "grounding": report.get("grounding"),
+                    "distinct_3": report.get("distinct_3"),
+                    "cross_section_overlap": report.get("cross_section_overlap"),
+                    "quality_score": report.get("quality_score"),
+                },
+                analyze={"bug_types": bug_types, "needs_review": bool(bug_types)},
+                improve={},
+                control={"needs_review": bool(bug_types), "bug_types": bug_types},
+            )
+        except Exception as e:
+            print(f"  [Warning: could not log draft DMAIC event to memory-db: {e}]")
         finally:
             session.close()
 

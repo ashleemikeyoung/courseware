@@ -38,6 +38,7 @@ from writer import (
 from config import ASK_MODEL
 import coder
 import projects
+import quality
 import redactor
 import summarize
 
@@ -1079,6 +1080,58 @@ def _apa7_issues(text: str, requirements: list) -> list:
     return list(dict.fromkeys(issues))
 
 
+# ---------------------------------------------------------------------------
+# DMAIC "Measure"/"Analyze" for response defects, generic across modules.
+#
+# APA7 formatting was the first defect type found in the wild (2026-08-30:
+# garbled nested citations and duplicated boilerplate closers -- see
+# ask.py.bak-*-citationfix). Written so the NEXT module's failure mode is one
+# more entry here, not a second parallel monitoring pipeline: add a check,
+# append to bug_types, and it shows up in every turn's query_quality_events
+# row (see _quality_finish) and in orchestrator.py's /review.
+# ---------------------------------------------------------------------------
+
+# format_flags() also reports "no_h2_heading", which is correct for
+# writer.py's long-form sections but not for ordinary chat answers -- a
+# normal reply has no reason to open with "##". Only the flags that are
+# genuinely wrong in any context are treated as chat defects.
+_CHAT_DEFECT_FORMAT_FLAGS = {
+    "leaked_thinking", "stray_code_fence", "placeholder_citation",
+    "preamble_or_meta",
+}
+
+
+def _detect_response_defects(text: str, requirements: list,
+                             degenerate_unrecovered: bool = False) -> dict:
+    """
+    Define: a chat response is defective if it violates an explicit
+    formatting requirement (APA7 rules), leaks scaffolding (thinking tags,
+    stray code fences, placeholder citations, meta-preamble), or the
+    degenerate-output retry never recovered.
+
+    Returns a dict meant to be passed as _quality_finish's `analysis` kwarg,
+    which folds "bug_types" into the DMAIC "analyze"/"control" stages and
+    triggers control.needs_review for orchestrator.py's /review command.
+    """
+    bug_types = []
+    apa_issues = _apa7_issues(text, requirements)
+    if apa_issues:
+        bug_types.append("apa7_formatting")
+    format_flags = sorted(
+        f for f in quality.format_flags(text) if f in _CHAT_DEFECT_FORMAT_FLAGS
+    )
+    if format_flags:
+        bug_types.append("format_flags")
+    if degenerate_unrecovered:
+        bug_types.append("degenerate_output")
+    return {
+        "apa_issues": apa_issues,
+        "format_flags": format_flags,
+        "degenerate_unrecovered": degenerate_unrecovered,
+        "bug_types": bug_types,
+    }
+
+
 def _apa_seed_block(evidence: list) -> str:
     scholarly = []
     local = []
@@ -1222,16 +1275,33 @@ def _ensure_apa_in_text_citations(text: str, requirements: list,
         if len(sentences) < 2:
             continue
         candidates = range(0, max(1, len(sentences) - 1))
-        target_idx = next(
-            (idx for idx in candidates
-             if not APA_AUTHOR_DATE_RE.search(sentences[idx])),
-            0 if len(sentences) == 2 else min(1, len(sentences) - 2))
+        clean_candidates = [
+            idx for idx in candidates
+            if not APA_AUTHOR_DATE_RE.search(sentences[idx])
+        ]
+        if not clean_candidates:
+            # Every eligible sentence already carries a citation. Falling
+            # back to one of them would nest the new citation inside or
+            # against the existing one (e.g. turning "(Source Material,
+            # n.d.)" into the garbled "(Source Material, n.d (Soltani,
+            # 2024).)"), so skip this paragraph instead of corrupting it.
+            continue
+        target_idx = clean_candidates[0]
         citation, marker = seed_iter[seed_index]
         sentences[target_idx] = _insert_citation_before_period(
             sentences[target_idx], citation, marker)
         paragraphs[i] = " ".join(sentences)
         seed_index += 1
     return "".join(paragraphs).rstrip() + refs
+
+
+_APA_PARAGRAPH_CLOSERS = [
+    "The implications of this point for the broader research design are "
+    "discussed next.",
+    "This detail shapes how the remaining considerations should be read.",
+    "The next paragraph builds directly on that idea.",
+    "That distinction matters for how the rest of this analysis proceeds.",
+]
 
 
 def _tidy_apa_output(text: str, requirements: list) -> str:
@@ -1247,16 +1317,16 @@ def _tidy_apa_output(text: str, requirements: list) -> str:
     body = sections[0]
     refs = "".join(sections[1:]) if len(sections) > 1 else ""
     paragraphs = [p for p in re.split(r"(\n\s*\n)", body)]
+    closer_index = 0
     for i, part in enumerate(paragraphs):
         if not part.strip() or re.match(r"\n\s*\n", part):
             continue
         if re.search(r"\([^)]+,\s*(?:n\.d\.|(?:19|20)\d{2}[a-z]?)\)"
                      r"\s*(?:\[(?:[a-z0-9]+-)?C\d+\])?\s*[.!?]?$",
                      part.strip()):
-            paragraphs[i] = part.rstrip() + (
-                " This point returns the paragraph to the study's qualitative "
-                "purpose."
-            )
+            closer = _APA_PARAGRAPH_CLOSERS[closer_index % len(_APA_PARAGRAPH_CLOSERS)]
+            closer_index += 1
+            paragraphs[i] = part.rstrip() + " " + closer
     return "".join(paragraphs).rstrip() + refs
 
 
@@ -1364,12 +1434,25 @@ def _quality_finish(result: dict, question: str, plan: dict, project: str = None
     }
     if analysis:
         analyze.update(analysis)
+    # DMAIC "Analyze": fold every defect signal -- APA7 rule violations,
+    # leaked scaffolding, unrecovered degenerate output, a grounded-but-empty
+    # result -- into one bug_types list and a needs_review flag. New defect
+    # checks (a new module's own DMAIC) should add to analysis["bug_types"]
+    # from their call site rather than inventing a second flag here.
+    bug_types = list(analyze.get("bug_types") or [])
+    if analyze.get("insufficient_result") and "insufficient_grounded_result" not in bug_types:
+        bug_types.append("insufficient_grounded_result")
+    analyze["bug_types"] = bug_types
+    analyze["needs_review"] = bool(bug_types)
     improve = {
         "actions": improvements or [],
     }
     control = dict(plan.get("control") or {})
+    control["needs_review"] = analyze["needs_review"]
+    control["bug_types"] = bug_types
+    event_id = None
     try:
-        record_query_quality(
+        event_id = record_query_quality(
             project=project,
             question=question,
             intent=plan.get("intent"),
@@ -1388,6 +1471,12 @@ def _quality_finish(result: dict, question: str, plan: dict, project: str = None
         "analyze": analyze,
         "improve": improve,
         "control": control,
+        # The web Ask tab's manual flag switch needs something to POST back
+        # to /api/flag -- this is that id. None when memory-db is
+        # unreachable, same "best-effort, never blocks the answer" rule as
+        # every other memory-db write in this codebase; the client just
+        # hides the flag control when it's missing.
+        "event_id": event_id,
     }
     result["metrics"] = metrics
     return result
@@ -3649,7 +3738,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             metrics = continuation_metrics or metrics
             improvements.append("continued_under_length_generation")
 
-    for repair_attempt in range(2):
+    for repair_attempt in range(3):
         apa_issues = _apa7_issues(text, active_requirements)
         if not apa_issues:
             break
@@ -3695,6 +3784,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     text = _ensure_apa_in_text_citations(text, active_requirements, evidence)
     text = _tidy_apa_output(text, active_requirements)
 
+    degenerate_unrecovered = False
     if _is_degenerate(text):
         # Retry once, cooler and with a repetition penalty, since that's a
         # direct lever against exactly this failure. Not streamed: we only
@@ -3713,6 +3803,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             text, metrics = retry_text, retry_metrics
             improvements.append("retried_degenerate_generation")
         else:
+            degenerate_unrecovered = True
             text = ("That didn't come out right, the model repeated citation "
                     "markers instead of answering. Try asking again, maybe "
                     "more specifically, or pick a different model above.")
@@ -3729,6 +3820,9 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
         text = re.sub(r"\s+([.,;:!?])", r"\1", text)
         text = re.sub(r"[ \t]{2,}", " ", text).strip()
 
+    defects = _detect_response_defects(text, active_requirements,
+                                       degenerate_unrecovered)
+
     result = {"text": text, "evidence": evidence_out, "grounded": bool(evidence),
               "passages_offered": len(evidence), "metrics": metrics,
               "requirements": active_requirements}
@@ -3737,7 +3831,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     )
     return _quality_finish(
         result, last_user, plan, project=scope, evidence=evidence,
-        improvements=improvements)
+        improvements=improvements, analysis=defects)
 
 
 def _prefix_markers(text: str, registry: CitationRegistry, turn_id: str = None,

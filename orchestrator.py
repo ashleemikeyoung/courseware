@@ -54,6 +54,7 @@ from memory_client import (
     start_session,
     find_cached_answer,
     flag_false_positive,
+    list_needs_review,
     pii_redaction_enabled,
     set_setting,
 )
@@ -254,6 +255,33 @@ def cmd_flag():
         print(f"\nFlagged turn #{_last_turn_id} as a false positive.\n")
     except Exception as e:
         print(f"  [Warning: could not flag turn in memory-db: {e}]\n", flush=True)
+
+
+def cmd_review():
+    """
+    DMAIC "Control": list the recent turns/drafts every module's own defect
+    checks flagged automatically (ask.py's _detect_response_defects, the
+    APA7 checks, writer.py's fabrication/length/format thresholds) -- the
+    part /flag doesn't cover, since /flag only catches what a human happens
+    to notice and say something about right after seeing it.
+    """
+    try:
+        rows = list_needs_review(limit=20, project=_active_project())
+    except Exception as e:
+        print(f"  [Warning: could not read review queue from memory-db: {e}]\n",
+              flush=True)
+        return
+    if not rows:
+        print("\nNothing flagged for review in the current scope.\n")
+        return
+    print(f"\n{len(rows)} turn(s) flagged for review (newest first):\n")
+    for row in rows:
+        bug_types = ", ".join(row["control"].get("bug_types") or []) or "unspecified"
+        question = (row.get("question") or "").strip().replace("\n", " ")
+        if len(question) > 90:
+            question = question[:87] + "..."
+        print(f"  #{row['id']}  {row.get('recorded_at', '')}  [{bug_types}]")
+        print(f"      {question}\n")
 
 
 def cmd_redact():
@@ -955,6 +983,7 @@ COMMANDS = {
     "/clearbenchmark": cmd_clear_benchmark,
     "/incognito": cmd_incognito,
     "/flag": cmd_flag,
+    "/review": cmd_review,
     "/redact": cmd_redact,
 }
 
@@ -973,6 +1002,7 @@ Commands:
   /clearbenchmark  — clear benchmark history
   /incognito       — toggle session logging off/on for what follows
   /flag            — mark the last answer as wrong, for later review
+  /review          — list turns/drafts auto-flagged by defect checks
   /redact          — toggle PII redaction on answers (and writer.py output)
   /help            — show this message
   quit             — exit

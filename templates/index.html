@@ -177,6 +177,62 @@ nav button.icon-tab{
   width:44px;min-width:44px;padding:7px 0;font-size:24px;line-height:1;
   letter-spacing:0;text-align:center;text-transform:none;
 }
+nav button.icon-tab{position:relative}
+.review-count{
+  position:absolute;top:4px;right:2px;min-width:15px;height:15px;padding:0 3px;
+  border-radius:8px;background:var(--red);color:var(--paper);
+  font-family:var(--mono);font-size:10px;line-height:15px;text-align:center;
+}
+.review-panel{
+  position:absolute;top:52px;right:70px;width:360px;max-height:70vh;
+  overflow-y:auto;background:var(--paper);border:1px solid var(--rule);
+  box-shadow:0 6px 18px rgba(0,0,0,.18);z-index:40;
+}
+.review-panel-head{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 14px;border-bottom:1px solid var(--rule);
+  font-family:var(--mono);font-size:11px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink-soft);
+}
+.review-panel-head button{
+  background:none;border:0;font-size:18px;line-height:1;cursor:pointer;
+  color:var(--ink-faint);
+}
+.review-panel-body{padding:6px 0}
+.review-panel-body .empty{padding:16px 14px;color:var(--ink-faint);font-size:13px}
+.review-item{
+  padding:9px 14px;border-bottom:1px solid var(--rule-soft);cursor:default;
+}
+.review-item .bug-types{
+  font-family:var(--mono);font-size:10px;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--red);
+}
+.review-item .question{font-size:13px;margin-top:3px;color:var(--ink)}
+.review-item .when{font-size:11px;color:var(--ink-faint);margin-top:3px}
+.bubble-tools{
+  display:flex;align-items:center;gap:8px;margin-top:6px;
+}
+.bubble-tools .btn-flag{
+  background:none;border:1px solid var(--rule);border-radius:3px;cursor:pointer;
+  font-size:12px;padding:2px 8px;color:var(--ink-faint);
+}
+.bubble-tools .btn-flag[aria-pressed="true"]{
+  color:var(--red);border-color:var(--red);background:var(--red-wash);
+}
+.bubble-tools .defect-badge{
+  font-family:var(--mono);font-size:10px;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--red);background:var(--red-wash);
+  padding:2px 6px;border-radius:3px;
+}
+.flag-comment{display:flex;gap:6px;margin-top:6px}
+.flag-comment textarea{
+  flex:1;min-height:44px;font:inherit;font-size:13px;padding:6px 8px;
+  border:1px solid var(--rule);background:var(--paper);color:var(--ink);
+}
+.flag-comment button{
+  align-self:flex-end;background:var(--blue);color:var(--paper);border:0;
+  padding:6px 12px;font-size:12px;cursor:pointer;
+}
 nav button:hover{color:var(--ink);background:var(--paper)}
 nav button[aria-selected="true"]{
   color:var(--ink);background:var(--paper);
@@ -575,8 +631,18 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
   </div>
   <nav id="nav">
     <button data-tab="ask" aria-selected="true"><span class="home-tab"><span class="home-icon" aria-hidden="true">⌂</span><span>Home</span></span></button>
+    <button class="icon-tab" id="btnReview" type="button" title="Review queue" aria-label="Review queue" aria-expanded="false">
+      ⚑<span class="review-count" id="reviewCount" hidden>0</span>
+    </button>
     <button class="icon-tab" data-tab="tuning" aria-selected="false" title="Settings" aria-label="Settings">⚙</button>
   </nav>
+  <div class="review-panel" id="reviewPanel" hidden>
+    <div class="review-panel-head">
+      <span>Flagged for review</span>
+      <button type="button" id="btnReviewClose" aria-label="Close">&times;</button>
+    </div>
+    <div class="review-panel-body" id="reviewPanelBody"></div>
+  </div>
   <div class="themes" role="group" aria-label="Theme">
     <button class="sw-light" data-theme-set="light" title="Light" aria-pressed="true"></button>
     <button class="sw-dark"  data-theme-set="dark"  title="Dark"  aria-pressed="false"></button>
@@ -929,6 +995,68 @@ let STATE = { outline:null, evidence:{}, models:[], busy:false,
               project:null, projects:[], showContext:false };
 STATE.tuning = { criteria: [], misses: [], settings: {} };
 STATE.mail = { settings: {} };
+STATE.review = { items: [], open: false };
+
+/* --- review queue --------------------------------------------------------
+   DMAIC "Control" surfaced in the Ask screen itself (see ask.py's
+   _detect_response_defects / _quality_finish and writer.py's own bug_types
+   -- both write to the same query_quality_events table via
+   memory_client.record_query_quality). This used to be orchestrator.py's
+   /review, a separate terminal process from the one this UI actually
+   runs -- same data, read from where the work already happens. -------- */
+async function loadReviewQueue(){
+  try {
+    const r = await fetch(qp("/api/review"));
+    const j = await r.json();
+    STATE.review.items = j.items || [];
+  } catch(e){
+    STATE.review.items = [];
+  }
+  renderReviewBadge();
+  if (STATE.review.open) renderReviewPanel();
+}
+
+function renderReviewBadge(){
+  const n = STATE.review.items.length;
+  const badge = $("#reviewCount");
+  badge.textContent = String(n);
+  badge.hidden = n === 0;
+}
+
+function renderReviewPanel(){
+  const body = $("#reviewPanelBody");
+  body.innerHTML = "";
+  if (!STATE.review.items.length){
+    body.appendChild(el("div", "empty", "Nothing flagged right now."));
+    return;
+  }
+  STATE.review.items.forEach(item => {
+    const row = el("div", "review-item");
+    const bugTypes = (item.control && item.control.bug_types) || [];
+    row.appendChild(el("div", "bug-types",
+      bugTypes.length ? bugTypes.join(", ") : "flagged"));
+    let q = item.question || "";
+    if (q.length > 140) q = q.slice(0, 137) + "...";
+    row.appendChild(el("div", "question", q));
+    row.appendChild(el("div", "when", item.recorded_at || ""));
+    body.appendChild(row);
+  });
+}
+
+function toggleReviewPanel(force){
+  const panel = $("#reviewPanel");
+  STATE.review.open = force !== undefined ? force : panel.hidden;
+  panel.hidden = !STATE.review.open;
+  $("#btnReview").setAttribute("aria-expanded", String(STATE.review.open));
+  if (STATE.review.open) renderReviewPanel();
+}
+$("#btnReview").onclick = () => toggleReviewPanel();
+$("#btnReviewClose").onclick = () => toggleReviewPanel(false);
+document.addEventListener("click", e => {
+  if (!STATE.review.open) return;
+  if (e.target.closest("#reviewPanel") || e.target.closest("#btnReview")) return;
+  toggleReviewPanel(false);
+});
 
 /* Every request carries the project explicitly. The server holds no session,
    so there is no way to be looking at one project and writing into another. */
@@ -1889,7 +2017,59 @@ function chatBubble(m){
   if (m.role === "assistant" && m.showAttachments && m.attachments && m.attachments.length)
     bubble.appendChild(renderMailAttachments(m.attachments));
   box.appendChild(bubble);
+  if (m.role === "assistant" && !m.pending) box.appendChild(bubbleTools(m));
   return box;
+}
+
+/* Manual flag switch, alongside whatever the automated checks already
+   caught. bugTypes here come straight from ask.ask()'s response
+   (m.dmaic.analyze.bug_types) -- the same list /api/review reads back out
+   of query_quality_events, just shown inline instead of requiring a trip
+   to the review panel. */
+function bubbleTools(m){
+  const wrap = el("div", "bubble-tools");
+  const bugTypes = (m.dmaic && m.dmaic.analyze && m.dmaic.analyze.bug_types) || [];
+  if (bugTypes.length)
+    wrap.appendChild(el("span", "defect-badge", bugTypes.join(", ")));
+  if (m.eventId){
+    const btn = el("button", "btn-flag", m.manualFlag ? "Flagged" : "Flag");
+    btn.type = "button";
+    btn.setAttribute("aria-pressed", String(!!m.manualFlag));
+    btn.onclick = () => toggleFlagComment(wrap, m, btn);
+    wrap.appendChild(btn);
+  }
+  return wrap;
+}
+
+function toggleFlagComment(wrap, m, btn){
+  const existing = wrap.querySelector(".flag-comment");
+  if (existing){ existing.remove(); return; }
+  const row = el("div", "flag-comment");
+  const ta = document.createElement("textarea");
+  ta.placeholder = "What was wrong with this answer?";
+  const send = el("button", "", m.manualFlag ? "Update" : "Flag it");
+  send.onclick = async () => {
+    send.disabled = true;
+    try {
+      const r = await fetch("/api/flag", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({event_id: m.eventId, notes: ta.value.trim()})});
+      const j = await r.json();
+      if (j.error) throw j.error;
+      m.manualFlag = true;
+      btn.textContent = "Flagged";
+      btn.setAttribute("aria-pressed", "true");
+      row.remove();
+      toast("Flagged for review");
+      loadReviewQueue();
+    } catch(e){
+      toast(typeof e === "string" ? e : "Could not flag that");
+      send.disabled = false;
+    }
+  };
+  row.appendChild(ta); row.appendChild(send);
+  wrap.appendChild(row);
+  ta.focus();
 }
 
 function renderActiveRequirements(requirements){
@@ -2048,9 +2228,13 @@ async function sendAsk(){
     pending.sources = Object.keys(ev.evidence || {});
     pending.attachments = ev.attachments || [];
     pending.requirements = ev.requirements || [];
+    pending.dmaic = (ev.metrics && ev.metrics.dmaic) || null;
+    pending.eventId = pending.dmaic ? pending.dmaic.event_id : null;
     Object.assign(STATE.evidence, ev.evidence || {});
     renderChat();
     saveAskConversation();
+    if (pending.dmaic && pending.dmaic.control && pending.dmaic.control.needs_review)
+      loadReviewQueue();
   } catch(err){
     STATE.chat.messages.pop();
     STATE.chat.messages.pop();
@@ -2658,6 +2842,7 @@ async function switchProject(name){
   $("#draftlog").style.display = "none"; $("#outlog").style.display = "none";
   await loadStatus();
   await loadAskConversation();
+  loadReviewQueue();
   if (STATE.project === "__all__"){
     STATE.outline = null; renderOutline();
     toast("Searching all projects");
@@ -2688,6 +2873,8 @@ $("#btnNewProj").onclick = async () => {
   await loadProjects();
   await loadStatus();
   await loadAskConversation();
+  loadReviewQueue();
+  setInterval(loadReviewQueue, 60000);
   checkUpdateStatus();
   setInterval(checkUpdateStatus, 15000);
   if (STATE.project){
