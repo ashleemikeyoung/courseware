@@ -20,7 +20,7 @@ from rag import (
     SCAN_INTERVAL,
     file_hash,
     SUPPORTED_EXTENSIONS,
-    _IGNORED_DIRS,
+    ignored_dirs,
 )
 import citations
 import summarize
@@ -594,7 +594,7 @@ def start_file_watcher():
                 for f in folder.rglob("*")
                 if f.is_file()
                 and f.suffix.lower() in SUPPORTED_EXTENSIONS
-                and not any(part in _IGNORED_DIRS or part.startswith(".")
+                and not any(part in ignored_dirs() or part.startswith(".")
                             for part in f.relative_to(folder).parts[:-1])
             }
             indexed = get_indexed_sources()
