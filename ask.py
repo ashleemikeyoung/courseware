@@ -319,8 +319,22 @@ CURRENT_SCHOLARLY_SOURCE_RE = re.compile(
     r"\b(?:202[4-9]|newer|recent|current)\b|"
     r"\b(?:202[4-9]|newer|recent|current)\b.*"
     r"\b(?:peer[-\s]?reviewed|scholarly|journal|articles?)\b",
+    re.IGNORECASE | re.DOTALL,
+)
+WORD_COUNT_RE = re.compile(r"\b(\d{2,4})\s*-?\s*word\b", re.IGNORECASE)
+PROJECT_READING_RE = re.compile(
+    r"\b(?:reading|readings?|course material|source)\s+in\s+"
+    r"([A-Z]{2,}-\d{3})\b",
     re.IGNORECASE,
 )
+PEER_REVIEWED_COUNT_RE = re.compile(
+    r"\bat least\s+(\w+|\d+)\s+peer[-\s]?reviewed\b",
+    re.IGNORECASE,
+)
+_COUNT_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+}
 SOURCE_LOOKUP_STOPWORDS = {
     "about", "above", "additional", "additionally", "also", "another",
     "appears", "article", "articles", "because", "being", "could", "discuss",
@@ -722,6 +736,89 @@ def _filter_general_research_evidence(question: str, evidence: list) -> list:
         if hits >= min(2, len(terms)):
             filtered.append(ev)
     return filtered
+
+
+def _count_value(value: str) -> int:
+    value = (value or "").strip().lower()
+    if value.isdigit():
+        return int(value)
+    return _COUNT_WORDS.get(value, 0)
+
+
+def _active_assignment_requirements(messages: list) -> list:
+    requirements = []
+    user_text = "\n".join(
+        m.get("content", "") for m in messages[-8:]
+        if m.get("role") == "user"
+    )
+    if not user_text.strip():
+        return requirements
+
+    word_counts = [int(m.group(1)) for m in WORD_COUNT_RE.finditer(user_text)]
+    if word_counts:
+        requirements.append(f"Target length: about {word_counts[-1]} words.")
+    if re.search(r"\bAPA\s*7\b|\bAPA\b", user_text, re.IGNORECASE):
+        requirements.append("Use APA 7-style academic formatting.")
+    if re.search(r"\bparagraph\b.*\b3\s+or\s+more\s+sentences\b|"
+                 r"\b3\s+or\s+more\s+sentences\b.*\bparagraph\b",
+                 user_text, re.IGNORECASE):
+        requirements.append("Each body paragraph must contain at least three sentences.")
+    if re.search(r"\bparagraph\b.*\b(?:cannot|must not|can't)\b.*"
+                 r"\b(?:begin|start|end)\b.*\bcitation\b",
+                 user_text, re.IGNORECASE):
+        requirements.append("No body paragraph may begin or end with a citation.")
+    if re.search(r"\breferences?\b.*\bno citations?\b|"
+                 r"\bcitations?\b.*\bsupport\b.*\bparagraphs?\b",
+                 user_text, re.IGNORECASE):
+        requirements.append("Every reference must have a supporting in-text citation.")
+    if re.search(r"\bcitations?\b|\bcite\b", user_text, re.IGNORECASE):
+        requirements.append("Place citations next to the claims they support.")
+    project_hits = [m.group(1).upper() for m in PROJECT_READING_RE.finditer(user_text)]
+    if project_hits:
+        requirements.append(
+            f"Use at least one source from the {project_hits[-1]} reading when available."
+        )
+    peer_counts = [
+        _count_value(m.group(1)) for m in PEER_REVIEWED_COUNT_RE.finditer(user_text)
+    ]
+    if peer_counts:
+        requirements.append(
+            f"Use at least {peer_counts[-1]} verified peer-reviewed source(s)."
+        )
+    if re.search(r"\b202[4-9]\b|\bnewer\b|\brecent\b|\bcurrent\b",
+                 user_text, re.IGNORECASE):
+        requirements.append("For current-source requirements, verify sources are 2024 or newer.")
+    if re.search(r"\bre-?write\b|\brevise\b|\babove\b|\bprevious\b|"
+                 r"\bfollow this progression\b", user_text, re.IGNORECASE):
+        requirements.append(
+            "When revising, preserve earlier requirements while fixing the latest defect."
+        )
+    return list(dict.fromkeys(requirements))
+
+
+def _requirements_block(requirements: list) -> str:
+    if not requirements:
+        return ""
+    lines = ["Active assignment requirements:"]
+    lines.extend(f"- {item}" for item in requirements)
+    lines.extend([
+        "- If requirements conflict or a required source cannot be verified, explain the blocker briefly before drafting.",
+        "- Do not silently drop an earlier requirement to satisfy a later correction.",
+        "- If a missing requirement needs the user's choice or source material, ask one concise follow-up question instead of guessing.",
+    ])
+    return "\n".join(lines)
+
+
+def _needs_current_scholarly_sources(requirements: list, recent_context: str) -> bool:
+    haystack = "\n".join(requirements or []) + "\n" + (recent_context or "")
+    return bool(CURRENT_SCHOLARLY_SOURCE_RE.search(haystack))
+
+
+def _has_external_evidence(evidence: list) -> bool:
+    return any(
+        getattr(ev, "source", "").startswith(("http://", "https://"))
+        for ev in evidence or []
+    )
 
 
 def _is_coder_request(question: str) -> bool:
@@ -2411,6 +2508,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     last_user = messages[-1]["content"]
     recent_context = " ".join(m.get("content", "") for m in messages[-8:])
     plan = _plan_query(last_user, recent_context)
+    active_requirements = _active_assignment_requirements(messages)
     scope = projects.ALL if project == projects.ALL else (project or CURRENT_PROJECT)
     if EMAIL_LOOKUP_RE.search(last_user) and scope == projects.UNFILED:
         scope = "email"
@@ -2610,10 +2708,9 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                     evidence.extend(external)
                     used_external_search = True
                     improvements.append("added_external_search_for_research_mode")
-            if (
-                CURRENT_SCHOLARLY_SOURCE_RE.search(last_user)
-                and _external_search_enabled()
-            ):
+            needs_current_scholarly = _needs_current_scholarly_sources(
+                active_requirements, recent_context)
+            if needs_current_scholarly and _external_search_enabled():
                 external_query = (
                     f"{query_text} peer reviewed scholarly article 2024 2025"
                 )
@@ -2647,6 +2744,22 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             f"response inside that range. Do not conclude before reaching at "
             f"least {lower} words unless the user explicitly asks for a "
             "shorter answer."
+        )
+    requirements_text = _requirements_block(active_requirements)
+    if requirements_text:
+        system += "\n\n" + requirements_text
+    if (
+        active_requirements
+        and _needs_current_scholarly_sources(active_requirements, recent_context)
+        and not _has_external_evidence(evidence)
+    ):
+        system += (
+            "\n\nCurrent scholarly source guard: the user has asked for recent "
+            "peer-reviewed sources, but no verified external source evidence "
+            "is available in this turn. Do not invent references or claim "
+            "peer-reviewed status. Draft only the parts that can be supported, "
+            "or ask for permission to search/provide sources before completing "
+            "the reference-dependent sections."
         )
     if ACADEMIC_FORMAT_RE.search(last_user) or ACADEMIC_FORMAT_RE.search(recent_context):
         system += (
@@ -2739,14 +2852,15 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             # so clearing only `evidence` above left real source chips
             # attached to a message that has nothing to do with them.
 
-    text, evidence_out = _prefix_markers(text, registry, turn_id)
+    text, evidence_out = _prefix_markers(text, registry, turn_id, evidence)
     if not evidence_out:
         text = CITATION_ARTIFACT_RE.sub("", text)
         text = re.sub(r"\s+([.,;:!?])", r"\1", text)
         text = re.sub(r"[ \t]{2,}", " ", text).strip()
 
     result = {"text": text, "evidence": evidence_out, "grounded": bool(evidence),
-              "passages_offered": len(evidence), "metrics": metrics}
+              "passages_offered": len(evidence), "metrics": metrics,
+              "requirements": active_requirements}
     result["metrics"]["route"] = (
         "external_search" if used_external_search else plan.get("primary_source")
     )
@@ -2755,7 +2869,8 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
         improvements=improvements)
 
 
-def _prefix_markers(text: str, registry: CitationRegistry, turn_id: str = None):
+def _prefix_markers(text: str, registry: CitationRegistry, turn_id: str = None,
+                    offered: list = None):
     """
     A fresh CitationRegistry numbers from [C1] every single turn, since each
     turn retrieves independently. Left alone, turn 1's [C1] and turn 3's [C1]
@@ -2769,11 +2884,12 @@ def _prefix_markers(text: str, registry: CitationRegistry, turn_id: str = None):
     anything else was invented and is left as bare text for the caller's own
     fabrication check to catch, same as writer.py does.
     """
-    valid = {e.marker for e in registry.items}
+    items = offered if offered is not None else registry.items
+    valid = {e.marker for e in items}
     if not turn_id:
         return text, {e.marker: {"source": e.source, "start": e.start,
                                  "end": e.end, "text": e.text}
-                      for e in registry.items}
+                      for e in items}
 
     def rename(m):
         tok = m.group(1)
@@ -2782,5 +2898,5 @@ def _prefix_markers(text: str, registry: CitationRegistry, turn_id: str = None):
     renamed = MARKER_RE.sub(rename, text)
     evidence_out = {f"{turn_id}-{e.marker}": {"source": e.source, "start": e.start,
                                               "end": e.end, "text": e.text}
-                    for e in registry.items}
+                    for e in items}
     return renamed, evidence_out
