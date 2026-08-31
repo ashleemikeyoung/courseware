@@ -476,14 +476,10 @@ def record_query_quality(project: str, question: str, intent: str = None,
     This is intentionally separate from draft quality scoring. Query quality is
     about whether the system chose the right source-of-truth path and escalated
     when confidence was weak, not whether generated prose was stylish.
-
-    Returns the new query_quality_events row id (or None if logging failed --
-    callers should treat this as best-effort, same as every other memory-db
-    write in this file).
     """
     client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
     try:
-        result = client.execute(
+        client.execute(
             "INSERT INTO query_quality_events "
             "(project, question, intent, define_json, measure_json, "
             " analyze_json, improve_json, control_json) "
@@ -499,11 +495,6 @@ def record_query_quality(project: str, question: str, intent: str = None,
                 json.dumps(control or {}),
             ],
         )
-        # Returned so callers (ask.py's _quality_finish) can hand this event's
-        # id back to the client -- the web Ask tab's manual flag switch needs
-        # something to flag, and query_quality_events rows had no way to
-        # reference themselves from outside this module until now.
-        return result.last_insert_rowid
     finally:
         client.close()
 
@@ -546,36 +537,6 @@ def list_needs_review(limit: int = 20, project: str = None) -> list:
             except (TypeError, ValueError):
                 row["control"] = {}
         return rows
-    finally:
-        client.close()
-
-
-def flag_query_quality_event(event_id: int, notes: str = None) -> bool:
-    """
-    The web Ask tab's manual flag switch (orchestrator.py's /flag equivalent,
-    for query_quality_events rows instead of turns -- the Ask tab's ask.ask()
-    calls never write to the `turns` table, only here, so flagging has to
-    happen against this table to have anything to attach to).
-
-    Sets control_json.needs_review = 1 so the flagged row shows up through
-    the exact same list_needs_review() query as an automated defect, plus
-    manual_flag = 1 and manual_flag_notes so /review and the Ask tab can
-    tell "a check caught this" apart from "a person caught this."
-    json_set() is sqlite's JSON1 function, already relied on implicitly by
-    every json_extract() call elsewhere in this file -- same extension.
-    """
-    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
-    try:
-        result = client.execute(
-            "UPDATE query_quality_events SET control_json = json_set("
-            "  json_set(control_json, '$.needs_review', 1),"
-            "  '$.manual_flag', 1,"
-            "  '$.manual_flag_notes', ?,"
-            "  '$.manually_flagged_at', datetime('now')"
-            ") WHERE id = ?",
-            [notes, event_id],
-        )
-        return bool(result.rows_affected)
     finally:
         client.close()
 

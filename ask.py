@@ -1304,6 +1304,31 @@ _APA_PARAGRAPH_CLOSERS = [
 ]
 
 
+def _sort_references_section(refs: str) -> str:
+    """
+    APA 7 requires the References list to be alphabetized by the first
+    author's surname (or by title when there is no author) -- the model
+    reliably writes correctly *formatted* entries but not reliably
+    *ordered* ones. Fix the order mechanically rather than re-prompting:
+    split on the blank-line boundaries between entries (the same
+    paragraph-boundary convention used elsewhere in this file), sort with
+    the same key already used for annotated bibliographies
+    (_reference_sort_key), and rejoin under the original heading.
+    """
+    if not refs or not refs.strip():
+        return refs
+    match = re.match(r"(\s*References\s*\n+)(.*)$", refs,
+                     re.IGNORECASE | re.DOTALL)
+    if not match:
+        return refs
+    heading, body = match.group(1), match.group(2)
+    entries = [e.strip() for e in re.split(r"\n\s*\n", body) if e.strip()]
+    if len(entries) < 2:
+        return refs
+    entries.sort(key=_reference_sort_key)
+    return heading + "\n\n".join(entries)
+
+
 def _tidy_apa_output(text: str, requirements: list) -> str:
     if not any("APA 7" in item for item in requirements or []):
         return text
@@ -1316,6 +1341,7 @@ def _tidy_apa_output(text: str, requirements: list) -> str:
                         flags=re.IGNORECASE | re.DOTALL)
     body = sections[0]
     refs = "".join(sections[1:]) if len(sections) > 1 else ""
+    refs = _sort_references_section(refs)
     paragraphs = [p for p in re.split(r"(\n\s*\n)", body)]
     closer_index = 0
     for i, part in enumerate(paragraphs):
@@ -1450,9 +1476,8 @@ def _quality_finish(result: dict, question: str, plan: dict, project: str = None
     control = dict(plan.get("control") or {})
     control["needs_review"] = analyze["needs_review"]
     control["bug_types"] = bug_types
-    event_id = None
     try:
-        event_id = record_query_quality(
+        record_query_quality(
             project=project,
             question=question,
             intent=plan.get("intent"),
@@ -1471,12 +1496,6 @@ def _quality_finish(result: dict, question: str, plan: dict, project: str = None
         "analyze": analyze,
         "improve": improve,
         "control": control,
-        # The web Ask tab's manual flag switch needs something to POST back
-        # to /api/flag -- this is that id. None when memory-db is
-        # unreachable, same "best-effort, never blocks the answer" rule as
-        # every other memory-db write in this codebase; the client just
-        # hides the flag control when it's missing.
-        "event_id": event_id,
     }
     result["metrics"] = metrics
     return result
