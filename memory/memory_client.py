@@ -1214,12 +1214,78 @@ DEFAULT_SEARCH_CRITERIA = [
             "academic",
         ]
     ],
+    # --- Assignment-formatting requirements (Ask screen) --------------------
+    # requirement_trigger: phrases that turn a requirement on, matched via
+    # ask.py's _has_requirement_trigger (same whole-phrase matcher used for
+    # ask_route). requirement_text: the sentence(s) shown/sent to the model
+    # when that requirement is active. Seeded here with today's hardcoded
+    # defaults so behavior is unchanged until these rows are edited from the
+    # Tuning screen -- see DMAIC.md for the incident this followed from.
+    *[
+        {"criteria_type": "requirement_trigger", "group_name": "apa7", "term": term}
+        for term in ["apa 7", "apa7", "apa"]
+    ],
+    *[
+        {"criteria_type": "requirement_trigger", "group_name": "three_sentence_min", "term": term}
+        for term in ["3 or more sentences", "three or more sentences"]
+    ],
+    {"criteria_type": "requirement_text", "group_name": "three_sentence_min",
+     "term": "Each body paragraph must contain at least three sentences."},
+    *[
+        {"criteria_type": "requirement_trigger", "group_name": "no_edge_citation", "term": term}
+        for term in [
+            "cannot begin or end with a citation",
+            "must not begin or end with a citation",
+            "never to begin or end with a citation",
+            "can't begin or end with a citation",
+        ]
+    ],
+    {"criteria_type": "requirement_text", "group_name": "no_edge_citation",
+     "term": "No body paragraph may begin or end with a citation."},
+    *[
+        {"criteria_type": "requirement_trigger", "group_name": "citation_support", "term": term}
+        for term in ["references no citations", "citations support", "citations must support"]
+    ],
+    {"criteria_type": "requirement_text", "group_name": "citation_support",
+     "term": "Every reference must have a supporting in-text citation."},
+    *[
+        {"criteria_type": "requirement_trigger", "group_name": "citation_placement", "term": term}
+        for term in ["citations", "cite", "citation"]
+    ],
+    {"criteria_type": "requirement_text", "group_name": "citation_placement",
+     "term": "Place citations next to the claims they support."},
+    *[
+        {"criteria_type": "requirement_text", "group_name": "apa7_detail", "term": term}
+        for term in [
+            "Use author-date in-text citations, for example (Author, 2024) or Author (2024).",
+            "Do not use raw URLs as body citations.",
+            "Every cited source in the body must have one matching References entry.",
+            "Every References entry must be cited in the body.",
+            "References entries should use: Author, A. A. (Year). Title of "
+            "work. Source Title, volume(issue), pages. DOI or URL.",
+            "If metadata is incomplete, use only visible metadata and omit "
+            "unavailable fields; do not invent authors, dates, journals, "
+            "pages, DOIs, or URLs.",
+            "Start the reference list with the heading References.",
+            "Body paragraphs must have at least three sentences and may not "
+            "begin or end with a citation.",
+            "Reference list entries must be alphabetized by the first "
+            "author's surname (or by title when there is no author).",
+        ]
+    ],
 ]
+
+
+# criteria_type values whose `term` is free-form instructional text rather
+# than a lowercase matching keyword -- casing is part of the content (e.g.
+# "(Author, 2024)", "DOI or URL") and must be preserved as written.
+CASE_PRESERVING_CRITERIA_TYPES = {"requirement_text"}
 
 
 def upsert_search_criterion(criteria_type: str, term: str, group_name: str = "",
                             weight: float = 1.0, enabled: bool = True,
                             notes: str = None):
+    stored_term = term if criteria_type in CASE_PRESERVING_CRITERIA_TYPES else term.lower()
     client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
     try:
         client.execute(
@@ -1229,7 +1295,7 @@ def upsert_search_criterion(criteria_type: str, term: str, group_name: str = "",
             "ON CONFLICT(criteria_type, group_name, term) DO UPDATE SET "
             "weight=excluded.weight, enabled=excluded.enabled, "
             "notes=excluded.notes, updated_at=datetime('now')",
-            [criteria_type, group_name or "", term.lower(), weight,
+            [criteria_type, group_name or "", stored_term, weight,
              1 if enabled else 0, notes],
         )
     finally:
@@ -1241,6 +1307,11 @@ def seed_default_search_criteria() -> int:
     client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
     try:
         for row in DEFAULT_SEARCH_CRITERIA:
+            stored_term = (
+                row["term"]
+                if row["criteria_type"] in CASE_PRESERVING_CRITERIA_TYPES
+                else row["term"].lower()
+            )
             result = client.execute(
                 "INSERT OR IGNORE INTO search_criteria "
                 "(criteria_type, group_name, term, weight, enabled, notes) "
@@ -1248,7 +1319,7 @@ def seed_default_search_criteria() -> int:
                 [
                     row["criteria_type"],
                     row.get("group_name", ""),
-                    row["term"].lower(),
+                    stored_term,
                     row.get("weight", 1.0),
                     "seeded_default",
                 ],

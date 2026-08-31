@@ -418,6 +418,43 @@ def _has_ask_term(text: str, group_name: str, fallback=None) -> bool:
     ).search(text or ""))
 
 
+def _has_requirement_trigger(text: str, group_name: str, fallback=None) -> bool:
+    """
+    Same shape as _has_ask_term, against criteria_type="requirement_trigger"
+    instead of "ask_route" -- lets assignment-requirement trigger phrases
+    (APA 7, 3-sentence minimum, etc.) be tuned from the Tuning screen the
+    same way ask-routing phrases already are. Falls back to the literal
+    phrase list given when no rows exist yet for this group.
+    """
+    return bool(_term_pattern(
+        _ask_terms("requirement_trigger", group_name, fallback)
+    ).search(text or ""))
+
+
+def _requirement_lines(group_name: str, fallback: list) -> list:
+    """
+    Configurable requirement TEXT (criteria_type="requirement_text") for a
+    given requirement key -- the sentence(s) that get shown to the model
+    and the user when that requirement is active. Unlike _ask_terms, this
+    preserves the original casing/punctuation of each row rather than
+    lowercasing, since these are full instruction sentences, not matching
+    terms. Falls back to the hardcoded default list when no rows exist yet,
+    so behavior is unchanged until someone edits the Tuning screen. Rows
+    come back ordered alphabetically by their own text (the same ORDER BY
+    get_search_criteria always uses) -- fine for a handful of independent
+    bullet points, though it means a *newly edited* rule set won't
+    necessarily preserve a deliberately-chosen reading order.
+    """
+    rows = [
+        row.get("term") or ""
+        for row in _ask_criteria_rows()
+        if row.get("criteria_type") == "requirement_text"
+        and (row.get("group_name") or "") == group_name
+        and row.get("term")
+    ]
+    return rows or list(fallback or [])
+
+
 def _requires_abstract(question: str) -> bool:
     return bool(
         ABSTRACT_FILTER_RE.search(question or "")
@@ -752,6 +789,28 @@ def _count_value(value: str) -> int:
     return _COUNT_WORDS.get(value, 0)
 
 
+# Permanent floor regexes for the three requirement checks whose original
+# detection is a two-part proximity match, not a single literal phrase (see
+# the comment inside _active_assignment_requirements for why these stay
+# hardcoded rather than being fully replaced by database-configured
+# triggers).
+_THREE_SENTENCE_MIN_RE = re.compile(
+    r"\bparagraph\b.*\b3\s+or\s+more\s+sentences\b|"
+    r"\b3\s+or\s+more\s+sentences\b.*\bparagraph\b",
+    re.IGNORECASE,
+)
+_NO_EDGE_CITATION_RE = re.compile(
+    r"\bparagraph\b.*\b(?:cannot|must not|can't)\b.*"
+    r"\b(?:begin|start|end)\b.*\bcitation\b",
+    re.IGNORECASE,
+)
+_CITATION_SUPPORT_RE = re.compile(
+    r"\breferences?\b.*\bno citations?\b|"
+    r"\bcitations?\b.*\bsupport\b.*\bparagraphs?\b",
+    re.IGNORECASE,
+)
+
+
 def _active_assignment_requirements(messages: list) -> list:
     requirements = []
     user_text = "\n".join(
@@ -764,22 +823,59 @@ def _active_assignment_requirements(messages: list) -> list:
     word_counts = [int(m.group(1)) for m in WORD_COUNT_RE.finditer(user_text)]
     if word_counts:
         requirements.append(f"Target length: about {word_counts[-1]} words.")
-    if re.search(r"\bAPA\s*7\b|\bAPA\b", user_text, re.IGNORECASE):
+    # These five are boolean "is this requirement active" checks with a
+    # short, fixed piece of text -- exactly the pattern already used for
+    # ask_route/abstract_filter phrase matching (_has_ask_term /
+    # _ask_terms), so they're read from search_criteria
+    # (criteria_type="requirement_trigger" for the trigger phrases,
+    # "requirement_text" for the sentence appended) with the original
+    # hardcoded phrasing kept as the fallback -- editable from the Tuning
+    # screen, unchanged in behavior until someone actually edits a row.
+    #
+    # The apa7 *marker* text is intentionally NOT read from
+    # requirement_text: several other functions in this file
+    # (_apa7_issues, _ensure_apa_in_text_citations, _tidy_apa_output, and
+    # the APA7_RULES injection below) detect "is APA active" by checking
+    # for the literal substring "APA 7" inside this requirements list.
+    # Only the trigger phrase is configurable here; the marker sentence
+    # stays fixed so those checks can't be silently broken by an edit to
+    # this wording later.
+    if _has_requirement_trigger(user_text, "apa7", ["apa 7", "apa7", "apa"]):
         requirements.append("Use APA 7-style academic formatting.")
-    if re.search(r"\bparagraph\b.*\b3\s+or\s+more\s+sentences\b|"
-                 r"\b3\s+or\s+more\s+sentences\b.*\bparagraph\b",
-                 user_text, re.IGNORECASE):
-        requirements.append("Each body paragraph must contain at least three sentences.")
-    if re.search(r"\bparagraph\b.*\b(?:cannot|must not|can't)\b.*"
-                 r"\b(?:begin|start|end)\b.*\bcitation\b",
-                 user_text, re.IGNORECASE):
-        requirements.append("No body paragraph may begin or end with a citation.")
-    if re.search(r"\breferences?\b.*\bno citations?\b|"
-                 r"\bcitations?\b.*\bsupport\b.*\bparagraphs?\b",
-                 user_text, re.IGNORECASE):
-        requirements.append("Every reference must have a supporting in-text citation.")
-    if re.search(r"\bcitations?\b|\bcite\b", user_text, re.IGNORECASE):
-        requirements.append("Place citations next to the claims they support.")
+    # These three originally used two-part proximity regexes (e.g.
+    # "paragraph" ... "3 or more sentences" appearing anywhere relative to
+    # each other, not as one literal phrase) that a simple trigger-phrase
+    # list can't fully replicate -- a literal-only replacement was tested
+    # and under-detects real phrasing (e.g. "paragraphs" plural, or
+    # "References ... no citations" split across a sentence). To avoid a
+    # silent regression, the original regex stays as a permanent floor;
+    # the database can only ADD more trigger phrases on top of it, never
+    # replace this built-in detection.
+    if (_THREE_SENTENCE_MIN_RE.search(user_text)
+            or _has_requirement_trigger(user_text, "three_sentence_min")):
+        requirements.extend(_requirement_lines(
+            "three_sentence_min",
+            ["Each body paragraph must contain at least three sentences."],
+        ))
+    if (_NO_EDGE_CITATION_RE.search(user_text)
+            or _has_requirement_trigger(user_text, "no_edge_citation")):
+        requirements.extend(_requirement_lines(
+            "no_edge_citation",
+            ["No body paragraph may begin or end with a citation."],
+        ))
+    if (_CITATION_SUPPORT_RE.search(user_text)
+            or _has_requirement_trigger(user_text, "citation_support")):
+        requirements.extend(_requirement_lines(
+            "citation_support",
+            ["Every reference must have a supporting in-text citation."],
+        ))
+    if _has_requirement_trigger(
+        user_text, "citation_placement", ["citations", "cite", "citation"],
+    ):
+        requirements.extend(_requirement_lines(
+            "citation_placement",
+            ["Place citations next to the claims they support."],
+        ))
     project_hits = [m.group(1).upper() for m in PROJECT_READING_RE.finditer(user_text)]
     if project_hits:
         requirements.append(
@@ -821,15 +917,38 @@ def _requirements_block(requirements: list) -> str:
     return "\n".join(lines)
 
 
-APA7_RULES = """APA 7 output rules for this app:
-- Use author-date in-text citations, for example (Author, 2024) or Author (2024).
-- Do not use raw URLs as body citations.
-- Every cited source in the body must have one matching References entry.
-- Every References entry must be cited in the body.
-- References entries should use: Author, A. A. (Year). Title of work. Source Title, volume(issue), pages. DOI or URL.
-- If metadata is incomplete, use only visible metadata and omit unavailable fields; do not invent authors, dates, journals, pages, DOIs, or URLs.
-- Start the reference list with the heading References.
-- Body paragraphs must have at least three sentences and may not begin or end with a citation."""
+_APA7_RULES_FALLBACK = [
+    "Use author-date in-text citations, for example (Author, 2024) or Author (2024).",
+    "Do not use raw URLs as body citations.",
+    "Every cited source in the body must have one matching References entry.",
+    "Every References entry must be cited in the body.",
+    "References entries should use: Author, A. A. (Year). Title of work. "
+    "Source Title, volume(issue), pages. DOI or URL.",
+    "If metadata is incomplete, use only visible metadata and omit "
+    "unavailable fields; do not invent authors, dates, journals, pages, "
+    "DOIs, or URLs.",
+    "Start the reference list with the heading References.",
+    "Body paragraphs must have at least three sentences and may not begin "
+    "or end with a citation.",
+    "Reference list entries must be alphabetized by the first author's "
+    "surname (or by title when there is no author).",
+]
+
+
+def _apa7_rules_text() -> str:
+    """
+    The detailed APA formatting rulebook injected into the model's system
+    prompt whenever the apa7 requirement is active. Bullet text is
+    configurable from the Tuning screen (criteria_type="requirement_text",
+    group_name="apa7_detail"); falls back to _APA7_RULES_FALLBACK -- today's
+    hardcoded rules plus the reference-alphabetization rule that
+    _sort_references_section already enforces mechanically -- when no rows
+    are configured yet.
+    """
+    bullets = _requirement_lines("apa7_detail", _APA7_RULES_FALLBACK)
+    return "APA 7 output rules for this app:\n" + "\n".join(
+        f"- {bullet}" for bullet in bullets
+    )
 
 
 def _needs_current_scholarly_sources(requirements: list, recent_context: str) -> bool:
@@ -3675,7 +3794,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     if requirements_text:
         system += "\n\n" + requirements_text
     if any("APA 7" in item for item in active_requirements):
-        system += "\n\n" + APA7_RULES
+        system += "\n\n" + _apa7_rules_text()
     if (
         active_requirements
         and _needs_current_scholarly_sources(active_requirements, recent_context)

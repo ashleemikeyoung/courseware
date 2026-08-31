@@ -668,6 +668,9 @@ CRITERIA_TYPES = {
     "theme_marker", "subject_stop_label", "ask_route", "genre_alias",
     "source_lookup_stopword", "relation_target", "redaction_profile",
     "redaction_rule", "redaction_protection",
+    # Assignment-formatting requirements (Ask screen) -- see ask.py's
+    # _has_requirement_trigger / _requirement_lines and DMAIC.md.
+    "requirement_trigger", "requirement_text",
 }
 TUNING_SETTING_KEYS = {
     "rag_chunk_size", "rag_chunk_overlap", "rag_auto_reindex_on_tuning",
@@ -738,7 +741,15 @@ def api_tuning_criteria():
     body = request.json or {}
     criteria_type = (body.get("criteria_type") or "").strip().lower()
     group_name = (body.get("group_name") or "").strip().lower()
-    term = " ".join((body.get("term") or "").strip().lower().split())
+    # requirement_text rows are full instruction sentences, not lowercase
+    # matching keywords -- casing (e.g. "(Author, 2024)", "DOI") is part of
+    # the content, so it's preserved rather than lowercased like other
+    # criteria types. See memory_client.CASE_PRESERVING_CRITERIA_TYPES.
+    raw_term = (body.get("term") or "").strip()
+    if criteria_type == "requirement_text":
+        term = " ".join(raw_term.split())
+    else:
+        term = " ".join(raw_term.lower().split())
     notes = (body.get("notes") or "").strip() or None
     enabled = bool(body.get("enabled", True))
     try:
@@ -754,7 +765,7 @@ def api_tuning_criteria():
         criteria_type.startswith("domain_")
         or criteria_type in {
             "ask_route", "genre_alias", "redaction_rule",
-            "redaction_protection",
+            "redaction_protection", "requirement_trigger", "requirement_text",
         }
     ) and not group_name:
         return jsonify({"error": f"{criteria_type} criteria need a group"}), 400
