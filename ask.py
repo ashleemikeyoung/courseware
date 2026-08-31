@@ -1003,14 +1003,6 @@ def _scholarly_external_query(question: str, prior_user_turns: list[str] = None)
         maxsplit=1,
         flags=re.IGNORECASE,
     )[0]
-    phrases = []
-    if re.search(r"\binternational\s+students\b", topic, re.IGNORECASE):
-        phrases.extend(["international", "students"])
-    if re.search(r"\bunited\s+states\b", topic, re.IGNORECASE):
-        phrases.extend(["United", "States"])
-    if re.search(r"\bcollege\b.*\btransition\b|\btransition\b.*\bcollege\b",
-                 topic, re.IGNORECASE | re.DOTALL):
-        phrases.extend(["college", "transition"])
     words = []
     for word in re.findall(r"[A-Za-z][A-Za-z'-]{2,}", topic):
         word = word.lower()
@@ -1025,7 +1017,7 @@ def _scholarly_external_query(question: str, prior_user_turns: list[str] = None)
             word.lower() for word in summarize.rag.meaningful_words(question or "")
             if len(word) >= 4 and word.lower() not in SCHOLARLY_QUERY_STOPWORDS
         ][:12]
-    terms = list(dict.fromkeys([*phrases, *words]))
+    terms = list(dict.fromkeys(words))
     return " ".join(terms + ["peer reviewed", "scholarly article", "2024"]).strip()
 
 
@@ -1751,12 +1743,6 @@ def _answer_redaction_request(question: str, project: str = None) -> dict:
         for term in summarize.rag.meaningful_words(query):
             if term in name:
                 score += 4
-        if "complaint" in name:
-            score += 8
-        if "replevin" in name:
-            score += 8
-        if source.startswith("Replevin/"):
-            score += 6
         return score
 
     ranked = sorted(sources, key=rank, reverse=True)
@@ -2055,8 +2041,7 @@ def _crossref_scholarly_results(query: str, limit: int = 5) -> list:
         term.lower() for term in re.findall(r"[A-Za-z][A-Za-z'-]{3,}", query or "")
         if term.lower() not in SCHOLARLY_QUERY_STOPWORDS
     }
-    anchor_terms = {"international", "students", "student", "transition",
-                    "adjustment", "acculturation", "higher", "education"}
+
     for item in (data.get("message") or {}).get("items") or []:
         year = _crossref_date_year(item)
         title = " ".join(((item.get("title") or [""])[0] or "").split())
@@ -2068,8 +2053,7 @@ def _crossref_scholarly_results(query: str, limit: int = 5) -> list:
             " ".join(item.get("container-title") or []),
         ]).lower()
         hits = sum(1 for term in query_terms if term in haystack)
-        anchor_hits = sum(1 for term in anchor_terms if term in haystack)
-        if query_terms and hits < 2 and anchor_hits < 2:
+        if query_terms and hits < 2:
             continue
         key = doi or title.lower()
         if key in seen:
@@ -2523,8 +2507,7 @@ def _sensitive_document_context(context: str) -> bool:
              "remove pii", "remove personal information"])
     ):
         return True
-    sources = _sources_from_context(context or "")
-    return any(source.startswith("Replevin/") for source in sources)
+    return False
 
 
 def _source_context_prefixes(context: str) -> set:
