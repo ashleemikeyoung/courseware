@@ -5,12 +5,12 @@ summarize time -- search just answers "which files," this module then reads
 the real file and hands the whole thing to a model.
 
 Two layers:
-  find_documents()  -- "search for Tye" -> which indexed files are relevant.
+  find_documents()  -- search a term -> which indexed files are relevant.
                         Uses the same signal every other search in this
                         codebase uses: rag.search()'s semantic+filename+
                         keyword blend, topped up with citations.py's
                         memory-db lookup for the cases chroma's chunk-level
-                        ranking loses track of (the "Tye" case).
+                        ranking loses track of a specific term.
   summarize_file()  -- one file in, one summary out. No ChromaDB involved
                         at all -- this is the same direct read-the-file
                         approach the original version of this script did,
@@ -25,8 +25,8 @@ Two layers:
 
 CLI usage unchanged for the single-file case, plus a new --search mode:
     python summarize.py path/to/document.pdf
-    python summarize.py --search Tye
-    python summarize.py --search Tye --project GCU
+    python summarize.py --search "search term"
+    python summarize.py --search "search term" --project PROJECT
 """
 
 import argparse
@@ -71,12 +71,12 @@ REFERENCE_QUERY_RE = re.compile(
 def reference_query_term(term: str) -> str:
     """
     Extract the actual target from phrasing like
-    "documents that reference or mention Tye".
+    "documents that reference or mention a named target".
 
     Without this, exhaustive search treats every meaningful word as an OR:
-    "documents", "reference", "mention", and "Tye". That pulls in files that
-    talk about references or documents but never mention Tye, leaving the
-    later summarizer to produce confusing "does not mention Tye" sections.
+    generic words plus the actual target. That pulls in files that talk
+    about references or documents but never mention the target, leaving the
+    later summarizer to produce confusing negative sections.
     """
     match = REFERENCE_QUERY_RE.search(term or "")
     if not match:
@@ -91,8 +91,8 @@ def find_documents(term: str, project: str = None) -> list:
     A top-k semantic search (rag.search()) is deliberately NOT used here.
     Ranking is the wrong tool for "find every file that mentions this": it
     is built to surface the few best matches, not all of them, and that is
-    exactly the shape of the original "Tye" bug -- a real match losing to
-    other, more prominent documents. "Pull every file that mentions Tye"
+    exactly the shape of a real match losing to other, more prominent
+    documents. "Pull every file that mentions the requested term"
     means every file, so this scans every indexed chunk directly instead,
     the same approach diagnose.py and show_chunks.py already use to answer
     "does the index actually contain this."
@@ -102,7 +102,7 @@ def find_documents(term: str, project: str = None) -> list:
     gather_evidence() use, so "meaningful" means the same thing everywhere
     in this codebase) of length >= 3 appears in its filename or in ANY of
     its chunks, case-insensitive. That length-3 threshold mirrors
-    rag.search()'s own keyword pass, so a short name like "Tye" behaves
+    rag.search()'s own keyword pass, so a short name behaves
     consistently whether it's typed here or into search_documents.
 
     Topped up with citations.py's memory-db lookup, for a source whose
@@ -146,7 +146,7 @@ def find_documents(term: str, project: str = None) -> list:
 def detect_file_reference(text: str, project: str = None) -> str:
     """
     If `text` names one specific indexed file -- by its full relative path
-    ("GCU/EBSCO-FullText-07_26_2026.pdf") or just its filename
+    ("Project/example.pdf") or just its filename
     ("EBSCO-FullText-07_26_2026.pdf") -- return that source path. Returns
     None if nothing matches, or if more than one source matches (this
     function's job is recognizing an unambiguous direct reference, not
@@ -154,9 +154,9 @@ def detect_file_reference(text: str, project: str = None) -> str:
     the right tool when there could be several).
 
     This exists for a gap find_documents() and citations.py don't cover:
-    both of those recognize a TOPIC or AUTHOR ("articles by Tye"), but
+    both of those recognize a TOPIC or AUTHOR ("articles by <author>"), but
     someone can also just type the filename itself directly ("summarize
-    GCU/EBSCO-FullText-07_26_2026.pdf"). That query has no author name and
+    Project/example.pdf"). That query has no author name and
     no topic words in it for citations.py to match against, so it used to
     fall straight through to ordinary chunk retrieval -- which treats a
     bare filename as a bag of search words and finds nothing useful, the
@@ -334,7 +334,7 @@ def summarize_source(source: str, model: str = None, max_chars: int = 20000,
 def summarize_search(term: str, project: str = None, model: str = None,
                      max_chars: int = 20000) -> list:
     """
-    "Search for Tye" -> summarize every file that turns up. One dict per
+    Search a term -> summarize every file that turns up. One dict per
     matched source: {"source", "path", "chars", "truncated", "summary",
     "metrics"} on success, or {"source", "path", "error"} if that
     particular file couldn't be read or had nothing extractable -- a bad

@@ -13,7 +13,7 @@ Usage from orchestrator.py or writer.py:
 
     from memory_client import start_session
 
-    session = start_session(project="GCU", machine="mac", mode="qa",
+    session = start_session(project="PROJECT", machine="mac", mode="qa",
                              incognito=False)
     ...
     session.log_turn(question=q, answer=a, model="qwen3:32b",
@@ -296,7 +296,7 @@ def record_citation(source: str, title: str = None, authors: str = None,
                     source_line: str = None, publication_year: int = None,
                     verified_how: str = "manual") -> int:
     """
-    source is rag.py's relative path, e.g. "GCU/EBSCO-FullText-07_26_2026.pdf" --
+    source is rag.py's relative path, e.g. "Project/example.pdf" --
     matching that format is what lets this line up with chunk_ids elsewhere.
     Upserts on source (ON CONFLICT), so re-verifying the same file just
     refreshes the record rather than erroring or duplicating.
@@ -322,7 +322,7 @@ def record_citation(source: str, title: str = None, authors: str = None,
 def find_citation(author: str = None, source: str = None):
     """
     Look up a verified citation by author (substring match) or exact source
-    path. This is the fallback a query like "articles by Tye" should check
+    path. This is the fallback a query like "articles by <author>" should check
     when chroma's own ranking comes up empty -- a direct, un-ranked lookup
     against known-good facts instead of hoping the vector search finds them.
     """
@@ -1069,9 +1069,33 @@ DEFAULT_SEARCH_CRITERIA = [
                 "theme", "themes", "metadata",
             ],
             "content_search": ["which", "what", "find", "show", "identify"],
+            "local_source_reference": [
+                "documents", "document", "files", "file", "sources", "source",
+                "citations", "citation", "library", "index", "indexed",
+                "local", "email", "emails", "mail", "message", "messages",
+            ],
+            "followup_reference": [
+                "each", "these", "those", "them", "they", "listed", "above",
+                "previous", "prior", "aforementioned", "same", "all", "both",
+                "items", "ones", "list", "documents", "document", "files",
+                "file", "sources", "source",
+            ],
             "app_command": [
                 "clear", "reset", "wipe", "reindex", "re-index", "rescan",
                 "refresh index",
+            ],
+            "clear_history": ["clear history", "reset conversation", "wipe chat"],
+            "new_conversation": [
+                "new conversation", "new chat", "start conversation",
+                "start chat",
+            ],
+            "reindex": ["reindex", "re-index", "rescan", "refresh index"],
+            "show_attachments": [
+                "show artifacts", "display artifacts", "open artifacts",
+                "view artifacts", "show attachments", "display attachments",
+                "open attachments", "view attachments", "show images",
+                "display images", "open images", "view images", "show files",
+                "display files", "open files", "view files",
             ],
             "content_question": [
                 "argues", "covers", "discusses", "says", "explain",
@@ -1103,7 +1127,18 @@ DEFAULT_SEARCH_CRITERIA = [
         {"criteria_type": "relation_target", "term": term}
         for term in [
             "concerning", "regarding", "about", "related to", "dealing with",
-            "involving", "mentioning", "referencing",
+            "involving", "mentioning", "referencing", "reference",
+            "references", "referenced", "mention", "mentions", "mentioned",
+            "cite", "cites", "cited", "citing",
+        ]
+    ],
+    *[
+        {"criteria_type": "generic_reference", "term": term}
+        for term in [
+            "it", "that", "this", "that article", "this article",
+            "the article", "that work", "this work", "the work",
+            "that source", "this source", "the source", "that document",
+            "this document", "the document",
         ]
     ],
     *[
@@ -1255,6 +1290,17 @@ DEFAULT_SEARCH_CRITERIA = [
     {"criteria_type": "requirement_text", "group_name": "citation_placement",
      "term": "Place citations next to the claims they support."},
     *[
+        {"criteria_type": "requirement_trigger", "group_name": "current_source", "term": term}
+        for term in ["2024", "2025", "2026", "newer", "recent", "current"]
+    ],
+    *[
+        {"criteria_type": "requirement_trigger", "group_name": "revision_preserve", "term": term}
+        for term in [
+            "rewrite", "re-write", "revise", "above", "previous",
+            "follow this progression",
+        ]
+    ],
+    *[
         {"criteria_type": "requirement_text", "group_name": "apa7_detail", "term": term}
         for term in [
             "Use author-date in-text citations, for example (Author, 2024) or Author (2024).",
@@ -1272,6 +1318,35 @@ DEFAULT_SEARCH_CRITERIA = [
             "Reference list entries must be alphabetized by the first "
             "author's surname (or by title when there is no author).",
         ]
+    ],
+    *[
+        {"criteria_type": "query_stopword", "group_name": "general_research", "term": term}
+        for term in [
+            "researcher", "interested", "exploring", "experiences",
+            "experience", "recently", "moved", "attend", "college",
+            "plans", "conduct", "depth", "interviews", "students",
+            "better", "understand", "challenges", "transition", "period",
+            "study", "research",
+        ]
+    ],
+    *[
+        {"criteria_type": "query_stopword", "group_name": "scholarly", "term": term}
+        for term in [
+            "above", "apa", "begin", "briefly", "citation", "citations",
+            "cite", "considering", "consists", "define", "during", "end",
+            "format", "formatting", "identified", "include", "means",
+            "might", "phenomenon", "paragraph", "paragraphs", "provide",
+            "references", "roughly", "section", "sentences", "support",
+            "through", "view", "week", "words", "write", "researcher",
+            "interested", "plans", "conduct", "better", "understand",
+            "have", "these", "their", "this", "with", "recently",
+            "attend", "period", "cannot", "more", "source", "sources",
+            "peer", "reviewed",
+        ]
+    ],
+    *[
+        {"criteria_type": "query_boost", "group_name": "scholarly", "term": term}
+        for term in ["peer reviewed", "scholarly article", "2024"]
     ],
 ]
 

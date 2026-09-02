@@ -130,29 +130,6 @@ CITATION_ARTIFACT_RE = re.compile(r"\[[\w-]*C\d+\]")
 # just means gather_evidence()'s ordinary path runs instead -- never a hard
 # failure, just a missed shortcut.
 SUMMARIZE_RE = re.compile(r"\bsummar\w*\b", re.IGNORECASE)
-SUMMARY_ACTION_WORDS = (
-    "summarize", "summarise", "summary", "summaries", "recap", "digest",
-    "synopsis", "abstract", "overview", "brief", "condense", "read",
-    "review", "analyze", "analyse", "explain", "describe",
-)
-FOLLOWUP_REFERENCE_WORDS = (
-    "each", "these", "those", "them", "they", "listed", "above",
-    "previous", "prior", "aforementioned", "same", "all", "both",
-    "documents", "document", "files", "file", "sources", "source",
-    "items", "ones", "list",
-)
-SUMMARIZE_LIST_RE = re.compile(
-    r"(?=.*\b(?:" + "|".join(SUMMARY_ACTION_WORDS) + r")\w*\b)"
-    r"(?=.*\b(?:" + "|".join(FOLLOWUP_REFERENCE_WORDS) + r")\b)",
-    re.IGNORECASE,
-)
-SUMMARIZE_REFERENCE_RE = re.compile(
-    r"\b(?:summarize|summarise|summary|summaries|recap|overview|synopsis|"
-    r"digest|review)\w*\b.*\b(?:documents?|files?|sources?)\b.*"
-    r"\b(?:reference|references|referencing|referenced|mention|mentions|"
-    r"mentioned|cites?|cited|citing)\b",
-    re.IGNORECASE,
-)
 DOCUMENT_REFERENCE_SCAN_RE = re.compile(
     r"\b(?:documents?|files?)\b.*\b"
     r"(?:reference|references|referencing|mention|mentions|cites?|citing)\b"
@@ -165,17 +142,12 @@ DOCUMENT_REFERENCE_REVERSE_RE = re.compile(
     r"mentioned|cites?|cited|citing)\b.*\b(?:documents?|files?)\b",
     re.IGNORECASE,
 )
-GENERIC_REFERENCE_TERMS = {
-    "it", "that", "this", "that article", "this article", "the article",
-    "that work", "this work", "the work", "that source", "this source",
-    "the source", "that document", "this document", "the document",
-}
 SOURCE_PATH_RE = re.compile(
     r"\b[A-Za-z0-9_.:-]+/[^\s,;\"'`]+?\."
     r"(?:pdf|docx|md|txt|xlsx|pptx)\b"
 )
 QUOTED_PHRASE_RE = re.compile(r'"([^"]{12,160})"|“([^”]{12,160})”')
-# Catches "...authored by Jordyn C. Tye...", "article by Terzidou...", etc,
+# Catches phrases such as "...authored by Jordan Example..." in prior prose,
 # so a pronoun reference can still resolve to a name even when no file path
 # was ever quoted in the conversation -- only the author's name in prose.
 # Captures up to 3 capitalized words and the search term uses just the last
@@ -188,62 +160,9 @@ DOCUMENT_INVENTORY_RE = re.compile(
 FILENAME_LIST_RE = re.compile(
     r"\b(?:filenames?|file names?|sources?|paths?|list)\b", re.IGNORECASE
 )
-ABSTRACT_FILTER_RE = re.compile(
-    r"\b(?:with|have|has|having|contain(?:s|ing)?|include(?:s|ing)?)\s+"
-    r"(?:an?\s+)?abstract\b|\babstracts?\b",
-    re.IGNORECASE,
-)
-TOPIC_FILTER_RE = re.compile(
-    r"\b(?:about|on|deal(?:s|ing)?\s+with|related\s+to|concerning|"
-    r"cover(?:s|ing)?|discuss(?:es|ing)?)\b",
-    re.IGNORECASE,
-)
-ANNOTATED_BIBLIOGRAPHY_RE = re.compile(
-    r"\b(?:annotated\s+)?bibliograph\w*\b", re.IGNORECASE
-)
-GENRE_ALIASES = {
-    "article": "academic article",
-    "articles": "academic article",
-    "academic article": "academic article",
-    "academic articles": "academic article",
-    "book chapter": "book chapter",
-    "book chapters": "book chapter",
-    "presentation": "presentation",
-    "presentations": "presentation",
-    "chat export": "chat export",
-    "chat exports": "chat export",
-    "coursework": "coursework",
-    "dissertation draft": "dissertation draft",
-    "dissertation drafts": "dissertation draft",
-    "dissertation": "dissertation",
-    "dissertations": "dissertation",
-    "thesis": "dissertation",
-    "legal filing": "legal filing",
-    "legal filings": "legal filing",
-    "contract": "contract/agreement",
-    "contracts": "contract/agreement",
-    "agreement": "contract/agreement",
-    "agreements": "contract/agreement",
-    "interview protocol": "interview protocol",
-    "interview protocols": "interview protocol",
-    "research methods guide": "research methods guide",
-    "research methods guides": "research methods guide",
-}
-
 AUTHOR_MENTION_RE = re.compile(
     r"\b(?:by|authored by|written by|article by|paper by)\s+"
     r"((?:[A-Z][\w'.-]+\s*){1,3})"
-)
-DOCUMENT_METADATA_RE = re.compile(
-    r"\b(?:authors?|who\s+(?:wrote|authored)|written\s+by|document\s+types?|"
-    r"what\s+kind|genres?|subject(?:\s+matter)?|topics?|themes?|metadata)\b",
-    re.IGNORECASE,
-)
-CONTENT_SEARCH_RE = re.compile(
-    r"\b(?:which|what|find|show|identify)\b.*"
-    r"\b(?:article|articles|document|documents|source|sources|file|files|"
-    r"email|emails|mail|message|messages)\b",
-    re.IGNORECASE,
 )
 EMAIL_LOOKUP_RE = re.compile(
     r"\b(?:email|emails|mail|message|messages)\b", re.IGNORECASE
@@ -251,24 +170,6 @@ EMAIL_LOOKUP_RE = re.compile(
 EVIDENCE_LOOKUP_RE = re.compile(
     r"\b(?:do|does|did|can|could)\s+you\s+"
     r"(?:see|find|locate|have|know)\b",
-    re.IGNORECASE,
-)
-APP_COMMAND_RE = re.compile(
-    r"\b(?:clear|reset|wipe|re[-\s]?index|rescan|refresh\s+index)\b",
-    re.IGNORECASE,
-)
-CONTENT_QUESTION_RE = re.compile(
-    r"\b(?:argues?|covers?|discuss(?:es)?|says?|explain|summarize|summary|"
-    r"compare|contrast|synthesize|analyze)\b",
-    re.IGNORECASE,
-)
-REDACTION_REQUEST_RE = re.compile(
-    r"\b(?:redact|redacted|redaction|de[-\s]?identify|remove\s+pii|"
-    r"remove\s+personal\s+information)\b",
-    re.IGNORECASE,
-)
-CONTEXTUAL_SEARCH_RE = re.compile(
-    r"\b(?:this|that|these|those|same|subject|matter|above|it)\b",
     re.IGNORECASE,
 )
 ALL_DOCUMENTS_RE = re.compile(
@@ -281,11 +182,6 @@ NAMED_ENTITY_RE = re.compile(
 RELATION_TARGET_RE = re.compile(
     r"\b(?:concerning|regarding|about|related\s+to|dealing\s+with|"
     r"involving|mentioning|referencing)\s+(.+?)[?.!]*$",
-    re.IGNORECASE,
-)
-WEB_SEARCH_RE = re.compile(
-    r"\b(?:web|internet|online|google|external)\s+search\b|"
-    r"\bsearch\s+(?:the\s+)?(?:web|internet|online|google)\b",
     re.IGNORECASE,
 )
 CODER_REQUEST_RE = re.compile(
@@ -315,13 +211,6 @@ ACADEMIC_FORMAT_RE = re.compile(
     r"paragraphs?|peer[-\s]?reviewed)\b",
     re.IGNORECASE,
 )
-CURRENT_SCHOLARLY_SOURCE_RE = re.compile(
-    r"\b(?:peer[-\s]?reviewed|scholarly|journal|articles?)\b.*"
-    r"\b(?:202[4-9]|newer|recent|current)\b|"
-    r"\b(?:202[4-9]|newer|recent|current)\b.*"
-    r"\b(?:peer[-\s]?reviewed|scholarly|journal|articles?)\b",
-    re.IGNORECASE | re.DOTALL,
-)
 WORD_COUNT_RE = re.compile(r"\b(\d{2,4})\s*-?\s*word\b", re.IGNORECASE)
 PROJECT_READING_RE = re.compile(
     r"\b(?:reading|readings?|course material|source)\s+in\s+"
@@ -341,15 +230,6 @@ PEER_REVIEWED_COUNT_RE = re.compile(
 _COUNT_WORDS = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
-}
-SOURCE_LOOKUP_STOPWORDS = {
-    "about", "above", "additional", "additionally", "also", "another",
-    "appears", "article", "articles", "because", "being", "could", "discuss",
-    "discusses", "discussing", "document", "documents", "file", "files",
-    "following", "found", "from", "into", "legal", "like", "mentions",
-    "one", "other", "provides", "settings", "several", "source", "sources",
-    "specific", "specifically", "that", "their", "there", "these", "this",
-    "those", "use", "uses", "using", "which", "with",
 }
 DOCUMENT_TRUTH_INTENTS = {
     "document_inventory",
@@ -384,7 +264,7 @@ def _ask_terms(criteria_type: str, group_name: str = None,
         and (group_name is None or (row.get("group_name") or "") == group_name)
         and row.get("term")
     }
-    return terms or {str(term).lower() for term in (fallback or [])}
+    return terms
 
 
 def _ask_group_map(criteria_type: str, fallback: dict = None) -> dict:
@@ -396,10 +276,7 @@ def _ask_group_map(criteria_type: str, fallback: dict = None) -> dict:
         term = (row.get("term") or "").lower()
         if group and term:
             groups.setdefault(group, set()).add(term)
-    return groups or {
-        group: {str(term).lower() for term in terms}
-        for group, terms in (fallback or {}).items()
-    }
+    return groups
 
 
 def _term_pattern(terms: set) -> re.Pattern:
@@ -452,45 +329,41 @@ def _requirement_lines(group_name: str, fallback: list) -> list:
         and (row.get("group_name") or "") == group_name
         and row.get("term")
     ]
-    return rows or list(fallback or [])
+    return rows
 
 
 def _requires_abstract(question: str) -> bool:
-    return bool(
-        ABSTRACT_FILTER_RE.search(question or "")
-        or _has_ask_term(
-            question, "abstract_filter",
-            ["abstract", "abstracts", "with abstract", "has abstract"])
-    )
+    return _has_ask_term(question, "abstract_filter")
 
 
 def _has_topic_filter(question: str) -> bool:
-    return bool(
-        TOPIC_FILTER_RE.search(question or "")
-        or _has_ask_term(
-            question, "topic_filter",
-            ["about", "dealing with", "related to", "concerning",
-             "covering", "discussing"])
-    )
+    return _has_ask_term(question, "topic_filter")
 
 
 def _is_app_command(question: str) -> bool:
-    return bool(
-        APP_COMMAND_RE.search(question or "")
-        or _has_ask_term(
-            question, "app_command",
-            ["clear", "reset", "wipe", "reindex", "rescan",
-             "refresh index"])
-    )
+    return _has_ask_term(question, "app_command")
 
 
 def _wants_web_search(question: str) -> bool:
-    return bool(
-        WEB_SEARCH_RE.search(question or "")
-        or _has_ask_term(
-            question, "web_search",
-            ["web search", "internet search", "online search",
-             "external search", "search the web"])
+    return _has_ask_term(question, "web_search")
+
+
+def _has_any_terms(text: str, criteria_type: str, group_name: str = None) -> bool:
+    return bool(_term_pattern(_ask_terms(criteria_type, group_name)).search(text or ""))
+
+
+def _is_summarize_followup(question: str) -> bool:
+    return (
+        _has_ask_term(question, "summarize")
+        and _has_ask_term(question, "followup_reference")
+    )
+
+
+def _is_summarize_reference_request(question: str) -> bool:
+    return (
+        _has_ask_term(question, "summarize")
+        and _has_any_terms(question, "relation_target")
+        and _has_ask_term(question, "local_source_reference")
     )
 
 
@@ -646,23 +519,13 @@ def _plan_query(question: str, context: str = "") -> dict:
     if _is_coder_request(q):
         intent = "code_action"
         primary = "local_workspace"
-    elif (
-        REDACTION_REQUEST_RE.search(q)
-        or _has_ask_term(
-            q, "redaction_request",
-            ["redact", "redacted", "redaction", "de-identify", "deidentify",
-             "remove pii", "remove personal information"])
-    ):
+    elif _has_ask_term(q, "redaction_request"):
         intent = "document_redaction"
         primary = "document_store"
     elif SOURCE_FOLLOWUP_RE.search(q):
         intent = "document_identity"
         primary = "document_registry"
-    elif (
-        ANNOTATED_BIBLIOGRAPHY_RE.search(q)
-        or _has_ask_term(q, "annotated_bibliography",
-                         ["bibliography", "annotated bibliography"])
-    ):
+    elif _has_ask_term(q, "annotated_bibliography"):
         intent = "synthesis"
         primary = "document_registry"
     elif DOCUMENT_INVENTORY_RE.search(q) and (
@@ -670,26 +533,18 @@ def _plan_query(question: str, context: str = "") -> dict:
     ):
         intent = "document_inventory"
         primary = "document_registry"
-    elif (
-        DOCUMENT_METADATA_RE.search(q)
-        or _has_ask_term(q, "document_metadata",
-                         ["author", "authors", "metadata", "subject"])
-    ):
+    elif _has_ask_term(q, "document_metadata"):
         intent = "document_metadata"
         primary = "document_registry"
     elif SUMMARIZE_RE.search(q) and _has_known_source_reference(q, context):
         intent = "document_content"
         primary = "document_store"
-    elif CONTENT_SEARCH_RE.search(q) or (
+    elif _has_ask_term(q, "content_search") or (
         EMAIL_LOOKUP_RE.search(q) and EVIDENCE_LOOKUP_RE.search(q)
     ):
         intent = "cross_document_search"
         primary = "document_store"
-    elif (
-        CONTENT_QUESTION_RE.search(q)
-        or _has_ask_term(q, "content_question",
-                         ["explain", "summarize", "compare", "analyze"])
-    ):
+    elif _has_ask_term(q, "content_question"):
         intent = "document_content"
         primary = "document_store"
     else:
@@ -717,7 +572,7 @@ def _retrieval_query_text(question: str, prior_user_turns: list[str] = None) -> 
     """
     Keep conversational wrappers out of retrieval for email lookups.
 
-    "Do you see an email from Aurora that includes artifacts..." is a natural
+    "Do you see an email from Someone that includes attachments..." is a natural
     UI question, but the extra helper words can drown out the mail header
     signals. The original question still goes to the model; this is only the
     search query.
@@ -746,27 +601,19 @@ def _should_ground_with_local_evidence(question: str, plan: dict,
     q = question or ""
     return bool(
         EMAIL_LOOKUP_RE.search(q)
-        or CONTENT_SEARCH_RE.search(q)
+        or _has_ask_term(q, "content_search")
         or _has_known_source_reference(q, context)
-        or re.search(r"\b(?:documents?|files?|sources?|citations?|"
-                     r"library|index|indexed|local)\b", q, re.IGNORECASE)
+        or _has_ask_term(q, "local_source_reference")
     )
-
-
-GENERAL_RESEARCH_STOPWORDS = {
-    "researcher", "interested", "exploring", "experiences", "experience",
-    "recently", "moved", "attend", "college", "plans", "conduct",
-    "depth", "interviews", "students", "better", "understand",
-    "challenges", "transition", "period", "study", "research",
-}
 
 
 def _filter_general_research_evidence(question: str, evidence: list) -> list:
     if not evidence:
         return []
+    stopwords = _ask_terms("query_stopword", "general_research")
     terms = [
         term for term in summarize.rag.meaningful_words(question)
-        if len(term) >= 4 and term not in GENERAL_RESEARCH_STOPWORDS
+        if len(term) >= 4 and term not in stopwords
     ]
     if not terms:
         return []
@@ -789,28 +636,6 @@ def _count_value(value: str) -> int:
     return _COUNT_WORDS.get(value, 0)
 
 
-# Permanent floor regexes for the three requirement checks whose original
-# detection is a two-part proximity match, not a single literal phrase (see
-# the comment inside _active_assignment_requirements for why these stay
-# hardcoded rather than being fully replaced by database-configured
-# triggers).
-_THREE_SENTENCE_MIN_RE = re.compile(
-    r"\bparagraph\b.*\b3\s+or\s+more\s+sentences\b|"
-    r"\b3\s+or\s+more\s+sentences\b.*\bparagraph\b",
-    re.IGNORECASE,
-)
-_NO_EDGE_CITATION_RE = re.compile(
-    r"\bparagraph\b.*\b(?:cannot|must not|can't)\b.*"
-    r"\b(?:begin|start|end)\b.*\bcitation\b",
-    re.IGNORECASE,
-)
-_CITATION_SUPPORT_RE = re.compile(
-    r"\breferences?\b.*\bno citations?\b|"
-    r"\bcitations?\b.*\bsupport\b.*\bparagraphs?\b",
-    re.IGNORECASE,
-)
-
-
 def _active_assignment_requirements(messages: list) -> list:
     requirements = []
     user_text = "\n".join(
@@ -823,58 +648,27 @@ def _active_assignment_requirements(messages: list) -> list:
     word_counts = [int(m.group(1)) for m in WORD_COUNT_RE.finditer(user_text)]
     if word_counts:
         requirements.append(f"Target length: about {word_counts[-1]} words.")
-    # These five are boolean "is this requirement active" checks with a
-    # short, fixed piece of text -- exactly the pattern already used for
-    # ask_route/abstract_filter phrase matching (_has_ask_term /
-    # _ask_terms), so they're read from search_criteria
-    # (criteria_type="requirement_trigger" for the trigger phrases,
-    # "requirement_text" for the sentence appended) with the original
-    # hardcoded phrasing kept as the fallback -- editable from the Tuning
-    # screen, unchanged in behavior until someone actually edits a row.
-    #
-    # The apa7 *marker* text is intentionally NOT read from
-    # requirement_text: several other functions in this file
-    # (_apa7_issues, _ensure_apa_in_text_citations, _tidy_apa_output, and
-    # the APA7_RULES injection below) detect "is APA active" by checking
-    # for the literal substring "APA 7" inside this requirements list.
-    # Only the trigger phrase is configurable here; the marker sentence
-    # stays fixed so those checks can't be silently broken by an edit to
-    # this wording later.
-    if _has_requirement_trigger(user_text, "apa7", ["apa 7", "apa7", "apa"]):
+    if _has_requirement_trigger(user_text, "apa7"):
         requirements.append("Use APA 7-style academic formatting.")
-    # These three originally used two-part proximity regexes (e.g.
-    # "paragraph" ... "3 or more sentences" appearing anywhere relative to
-    # each other, not as one literal phrase) that a simple trigger-phrase
-    # list can't fully replicate -- a literal-only replacement was tested
-    # and under-detects real phrasing (e.g. "paragraphs" plural, or
-    # "References ... no citations" split across a sentence). To avoid a
-    # silent regression, the original regex stays as a permanent floor;
-    # the database can only ADD more trigger phrases on top of it, never
-    # replace this built-in detection.
-    if (_THREE_SENTENCE_MIN_RE.search(user_text)
-            or _has_requirement_trigger(user_text, "three_sentence_min")):
+    if _has_requirement_trigger(user_text, "three_sentence_min"):
         requirements.extend(_requirement_lines(
             "three_sentence_min",
-            ["Each body paragraph must contain at least three sentences."],
+            [],
         ))
-    if (_NO_EDGE_CITATION_RE.search(user_text)
-            or _has_requirement_trigger(user_text, "no_edge_citation")):
+    if _has_requirement_trigger(user_text, "no_edge_citation"):
         requirements.extend(_requirement_lines(
             "no_edge_citation",
-            ["No body paragraph may begin or end with a citation."],
+            [],
         ))
-    if (_CITATION_SUPPORT_RE.search(user_text)
-            or _has_requirement_trigger(user_text, "citation_support")):
+    if _has_requirement_trigger(user_text, "citation_support"):
         requirements.extend(_requirement_lines(
             "citation_support",
-            ["Every reference must have a supporting in-text citation."],
+            [],
         ))
-    if _has_requirement_trigger(
-        user_text, "citation_placement", ["citations", "cite", "citation"],
-    ):
+    if _has_requirement_trigger(user_text, "citation_placement"):
         requirements.extend(_requirement_lines(
             "citation_placement",
-            ["Place citations next to the claims they support."],
+            [],
         ))
     project_hits = [m.group(1).upper() for m in PROJECT_READING_RE.finditer(user_text)]
     if project_hits:
@@ -893,11 +687,9 @@ def _active_assignment_requirements(messages: list) -> list:
         requirements.append(
             f"Use at least {peer_counts[-1]} verified peer-reviewed source(s)."
         )
-    if re.search(r"\b202[4-9]\b|\bnewer\b|\brecent\b|\bcurrent\b",
-                 user_text, re.IGNORECASE):
+    if _has_requirement_trigger(user_text, "current_source"):
         requirements.append("For current-source requirements, verify sources are 2024 or newer.")
-    if re.search(r"\bre-?write\b|\brevise\b|\babove\b|\bprevious\b|"
-                 r"\bfollow this progression\b", user_text, re.IGNORECASE):
+    if _has_requirement_trigger(user_text, "revision_preserve"):
         requirements.append(
             "When revising, preserve earlier requirements while fixing the latest defect."
         )
@@ -917,43 +709,25 @@ def _requirements_block(requirements: list) -> str:
     return "\n".join(lines)
 
 
-_APA7_RULES_FALLBACK = [
-    "Use author-date in-text citations, for example (Author, 2024) or Author (2024).",
-    "Do not use raw URLs as body citations.",
-    "Every cited source in the body must have one matching References entry.",
-    "Every References entry must be cited in the body.",
-    "References entries should use: Author, A. A. (Year). Title of work. "
-    "Source Title, volume(issue), pages. DOI or URL.",
-    "If metadata is incomplete, use only visible metadata and omit "
-    "unavailable fields; do not invent authors, dates, journals, pages, "
-    "DOIs, or URLs.",
-    "Start the reference list with the heading References.",
-    "Body paragraphs must have at least three sentences and may not begin "
-    "or end with a citation.",
-    "Reference list entries must be alphabetized by the first author's "
-    "surname (or by title when there is no author).",
-]
-
-
 def _apa7_rules_text() -> str:
     """
     The detailed APA formatting rulebook injected into the model's system
-    prompt whenever the apa7 requirement is active. Bullet text is
-    configurable from the Tuning screen (criteria_type="requirement_text",
-    group_name="apa7_detail"); falls back to _APA7_RULES_FALLBACK -- today's
-    hardcoded rules plus the reference-alphabetization rule that
-    _sort_references_section already enforces mechanically -- when no rows
-    are configured yet.
+    prompt whenever the apa7 requirement is active. Bullet text comes from
+    search_criteria rows with criteria_type="requirement_text" and
+    group_name="apa7_detail".
     """
-    bullets = _requirement_lines("apa7_detail", _APA7_RULES_FALLBACK)
+    bullets = _requirement_lines("apa7_detail", [])
     return "APA 7 output rules for this app:\n" + "\n".join(
         f"- {bullet}" for bullet in bullets
     )
 
 
 def _needs_current_scholarly_sources(requirements: list, recent_context: str) -> bool:
-    haystack = "\n".join(requirements or []) + "\n" + (recent_context or "")
-    return bool(CURRENT_SCHOLARLY_SOURCE_RE.search(haystack))
+    joined = "\n".join(requirements or [])
+    return (
+        "verified peer-reviewed" in joined
+        and "2024 or newer" in joined
+    )
 
 
 def _has_external_evidence(evidence: list) -> bool:
@@ -967,23 +741,18 @@ def _needs_external_evidence(question: str, requirements: list,
                              recent_context: str) -> bool:
     haystack = (question or "") + "\n" + (recent_context or "")
     return bool(
-        WEB_SEARCH_RE.search(haystack)
-        or re.search(r"\b(?:outside|external|current|recent|newer)\s+"
-                     r"(?:sources?|references?|citations?|articles?)\b",
-                     haystack, re.IGNORECASE)
+        _wants_web_search(haystack)
+        or _has_requirement_trigger(haystack, "current_source")
         or _needs_current_scholarly_sources(requirements, recent_context)
     )
 
 
-SCHOLARLY_QUERY_STOPWORDS = GENERAL_RESEARCH_STOPWORDS | {
-    "above", "apa", "begin", "briefly", "citation", "citations", "cite",
-    "considering", "consists", "define", "during", "end", "format",
-    "formatting", "identified", "include", "means", "might", "phenomenon",
-    "paragraph", "paragraphs", "provide", "references", "roughly", "section",
-    "sentences", "support", "through", "view", "week", "words", "write",
-    "researcher", "interested", "plans", "conduct", "better", "understand",
-    "have", "these", "their", "this", "with", "recently", "attend", "period",
-}
+def _query_stopwords(group_name: str = None) -> set:
+    return _ask_terms("query_stopword", group_name)
+
+
+def _query_boost_terms(group_name: str = None) -> list:
+    return sorted(_ask_terms("query_boost", group_name))
 
 
 def _scholarly_external_query(question: str, prior_user_turns: list[str] = None) -> str:
@@ -1003,10 +772,11 @@ def _scholarly_external_query(question: str, prior_user_turns: list[str] = None)
         maxsplit=1,
         flags=re.IGNORECASE,
     )[0]
+    stopwords = _query_stopwords("scholarly")
     words = []
     for word in re.findall(r"[A-Za-z][A-Za-z'-]{2,}", topic):
         word = word.lower()
-        if len(word) < 4 or word in SCHOLARLY_QUERY_STOPWORDS:
+        if len(word) < 4 or word in stopwords:
             continue
         if word not in words:
             words.append(word)
@@ -1015,10 +785,10 @@ def _scholarly_external_query(question: str, prior_user_turns: list[str] = None)
     if not words:
         words = [
             word.lower() for word in summarize.rag.meaningful_words(question or "")
-            if len(word) >= 4 and word.lower() not in SCHOLARLY_QUERY_STOPWORDS
+            if len(word) >= 4 and word.lower() not in stopwords
         ][:12]
-    terms = list(dict.fromkeys(words))
-    return " ".join(terms + ["peer reviewed", "scholarly article", "2024"]).strip()
+    terms = list(dict.fromkeys([*words, *_query_boost_terms("scholarly")]))
+    return " ".join(terms).strip()
 
 
 def _external_query_text(question: str, prior_user_turns: list[str] = None,
@@ -1033,10 +803,11 @@ def _external_query_text(question: str, prior_user_turns: list[str] = None,
         maxsplit=1,
         flags=re.IGNORECASE,
     )[0]
+    stopwords = _query_stopwords("scholarly")
     words = []
     for word in summarize.rag.meaningful_words(text):
         word = word.lower()
-        if len(word) < 4 or word in SCHOLARLY_QUERY_STOPWORDS:
+        if len(word) < 4 or word in stopwords:
             continue
         if word not in words:
             words.append(word)
@@ -1639,24 +1410,15 @@ def _source_mining_evidence(question: str, registry: CitationRegistry,
 
 
 def _redaction_search_query(question: str) -> str:
-    redaction_terms = _ask_terms(
-        "ask_route", "redaction_request",
-        ["redact", "redacted", "redaction", "de-identify", "deidentify",
-         "remove pii", "remove personal information"])
+    redaction_terms = _ask_terms("ask_route", "redaction_request")
     q = _term_pattern(redaction_terms).sub(" ", question or "")
-    q = re.sub(r"\b(?:the|a|an|file|document|documents|set|copy|copies)\b",
-               " ", q, flags=re.IGNORECASE)
+    for term in _ask_terms("source_lookup_stopword"):
+        q = _term_pattern({term}).sub(" ", q)
     return " ".join(q.split()) or (question or "")
 
 
 def _answer_redaction_request(question: str, project: str = None) -> dict:
-    if not (
-        REDACTION_REQUEST_RE.search(question or "")
-        or _has_ask_term(
-            question, "redaction_request",
-            ["redact", "redacted", "redaction", "de-identify", "deidentify",
-             "remove pii", "remove personal information"])
-    ):
+    if not _has_ask_term(question, "redaction_request"):
         return None
 
     source = summarize.detect_file_reference(question, project=project)
@@ -1787,10 +1549,7 @@ def _answer_redaction_request(question: str, project: str = None) -> dict:
 
 def _inventory_genre(question: str) -> str:
     q = " ".join((question or "").lower().split())
-    fallback = {}
-    for alias, genre in GENRE_ALIASES.items():
-        fallback.setdefault(genre, set()).add(alias)
-    for genre, aliases in _ask_group_map("genre_alias", fallback).items():
+    for genre, aliases in _ask_group_map("genre_alias").items():
         if _term_pattern(aliases).search(q):
             return genre
     if re.search(r"\bfiles?\b|\bdocuments?\b|\bsources?\b", q):
@@ -2039,7 +1798,7 @@ def _crossref_scholarly_results(query: str, limit: int = 5) -> list:
     seen = set()
     query_terms = {
         term.lower() for term in re.findall(r"[A-Za-z][A-Za-z'-]{3,}", query or "")
-        if term.lower() not in SCHOLARLY_QUERY_STOPWORDS
+        if term.lower() not in _query_stopwords("scholarly")
     }
 
     for item in (data.get("message") or {}).get("items") or []:
@@ -2482,13 +2241,7 @@ def _answer_document_inventory(question: str, project: str = None):
 
 
 def _contextual_document_query(question: str, context: str = "") -> str:
-    if not (
-        CONTEXTUAL_SEARCH_RE.search(question or "")
-        or _has_ask_term(
-            question, "contextual_search",
-            ["this", "that", "these", "those", "same", "subject",
-             "matter", "above", "it"])
-    ):
+    if not _has_ask_term(question, "contextual_search"):
         return question or ""
     hints = []
     for source in _sources_from_context(context or "")[-8:]:
@@ -2499,13 +2252,7 @@ def _contextual_document_query(question: str, context: str = "") -> str:
 
 
 def _sensitive_document_context(context: str) -> bool:
-    if (
-        REDACTION_REQUEST_RE.search(context or "")
-        or _has_ask_term(
-            context, "redaction_request",
-            ["redact", "redacted", "redaction", "de-identify", "deidentify",
-             "remove pii", "remove personal information"])
-    ):
+    if _has_ask_term(context, "redaction_request"):
         return True
     return False
 
@@ -2525,21 +2272,14 @@ def _exhaustive_document_query(question: str, context: str = "") -> str:
     if entities:
         return " ".join(entities)
 
-    relation_terms = _ask_terms(
-        "relation_target",
-        fallback=[
-            "concerning", "regarding", "about", "related to", "dealing with",
-            "involving", "mentioning", "referencing",
-        ])
+    relation_terms = _ask_terms("relation_target")
     relation_pattern = _term_pattern(relation_terms)
     match = RELATION_TARGET_RE.search(question or "")
     if match:
         target = match.group(1).strip(" \t\r\n\"'`“”‘’.?!")
         words = [
             word for word in summarize.rag.meaningful_words(target)
-            if word not in _ask_terms(
-                "source_lookup_stopword",
-                fallback=SOURCE_LOOKUP_STOPWORDS)
+            if word not in _ask_terms("source_lookup_stopword")
         ]
         if words:
             return " ".join(words)
@@ -2548,9 +2288,7 @@ def _exhaustive_document_query(question: str, context: str = "") -> str:
         target = (question or "")[relation_match.end():].strip(" \t\r\n\"'`“”‘’.?!")
         words = [
             word for word in summarize.rag.meaningful_words(target)
-            if word not in _ask_terms(
-                "source_lookup_stopword",
-                fallback=SOURCE_LOOKUP_STOPWORDS)
+            if word not in _ask_terms("source_lookup_stopword")
         ]
         if words:
             return " ".join(words)
@@ -2595,7 +2333,7 @@ def _source_has_terms(source: str, terms: list, require_all: bool = False) -> bo
 
 def _answer_document_store_search(question: str, context: str = "",
                                   project: str = None):
-    if not CONTENT_SEARCH_RE.search(question or ""):
+    if not _has_ask_term(question, "content_search"):
         return None
     if FILENAME_LIST_RE.search(question or "") or re.search(r"\bhow many\b", question or "", re.I):
         return None
@@ -2605,9 +2343,8 @@ def _answer_document_store_search(question: str, context: str = "",
     all_docs = (
         ALL_DOCUMENTS_RE.search(question or "")
         or (
-            _has_ask_term(question, "all_documents", ["all", "every", "each"])
-            and re.search(r"\b(?:documents?|files?|sources?)\b",
-                          question or "", re.I)
+            _has_ask_term(question, "all_documents")
+            and _has_ask_term(question, "local_source_reference")
         )
     )
     if all_docs:
@@ -2760,8 +2497,7 @@ def _lookup_words(text: str) -> list:
     words = re.findall(r"[A-Za-z][A-Za-z0-9'-]{3,}", text or "")
     out = []
     seen = set()
-    stopwords = _ask_terms(
-        "source_lookup_stopword", fallback=SOURCE_LOOKUP_STOPWORDS)
+    stopwords = _ask_terms("source_lookup_stopword")
     for word in words:
         key = word.lower().strip("'")
         if key in stopwords or key in seen:
@@ -2885,9 +2621,9 @@ def _citation_for_source(source: str) -> dict:
 
 
 def _answer_document_metadata(question: str, context: str, project: str = None):
-    if not DOCUMENT_METADATA_RE.search(question or ""):
+    if not _has_ask_term(question, "document_metadata"):
         return None
-    if CONTENT_SEARCH_RE.search(question or "") and _has_topic_filter(question):
+    if _has_ask_term(question, "content_search") and _has_topic_filter(question):
         return None
 
     sources = _sources_from_context(
@@ -3071,12 +2807,10 @@ def _answer_annotated_bibliography(question: str, model: str,
     few passages and can mistake one article for the entire requested set.
     The registry is the source of truth for which files are the articles.
     """
-    if not ANNOTATED_BIBLIOGRAPHY_RE.search(question or ""):
+    if not _has_ask_term(question, "annotated_bibliography"):
         return None
 
     genre = _inventory_genre(question)
-    if genre is None and re.search(r"\barticles?\b", question or "", re.I):
-        genre = "academic article"
 
     exclude_genres = ["chat export"]
     if genre == "academic article":
@@ -3180,7 +2914,7 @@ def _document_reference_term(question: str) -> str:
     if not match:
         return ""
     term = match.group(1).strip(" \t\r\n\"'`“”‘’.?!")
-    # "any other documents that reference Tye" should search for the object
+    # "any other documents that reference <author>" should search for the object
     # of "reference", not for the full tail if the user adds a soft qualifier.
     term = re.sub(r"^(?:author|article|work|source)\s+", "", term,
                   flags=re.IGNORECASE).strip()
@@ -3191,7 +2925,7 @@ def _reference_terms_from_context(term: str, context: str, project: str = None) 
     """
     Resolve a generic pronoun reference ("this article", "that source") to
     an actual search term. This used to be hardcoded to only recognize the
-    literal word "Tye" -- fine for the one test case that originally
+    literal extracted pronoun phrase -- fine for one test case that originally
     surfaced this bug, but it meant every OTHER pronoun reference (a
     different author, a future source) silently failed the identical way:
     the regex-extracted term stayed "this article", the index has no file
@@ -3212,7 +2946,7 @@ def _reference_terms_from_context(term: str, context: str, project: str = None) 
     the whole answer, same failure philosophy as citations.py's topup().
     """
     clean = " ".join((term or "").lower().split())
-    if clean and clean not in GENERIC_REFERENCE_TERMS:
+    if clean and clean not in _ask_terms("generic_reference"):
         return [term]
 
     terms = []
@@ -3311,7 +3045,7 @@ def _sources_from_context(context: str, project: str = None) -> list:
 
 def _summarize_context_sources(question: str, context: str, model: str,
                                project: str = None) -> dict:
-    if not SUMMARIZE_LIST_RE.search(question or ""):
+    if not _is_summarize_followup(question):
         return None
     sources = _sources_from_context(context, project=project)
     if not sources:
@@ -3345,7 +3079,7 @@ def _summarize_context_sources(question: str, context: str, model: str,
 
 def _summarize_reference_sources(question: str, model: str,
                                  project: str = None) -> dict:
-    if not SUMMARIZE_REFERENCE_RE.search(question or ""):
+    if not _is_summarize_reference_request(question):
         return None
 
     term = summarize.reference_query_term(question)
@@ -3388,7 +3122,7 @@ def _document_reference_scan(question: str, registry: CitationRegistry,
                              project: str = None, context: str = "") -> list:
     """
     Add an exhaustive source-list evidence item for questions like
-    "what documents mention Tye?"
+    "what documents mention <topic>?"
 
     Ordinary retrieval is top-k by design. This scan asks the index a different
     question: which indexed files contain the term anywhere in filename,
@@ -3555,11 +3289,11 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                     store_search, last_user, plan, project=scope,
                     improvements=["mined_document_store_before_chroma"])
 
-    # A direct file reference ("summarize GCU/EBSCO-FullText-07_26_2026.pdf")
+    # A direct file reference ("summarize Project/example.pdf")
     # names one specific file, not a topic -- gather_evidence() below would
     # just treat the filename as a bag of words to search chunks for, which
     # finds nothing useful (that query has no author name for citations.py
-    # to match either, so even the Tye-style top-up never fires). When the
+    # to match either, so even the citation-record top-up never fires). When the
     # question both names an exact indexed file and asks to summarize it,
     # read that file directly instead of going through chunk retrieval at
     # all. This is the same engine summarize.py's CLI and orchestrator.py's
@@ -3630,7 +3364,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             # Fold in a short run of RECENT user turns, not just the single
             # immediately-preceding one. One-turn fold-in breaks down
             # exactly the way it just did in practice: a topic established
-            # in turn 1 ("articles by Tye") survived into turn 2 fine, but
+            # in turn 1 ("articles by <author>") survived into turn 2 fine, but
             # by turn 3 the immediately-preceding turn ("what's the
             # filename?") had ALSO drifted away from the original keyword,
             # so folding in only that one turn lost "tye" just as

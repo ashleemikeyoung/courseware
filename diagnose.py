@@ -6,7 +6,7 @@ entirely and asks the index directly: is anything with this name indexed as a
 filename, does any chunk's actual extracted text contain it, what project is
 it tagged under, and what does search() itself return for it right now.
 
-    python diagnose.py Tye
+    python diagnose.py "name or term"
 
 Read the sections in order. The first one that comes back empty or wrong is
 almost always the actual problem; everything after it is just downstream of

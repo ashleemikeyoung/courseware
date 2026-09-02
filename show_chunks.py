@@ -7,8 +7,8 @@ name appears with enough surrounding context to be useful, or only as a bare
 fragment, a citation reference, a passing mention, that doesn't actually say
 anything on its own.
 
-    python show_chunks.py Tye
-    python show_chunks.py Tye --project GCU
+    python show_chunks.py "search term"
+    python show_chunks.py "search term" --project PROJECT
 """
 
 import argparse
@@ -19,7 +19,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("term")
     ap.add_argument("--project", default=None,
-                    help="restrict to one project, e.g. GCU")
+                    help="restrict to one project")
     ap.add_argument("--max-chars", type=int, default=500,
                     help="how much of each chunk to show around the match")
     args = ap.parse_args()

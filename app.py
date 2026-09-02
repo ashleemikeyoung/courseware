@@ -667,7 +667,8 @@ CRITERIA_TYPES = {
     "domain_trigger", "domain_term", "document_section", "genre_marker",
     "theme_marker", "subject_stop_label", "ask_route", "genre_alias",
     "source_lookup_stopword", "relation_target", "redaction_profile",
-    "redaction_rule", "redaction_protection",
+    "redaction_rule", "redaction_protection", "generic_reference",
+    "query_stopword", "query_boost",
     # Assignment-formatting requirements (Ask screen) -- see ask.py's
     # _has_requirement_trigger / _requirement_lines and DMAIC.md.
     "requirement_trigger", "requirement_text",

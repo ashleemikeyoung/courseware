@@ -773,6 +773,9 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
             <option value="genre_alias">Genre alias</option>
             <option value="source_lookup_stopword">Source lookup stopword</option>
             <option value="relation_target">Relation target</option>
+            <option value="generic_reference">Generic reference</option>
+            <option value="query_stopword">Query stopword</option>
+            <option value="query_boost">Query boost</option>
             <option value="redaction_profile">Redaction profile</option>
             <option value="redaction_rule">Redaction rule</option>
             <option value="redaction_protection">Redaction protection</option>
@@ -809,6 +812,9 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
             <option value="genre_alias">Genre alias</option>
             <option value="source_lookup_stopword">Source lookup stopword</option>
             <option value="relation_target">Relation target</option>
+            <option value="generic_reference">Generic reference</option>
+            <option value="query_stopword">Query stopword</option>
+            <option value="query_boost">Query boost</option>
             <option value="redaction_profile">Redaction profile</option>
             <option value="redaction_rule">Redaction rule</option>
             <option value="redaction_protection">Redaction protection</option>
@@ -1593,6 +1599,14 @@ function rememberAskPrompt(text){
   renderAskHistory();
 }
 
+async function loadAskCommandCriteria(){
+  if (!STATE.project) return;
+  try {
+    const j = await (await fetch(qp("/api/tuning"))).json();
+    STATE.tuning.criteria = j.criteria || STATE.tuning.criteria || [];
+  } catch(e){}
+}
+
 function clearAskState(){
   STATE.chat.messages = [];
   STATE.chat.history = [];
@@ -1708,10 +1722,15 @@ async function restoreAskConversation(id){
 
 function appCommand(text){
   const q = (text || "").toLowerCase().replace(/[-_]/g, " ");
-  const clearHistory = /\b(clear|reset|wipe)\b.*\b(history|conversation|chat)\b/.test(q);
-  const newConversation = /\b(new|start)\b.*\b(conversation|chat)\b/.test(q);
-  const reindex = /\b(reindex|re index|rescan|scan|refresh index)\b/.test(q);
-  const showArtifacts = /\b(show|display|open|view)\b.*\b(artifacts?|attachments?|images?|files?)\b/.test(q);
+  const has = group => (STATE.tuning.criteria || []).some(row =>
+    row.enabled !== 0 &&
+    row.criteria_type === "ask_route" &&
+    row.group_name === group &&
+    q.includes(String(row.term || "").toLowerCase()));
+  const clearHistory = has("clear_history");
+  const newConversation = has("new_conversation");
+  const reindex = has("reindex");
+  const showArtifacts = has("show_attachments");
   if (showArtifacts && latestChatAttachments().length) return "show_attachments";
   if (newConversation) return "new_conversation";
   if (clearHistory && reindex) return "clear_history_reindex";
@@ -2661,6 +2680,7 @@ async function switchProject(name){
   $("#chatGlosses").innerHTML = ""; renderChat();
   $("#draftlog").style.display = "none"; $("#outlog").style.display = "none";
   await loadStatus();
+  await loadAskCommandCriteria();
   await loadAskConversation();
   if (STATE.project === "__all__"){
     STATE.outline = null; renderOutline();

@@ -1355,11 +1355,7 @@ def _derive_document_label(source: str, text: str) -> str:
 
 
 def _document_sections(text: str) -> dict:
-    keywords = _criteria_terms("document_section") or {
-        "abstract", "introduction", "literature review", "method", "methods",
-        "methodology", "results", "findings", "discussion", "conclusion",
-        "recommendations", "implications", "limitations", "references",
-    }
+    keywords = _criteria_terms("document_section")
     hits = {}
     for i, line in enumerate(text.splitlines()):
         clean = re.sub(r"[^a-z ]+", "", line.strip().lower())
@@ -1383,97 +1379,52 @@ def _document_genres(source: str, text: str) -> list:
 
     # Container/export formats first. These may discuss many topics, but the
     # file itself is not an article, legal filing, or interview protocol.
-    if any(term in lower[:4000] for term in (
-        _criteria_group_terms("genre_marker", "chat_export") or {
-        "chat history", "conversation export", "conversation with claude",
-        "working session", "record of a research and writing session",
-    })):
+    if any(term in lower[:4000] for term in
+           _criteria_group_terms("genre_marker", "chat_export")):
         add("chat export")
         return genres
 
-    research_guide_terms = (
-        _criteria_group_terms("genre_marker", "research_methods_guide")
-        or {"sage research methods"}
-    )
+    research_guide_terms = _criteria_group_terms("genre_marker", "research_methods_guide")
     if any(term in lower[:4000] for term in research_guide_terms):
         add("research methods guide")
-        book_chapter_terms = (
-            _criteria_group_terms("genre_marker", "book_chapter")
-            or {"doi:", "online isbn"}
-        )
+        book_chapter_terms = _criteria_group_terms("genre_marker", "book_chapter")
         if any(term in lower[:4000] for term in book_chapter_terms):
             add("book chapter")
         return genres
 
-    dissertation_template_terms = (
-        _criteria_group_terms("genre_marker", "dissertation_template")
-        or {"dissertation template", "insert your dissertation title here"}
-    )
+    dissertation_template_terms = _criteria_group_terms("genre_marker", "dissertation_template")
     if (any(term in filename for term in dissertation_template_terms)
             or any(term in lower[:4000] for term in dissertation_template_terms)):
         add("dissertation template")
         return genres
 
-    dissertation_markers = _criteria_group_terms("genre_marker", "dissertation") or {
-        "a dissertation presented to",
-        "a dissertation submitted",
-        "doctoral dissertation",
-        "doctor of philosophy",
-        "degree of doctor",
-        "dissertation committee",
-        "proquest dissertations",
-    }
+    dissertation_markers = _criteria_group_terms("genre_marker", "dissertation")
     if (
-        "dissertation" in filename
+        any(term in filename for term in dissertation_markers)
         or any(term in lower[:10000] for term in dissertation_markers)
     ):
         add("dissertation")
         return genres
 
-    research_book_filename_terms = (
-        _criteria_group_terms("genre_marker", "research_book_filename") or {
-        "an-applied-guide-to-research-designs",
-        "an-introduction-to-qualitative-research",
-        "constructing-social-research",
-        "doing-quantitative-research",
-        "introducing-qualitative-research",
-        "qualitative-data-analysis",
-        "qualitative-data-collection-tools",
-        "quantitative-research-in-education",
-        "research-methods-and-statistics",
-        "research-with-children",
-        "social-research-theory-methods",
-        "understanding-and-evaluating-research",
-        "qualitativeresearchag",
-        "sharanb.merriam",
-    })
-    research_book_head_markers = (
-        _criteria_group_terms("genre_marker", "research_book_head") or {
-        "library of congress cataloging",
-        "all rights reserved. may not be reproduced",
-        "sage publications",
-        "sage research methods",
-        "isbn",
-    })
+    research_book_filename_terms = _criteria_group_terms(
+        "genre_marker", "research_book_filename")
+    research_book_head_markers = _criteria_group_terms(
+        "genre_marker", "research_book_head")
     if suffix == ".pdf" and (
         any(term in filename for term in research_book_filename_terms)
         or (
             sum(1 for term in research_book_head_markers if term in lower[:8000]) >= 2
-            and "research" in lower[:8000]
+            and any(term in lower[:8000] for term in
+                    _criteria_group_terms("theme_marker", "research_methods"))
         )
     ):
         add("research methods guide")
         return genres
 
-    coursework_terms = _criteria_group_terms("genre_marker", "coursework") or {
-        "topic4 dq", "topic5 dq", "topic6 dq", "topic7 dq", " dq1", " dq2",
-        "summary of the problem space", "population to be studied",
-        "variables (excluding demographics)", "discussion question",
-    }
+    coursework_terms = _criteria_group_terms("genre_marker", "coursework")
     if any(term in lower[:6000] or term in filename for term in coursework_terms):
         coursework_dissertation_terms = (
             _criteria_group_terms("genre_marker", "coursework_dissertation")
-            or {"problem space", "dissertation"}
         )
         if any(term in lower[:6000] for term in coursework_dissertation_terms):
             add("dissertation draft")
@@ -1481,36 +1432,23 @@ def _document_genres(source: str, text: str) -> list:
             add("coursework")
         return genres
 
-    presentation_terms = (
-        _criteria_group_terms("genre_marker", "presentation")
-        or {"slide 1:", "speaker notes"}
-    )
+    presentation_terms = _criteria_group_terms("genre_marker", "presentation")
     if suffix == ".pptx" or any(term in lower for term in presentation_terms):
         add("presentation")
         return genres
 
-    spreadsheet_terms = _criteria_group_terms("genre_marker", "spreadsheet") or {"sheet:"}
+    spreadsheet_terms = _criteria_group_terms("genre_marker", "spreadsheet")
     if suffix in {".xlsx", ".xls"} or any(lower.startswith(term) for term in spreadsheet_terms):
         add("spreadsheet")
         return genres
 
-    academic_sections = _criteria_group_terms("genre_marker", "academic_section") or {
-        "abstract", "introduction", "method", "methods", "methodology",
-        "results", "findings", "discussion", "conclusion", "references",
-    }
+    academic_sections = _criteria_group_terms("genre_marker", "academic_section")
     head = lower[:8000]
     article_filename = bool(re.match(r"^\d+-\d+-\d+-", filename))
     article_filename_terms = (
-        _criteria_group_terms("genre_marker", "academic_filename") or {
-        "ebsco-fulltext", "s2.0-", "feduc-", "societies-", "jmir_",
-        "determinants_of", "div-class-title", "sc-96", "ej",
-    })
+        _criteria_group_terms("genre_marker", "academic_filename"))
     article_filename = article_filename or any(token in filename for token in article_filename_terms)
-    scholarly_markers = _criteria_group_terms("genre_marker", "scholarly_marker") or {
-        "doi:", "journal", " vol.", " volume ", " issue ", "abstract",
-        "keywords", "received", "accepted", "publication year", "publisher information",
-        "type original research", "original research", "article",
-    }
+    scholarly_markers = _criteria_group_terms("genre_marker", "scholarly_marker")
     marker_hits = sum(1 for marker in scholarly_markers if marker in head)
     if suffix == ".pdf" and (
         (article_filename and marker_hits >= 1)
@@ -1519,32 +1457,29 @@ def _document_genres(source: str, text: str) -> list:
     ):
         add("academic article")
 
-    legal_filing_terms = _criteria_group_terms("genre_marker", "legal_filing") or {
-        "plaintiff", "defendant", "case no", "court", "pursuant to",
-        "complaint", "affidavit", "judgment", "dismissal", "certificate of service",
-    }
+    legal_filing_terms = _criteria_group_terms("genre_marker", "legal_filing")
     if "academic article" not in genres and sum(1 for term in legal_filing_terms if term in head) >= 3:
         add("legal filing")
 
-    agreement_head_terms = _criteria_group_terms("genre_marker", "contract_agreement") or {
-        "settlement agreement", "quitclaim", "contract", "agreement made",
-        "executed agreement", "this agreement", "release and settlement",
-    }
+    agreement_head_terms = _criteria_group_terms("genre_marker", "contract_agreement")
     if "academic article" not in genres and any(term in head for term in agreement_head_terms):
         add("contract/agreement")
 
     if (
         any(term in lower[:8000] for term in (
             _criteria_group_terms("genre_marker", "interview_protocol")
-            or {"interview protocol", "interview questions"}
         ))
-        or ("participant" in lower[:8000] and "interview" in lower[:8000])
+        or (
+            any(term in lower[:8000] for term in
+                _criteria_group_terms("theme_marker", "research_methods"))
+            and any(term in lower[:8000] for term in
+                    _criteria_group_terms("genre_marker", "interview_protocol"))
+        )
     ):
         add("interview protocol")
 
     literature_review_terms = (
         _criteria_group_terms("genre_marker", "literature_review")
-        or {"systematic review", "scoping review", "review of the literature"}
     )
     if (
         "literature review" in sections
@@ -1552,7 +1487,7 @@ def _document_genres(source: str, text: str) -> list:
     ):
         add("literature review")
 
-    notes_terms = _criteria_group_terms("genre_marker", "notes") or {"meeting notes"}
+    notes_terms = _criteria_group_terms("genre_marker", "notes")
     if suffix in {".md", ".txt"} or any(term in lower[:4000] for term in notes_terms):
         add("notes")
 
@@ -1562,20 +1497,15 @@ def _document_themes(text: str) -> list:
     lower = text.lower()
     themes = []
 
-    if any(term in lower for term in (
-        _criteria_group_terms("theme_marker", "ai_adoption") or {
-        "ai adoption", "adoption of ai", "artificial intelligence adoption",
-        "generative ai adoption", "adopt generative ai", "ai usage",
-    })):
+    if any(term in lower for term in
+           _criteria_group_terms("theme_marker", "ai_adoption")):
         themes.append("ai adoption")
 
     training_terms = (
-        _criteria_group_terms("theme_marker", "training_usability") or
-        {"training", "ease of use", "perceived usefulness"}
+        _criteria_group_terms("theme_marker", "training_usability")
     )
     technology_terms = (
-        _criteria_group_terms("theme_marker", "technology_context") or
-        {"ai", "artificial intelligence", "technology", "system"}
+        _criteria_group_terms("theme_marker", "technology_context")
     )
     if (
         any(term in lower for term in training_terms)
@@ -1583,26 +1513,16 @@ def _document_themes(text: str) -> list:
     ):
         themes.append("training and usability")
 
-    if any(term in lower for term in (
-        _criteria_group_terms("theme_marker", "legal_privilege") or {
-        "attorney-client privilege", "attorney client privilege",
-        "work-product privilege", "work product doctrine", "work product privilege",
-        "client confidentiality", "legal privilege", "privileged communication",
-    })):
+    if any(term in lower for term in
+           _criteria_group_terms("theme_marker", "legal_privilege")):
         themes.append("legal privilege")
 
-    if any(term in lower for term in (
-        _criteria_group_terms("theme_marker", "research_methods") or {
-        "methodology", "qualitative", "quantitative", "research design",
-        "interview protocol", "data collection", "sample size",
-    })):
+    if any(term in lower for term in
+           _criteria_group_terms("theme_marker", "research_methods")):
         themes.append("research methods")
 
-    if any(term in lower for term in (
-        _criteria_group_terms("theme_marker", "risk_governance") or {
-        "risk governance", "ai governance", "compliance", "legal ethics",
-        "confidentiality", "privacy risk", "ethical risk", "risk management",
-    })):
+    if any(term in lower for term in
+           _criteria_group_terms("theme_marker", "risk_governance")):
         themes.append("risk and governance")
 
     return themes
@@ -1612,7 +1532,6 @@ def _document_subject_terms(text: str) -> list:
     lines = _meaningful_header_lines(text)
     stop_labels = (
         _criteria_terms("subject_stop_label")
-        or {"description", "abstract", "source", "publisher information"}
     )
     subjects = _labeled_block(lines, "Subject Terms", stop_labels)
     keywords = []
@@ -1820,13 +1739,6 @@ def _fulltext_candidates(question: str, n_results: int, project: str = None):
     return out
 
 
-_BASIC_STOPWORDS_FALLBACK = {
-    "a", "an", "the", "and", "or", "but", "of", "in", "on", "at", "to",
-    "for", "with", "from", "by", "as", "is", "are", "was", "were", "be",
-    "been", "being", "do", "does", "did", "has", "have", "had", "not",
-    "this", "that", "these", "those", "it", "its", "you", "your", "who",
-    "what", "when", "where", "why", "how", "which", "about",
-}
 _SEARCH_CRITERIA_CACHE = {"loaded_at": 0.0, "rows": []}
 _SEARCH_CRITERIA_TTL_SECONDS = 30
 
@@ -1915,14 +1827,14 @@ def meaningful_words(text: str) -> list:
     name) are exactly the kind of term someone searches for, and a bare
     length cutoff drops them silently. A stopword list is the right tool:
     keep every word that isn't a common English function word, regardless
-    of length or case, so a name like "Tye" survives capitalized or not.
+    of length or case, so short proper nouns survive capitalized or not.
 
     Shared by search()'s filename/content matching and by writer.py's
     gather_evidence(), so both retrieval paths treat a question's meaningful
     terms identically rather than drifting apart over two copies of this.
     """
     words = []
-    stopwords = _criteria_terms("stopword") or _BASIC_STOPWORDS_FALLBACK
+    stopwords = _criteria_terms("stopword")
     low_signal = _criteria_terms("low_signal")
     for clean in _terms(text):
         if (clean and len(clean) >= 2 and clean not in stopwords
@@ -1936,7 +1848,7 @@ def _word_count_score(text: str, words: list) -> int:
 
 
 def _meaningful_phrases(text: str) -> list:
-    stopwords = _criteria_terms("stopword") or _BASIC_STOPWORDS_FALLBACK
+    stopwords = _criteria_terms("stopword")
     tokens = [t for t in _terms(text) if t not in stopwords and len(t) >= 2]
     phrases = []
     for size in (3, 2):

@@ -14,10 +14,10 @@ back empty, the bug is somewhere in retrieval/matching (gather_evidence,
 find_citation), not in summarization itself -- narrows the search space by
 half before you go looking further.
 
-    python test_summarize.py Tye
-    python test_summarize.py "EBSCO-FullText-07_26_2026.pdf"
-    python test_summarize.py Tye --project GCU
-    python test_summarize.py Tye --model qwen3:32b
+    python test_summarize.py "filename term"
+    python test_summarize.py "example.pdf"
+    python test_summarize.py "filename term" --project PROJECT
+    python test_summarize.py "filename term" --model qwen3:32b
 """
 
 import argparse
@@ -66,7 +66,7 @@ def load_full_text(source: str) -> str:
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("term", help="filename or a substring of one, e.g. 'Tye'")
+    ap.add_argument("term", help="filename or a substring of one")
     ap.add_argument("--project", default=None,
                     help="restrict the filename search to one project")
     ap.add_argument("--model", default=ASK_MODEL,
