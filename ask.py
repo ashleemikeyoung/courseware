@@ -893,6 +893,12 @@ APA_AUTHOR_DATE_RE = re.compile(
     r"\([A-Z][A-Za-z' -]+(?:\s+et al\.|(?:\s*&\s*[A-Z][A-Za-z' -]+)?)?,\s*"
     r"(?:(?:19|20)\d{2}[a-z]?|n\.d\.)\)"
 )
+APA_TERMINAL_CITATION_RE = re.compile(
+    r"(?P<citation>\([^)]+,\s*(?:n\.d\.|(?:19|20)\d{2}[a-z]?)\)"
+    r"(?:\s*\[(?:[a-z0-9]+-)?C\d+\])?)"
+    r"(?P<punc>[.!?])?\s*$",
+    re.IGNORECASE,
+)
 
 
 def _references_section(text: str) -> str:
@@ -1177,15 +1183,6 @@ def _ensure_apa_in_text_citations(text: str, requirements: list,
     return "".join(paragraphs).rstrip() + refs
 
 
-_APA_PARAGRAPH_CLOSERS = [
-    "The implications of this point for the broader research design are "
-    "discussed next.",
-    "This detail shapes how the remaining considerations should be read.",
-    "The next paragraph builds directly on that idea.",
-    "That distinction matters for how the rest of this analysis proceeds.",
-]
-
-
 def _sort_references_section(refs: str) -> str:
     """
     APA 7 requires the References list to be alphabetized by the first
@@ -1211,6 +1208,28 @@ def _sort_references_section(refs: str) -> str:
     return heading + "\n\n".join(entries)
 
 
+def _move_terminal_citation_inside_paragraph(paragraph: str) -> str:
+    """
+    Enforce the user's APA paragraph-edge rule without adding a conspicuous
+    stock sentence after every citation. When a paragraph ends with an
+    author-date citation, keep the citation in the same final sentence but
+    make it medial rather than terminal.
+    """
+    stripped = paragraph.strip()
+    match = APA_TERMINAL_CITATION_RE.search(stripped)
+    if not match:
+        return paragraph
+    citation = match.group("citation").strip()
+    punc = match.group("punc") or "."
+    before = stripped[:match.start()].rstrip()
+    if not before:
+        return paragraph
+    before = re.sub(r"\s+", " ", before)
+    if before.endswith((",", ";", ":")):
+        return f"{before} {citation}, which supports this interpretation{punc}"
+    return f"{before} {citation}, which supports this interpretation{punc}"
+
+
 def _tidy_apa_output(text: str, requirements: list) -> str:
     if not any("APA 7" in item for item in requirements or []):
         return text
@@ -1225,17 +1244,62 @@ def _tidy_apa_output(text: str, requirements: list) -> str:
     refs = "".join(sections[1:]) if len(sections) > 1 else ""
     refs = _sort_references_section(refs)
     paragraphs = [p for p in re.split(r"(\n\s*\n)", body)]
-    closer_index = 0
     for i, part in enumerate(paragraphs):
         if not part.strip() or re.match(r"\n\s*\n", part):
             continue
-        if re.search(r"\([^)]+,\s*(?:n\.d\.|(?:19|20)\d{2}[a-z]?)\)"
-                     r"\s*(?:\[(?:[a-z0-9]+-)?C\d+\])?\s*[.!?]?$",
-                     part.strip()):
-            closer = _APA_PARAGRAPH_CLOSERS[closer_index % len(_APA_PARAGRAPH_CLOSERS)]
-            closer_index += 1
-            paragraphs[i] = part.rstrip() + " " + closer
+        paragraphs[i] = _move_terminal_citation_inside_paragraph(part)
     return "".join(paragraphs).rstrip() + refs
+
+
+def _repair_apa7_with_model(text: str, active_requirements: list, full: list,
+                            model: str, num_ctx: int, num_predict: int,
+                            effective_temperature: float,
+                            apa_seed_text: str = "", echo: bool = False) -> tuple:
+    metrics = None
+    improvements = []
+    for repair_attempt in range(3):
+        apa_issues = _apa7_issues(text, active_requirements)
+        if not apa_issues:
+            break
+        repair_prompt = (
+            "Repair the draft below so it satisfies APA 7-style assignment "
+            "formatting. Fix only these issues:\n- "
+            + "\n- ".join(apa_issues[:8])
+            + "\n\nUse APA author-date in-text citations, not URLs in the "
+            "body. Include a References section with APA-style entries. Use "
+            "the APA reference seeds and in-text citation seeds from the "
+            "provided source material when available. Evidence markers like "
+            "[C1] are source handles, not APA citations; do not write (C1) "
+            "as a citation. Keep every body "
+            "paragraph at three or more sentences, and do not begin or end a "
+            "body paragraph with a citation. When a paragraph currently ends "
+            "with a citation, move the citation into the sentence it supports "
+            "and finish with your own synthesis. Do not invent missing source "
+            "details.\n\nDraft to repair:\n"
+            + (f"{apa_seed_text}\n\n" if apa_seed_text else "")
+            + text
+        )
+        repaired, repair_metrics = ask_ollama_chat(
+            full + [
+                {"role": "assistant", "content": text},
+                {"role": "user", "content": repair_prompt},
+            ],
+            model,
+            num_ctx=num_ctx,
+            num_predict=num_predict,
+            temperature=min(effective_temperature, 0.15),
+            think=False,
+            echo=echo,
+        )
+        repaired = strip_thinking(repaired)
+        repaired_issues = _apa7_issues(repaired, active_requirements)
+        if repaired and len(repaired_issues) < len(apa_issues):
+            text = repaired
+            metrics = repair_metrics
+            improvements.append(f"repaired_apa7_formatting_pass_{repair_attempt + 1}")
+        else:
+            break
+    return text, metrics, improvements
 
 
 def _is_coder_request(question: str) -> bool:
@@ -3593,48 +3657,12 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             metrics = continuation_metrics or metrics
             improvements.append("continued_under_length_generation")
 
-    for repair_attempt in range(3):
-        apa_issues = _apa7_issues(text, active_requirements)
-        if not apa_issues:
-            break
-        repair_prompt = (
-            "Repair the draft below so it satisfies APA 7-style assignment "
-            "formatting. Fix only these issues:\n- "
-            + "\n- ".join(apa_issues[:8])
-            + "\n\nUse APA author-date in-text citations, not URLs in the "
-            "body. Include a References section with APA-style entries. Use "
-            "the APA reference seeds and in-text citation seeds from the "
-            "provided source material when available. Evidence markers like "
-            "[C1] are source handles, not APA citations; do not write (C1) "
-            "as a citation. Keep every body "
-            "paragraph at three or more sentences, and do not begin or end a "
-            "body paragraph with a citation. When a paragraph currently ends "
-            "with a citation, move the citation into an earlier sentence and "
-            "finish the paragraph with your own synthesis sentence. Do not invent missing source "
-            "details.\n\nDraft to repair:\n"
-            + (f"{apa_seed_text}\n\n" if apa_seed_text else "")
-            + text
-        )
-        repaired, repair_metrics = ask_ollama_chat(
-            full + [
-                {"role": "assistant", "content": text},
-                {"role": "user", "content": repair_prompt},
-            ],
-            model,
-            num_ctx=num_ctx,
-            num_predict=effective_num_predict,
-            temperature=0.15,
-            think=False,
-            echo=echo,
-        )
-        repaired = strip_thinking(repaired)
-        repaired_issues = _apa7_issues(repaired, active_requirements)
-        if repaired and len(repaired_issues) < len(apa_issues):
-            text = repaired
-            metrics = repair_metrics or metrics
-            improvements.append(f"repaired_apa7_formatting_pass_{repair_attempt + 1}")
-        else:
-            break
+    text, repair_metrics, repair_improvements = _repair_apa7_with_model(
+        text, active_requirements, full, model, num_ctx, effective_num_predict,
+        effective_temperature, apa_seed_text=apa_seed_text, echo=echo)
+    if repair_metrics:
+        metrics = repair_metrics or metrics
+    improvements.extend(repair_improvements)
 
     text = _ensure_apa_in_text_citations(text, active_requirements, evidence)
     text = _tidy_apa_output(text, active_requirements)
@@ -3669,6 +3697,13 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             # attached to a message that has nothing to do with them.
 
     text, evidence_out = _prefix_markers(text, registry, turn_id, evidence)
+    text = _tidy_apa_output(text, active_requirements)
+    text, repair_metrics, repair_improvements = _repair_apa7_with_model(
+        text, active_requirements, full, model, num_ctx, effective_num_predict,
+        effective_temperature, apa_seed_text=apa_seed_text, echo=echo)
+    if repair_metrics:
+        metrics = repair_metrics or metrics
+    improvements.extend(f"final_{item}" for item in repair_improvements)
     text = _tidy_apa_output(text, active_requirements)
     if not evidence_out:
         text = CITATION_ARTIFACT_RE.sub("", text)
