@@ -235,6 +235,45 @@ def list_ask_conversations(project: str, limit: int = 30):
         client.close()
 
 
+def list_all_ask_conversations(limit: int = 50):
+    """
+    Cross-project view, newest first -- the read side of a sidebar that
+    shows every saved conversation regardless of which project it's
+    currently filed under, the same way claude.ai's own sidebar does.
+    """
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        result = client.execute(
+            "SELECT id, project, title, turn_seq, created_at, archived_at "
+            "FROM ask_conversation_history "
+            "ORDER BY archived_at DESC LIMIT ?",
+            [int(limit or 50)],
+        )
+        return [dict(zip(result.columns, row)) for row in result.rows]
+    finally:
+        client.close()
+
+
+def move_ask_conversation(conversation_id: int, new_project: str) -> bool:
+    """
+    Reassign an already-archived conversation to a different project. This
+    only changes which project's list the conversation shows up under --
+    it does not touch the messages themselves, and does not affect whichever
+    conversation is currently "live" in ask_conversations for either
+    project. Returns False if no row matched the id, so the caller can
+    return a real 404 instead of a silent no-op.
+    """
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        result = client.execute(
+            "UPDATE ask_conversation_history SET project = ? WHERE id = ?",
+            [new_project or "", int(conversation_id)],
+        )
+        return bool(getattr(result, "rows_affected", 0))
+    finally:
+        client.close()
+
+
 def restore_ask_conversation(project: str, conversation_id: int):
     client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
     try:
@@ -1837,3 +1876,126 @@ def get_pii_scan(source: str):
         return rows[0] if rows else None
     finally:
         client.close()
+
+
+# ---------------------------------------------------------------------------
+# Response feedback -- thumbs up/down from the Ask tab. See schema.sql for
+# why this is keyed by (project, turn_id) rather than a query_quality_events
+# row id: turn_id is the one identifier the browser already has in hand at
+# the moment someone clicks a thumb, well after that quality-events row was
+# written and its own id was never sent back to the client to remember.
+# ---------------------------------------------------------------------------
+
+def record_response_feedback(project: str, turn_id: str, question: str,
+                             answer: str, rating: str, note: str = None,
+                             route: str = None, grounded: bool = None,
+                             model: str = None) -> None:
+    """
+    Upserts on (project, turn_id). Clicking the other thumb, or re-submitting
+    a note, replaces the prior vote for that turn rather than accumulating
+    duplicate rows for one answer -- one row is always the current verdict.
+    """
+    if rating not in ("up", "down"):
+        raise ValueError("rating must be 'up' or 'down'")
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        client.execute(
+            "INSERT INTO response_feedback "
+            "(project, turn_id, question, answer, rating, note, route, "
+            " grounded, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(project, turn_id) DO UPDATE SET "
+            " question=excluded.question, answer=excluded.answer, "
+            " rating=excluded.rating, note=excluded.note, "
+            " route=excluded.route, grounded=excluded.grounded, "
+            " model=excluded.model, rated_at=datetime('now')",
+            [
+                project or "", turn_id, question, answer, rating, note, route,
+                None if grounded is None else (1 if grounded else 0), model,
+            ],
+        )
+    finally:
+        client.close()
+
+
+def clear_response_feedback(project: str, turn_id: str) -> None:
+    """Un-rating: removes the vote entirely rather than storing a null rating."""
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        client.execute(
+            "DELETE FROM response_feedback WHERE project = ? AND turn_id = ?",
+            [project or "", turn_id],
+        )
+    finally:
+        client.close()
+
+
+def get_response_feedback(project: str, turn_ids: list) -> dict:
+    """
+    Batch lookup keyed by turn_id, so the UI can paint every thumb's state
+    for a whole reloaded conversation in one round trip instead of one call
+    per bubble.
+    """
+    turn_ids = [t for t in (turn_ids or []) if t]
+    if not turn_ids:
+        return {}
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        placeholders = ",".join("?" for _ in turn_ids)
+        result = client.execute(
+            f"SELECT turn_id, rating, note FROM response_feedback "
+            f"WHERE project = ? AND turn_id IN ({placeholders})",
+            [project or "", *turn_ids],
+        )
+        return {row[0]: {"rating": row[1], "note": row[2]} for row in result.rows}
+    finally:
+        client.close()
+
+
+def list_response_feedback(project: str = None, rating: str = None,
+                           limit: int = 200) -> list:
+    """
+    The actual training table, read back out: every rated answer, newest
+    first. rating='up' rows are the positive examples, rating='down' the
+    negative ones -- same question/answer/note shape either way, which is
+    what makes this exportable as-is rather than needing a translation step.
+    """
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        clauses = []
+        params = []
+        if project:
+            clauses.append("project = ?")
+            params.append(project)
+        if rating:
+            clauses.append("rating = ?")
+            params.append(rating)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        result = client.execute(
+            "SELECT id, project, turn_id, question, answer, rating, note, "
+            "route, grounded, model, rated_at FROM response_feedback"
+            + where + " ORDER BY rated_at DESC LIMIT ?",
+            params + [limit],
+        )
+        return [dict(zip(result.columns, row)) for row in result.rows]
+    finally:
+        client.close()
+
+
+def response_feedback_counts(project: str = None) -> dict:
+    """Quick up/down tally, e.g. for a small header above the feedback table."""
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        sql = "SELECT rating, COUNT(*) FROM response_feedback"
+        params = []
+        if project:
+            sql += " WHERE project = ?"
+            params.append(project)
+        sql += " GROUP BY rating"
+        result = client.execute(sql, params)
+        counts = {"up": 0, "down": 0}
+        for row in result.rows:
+            counts[row[0]] = row[1]
+        return counts
+    finally:
+        client.close()
+

@@ -93,10 +93,12 @@ try:
         get_response_feedback,
         get_search_criteria,
         get_setting,
+        list_all_ask_conversations,
         list_ask_conversations,
         list_response_feedback,
         list_retrieval_misses,
         load_ask_conversation,
+        move_ask_conversation,
         new_ask_conversation,
         record_response_feedback,
         record_retrieval_miss,
@@ -1016,6 +1018,46 @@ def api_ask_conversations():
         return unavailable
     proj = active()
     return jsonify({"conversations": list_ask_conversations(proj)})
+
+
+@app.get("/api/ask/conversations/all")
+def api_ask_conversations_all():
+    """
+    Every saved conversation across every project, newest first -- the data
+    source for a sidebar Chats list. Separate from the project-scoped route
+    above rather than an optional flag on it, since "give me everything"
+    and "give me this project's conversations" are different enough shapes
+    (project comes back per-row here) to be worth their own endpoint.
+    """
+    unavailable = _memory_required()
+    if unavailable:
+        return unavailable
+    try:
+        limit = int(request.args.get("limit") or 50)
+    except ValueError:
+        limit = 50
+    return jsonify({"conversations": list_all_ask_conversations(limit=limit)})
+
+
+@app.post("/api/ask/conversations/<int:conversation_id>/move")
+def api_ask_conversation_move(conversation_id):
+    """
+    Reassign one archived conversation to a different project. This is the
+    fix for "there's no way to move a saved conversation between projects" --
+    it only relabels which project's list the row appears under; the
+    messages themselves are untouched.
+    """
+    unavailable = _memory_required()
+    if unavailable:
+        return unavailable
+    body = request.json or {}
+    new_project = (body.get("project") or "").strip()
+    if not new_project:
+        return jsonify({"error": "project is required"}), 400
+    moved = move_ask_conversation(conversation_id, new_project)
+    if not moved:
+        return jsonify({"error": "conversation not found"}), 404
+    return jsonify({"ok": True})
 
 
 @app.post("/api/ask/conversation")
