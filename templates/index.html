@@ -461,6 +461,10 @@ textarea{resize:vertical;min-height:74px}
   display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;
   font-family:var(--sans);font-size:12px;color:var(--ink-soft);
 }
+.provenance{
+  font-family:var(--mono);font-size:10px;letter-spacing:.06em;
+  color:var(--ink-faint);margin-top:8px;
+}
 .active-requirements span{
   border:1px solid var(--rule);background:var(--paper-2);
   border-radius:8px;padding:4px 8px;max-width:100%;
@@ -625,9 +629,13 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
   <p class="lede" id="askLede">Data-driven insights, your data, your insights.</p>
 
   <div class="askbar">
-    <label class="toggle">
+    <label class="toggle" title="Pulls passages from this project's documents for this question.">
       <input type="checkbox" id="groundToggle" checked>
       <span>Ground in documents</span>
+    </label>
+    <label class="toggle" title="A separate switch: lets El Roi search the web when local documents don't cover the question. Independent of grounding, on purpose.">
+      <input type="checkbox" id="externalSearchAskToggle">
+      <span>Search the web too</span>
     </label>
     <label class="toggle">
       <input type="checkbox" id="contextToggle">
@@ -1002,6 +1010,13 @@ async function loadStatus(){
   const s = await (await fetch(qp("/api/status"))).json();
   STATE.models = s.models;
   STATE.roles = s.roles;
+  // Live from the server every load/switch, not just set-and-forget on
+  // click -- if it's changed from the Tuning tab (or by another tab open
+  // on this same app), the Ask bar reflects that on the next status pull
+  // instead of silently disagreeing with what the next question will do.
+  STATE.externalSearchEnabled = !!s.external_search_enabled;
+  const extToggle = $("#externalSearchAskToggle");
+  if (extToggle) extToggle.checked = STATE.externalSearchEnabled;
   const bad = s.roles.filter(r => !r.ok).length;
   $("#statusbit").innerHTML =
     `<span><span class="dot${s.ollama ? "" : " bad"}"></span>ollama</span>` +
@@ -1912,7 +1927,33 @@ function chatBubble(m){
   if (m.role === "assistant" && m.showAttachments && m.attachments && m.attachments.length)
     bubble.appendChild(renderMailAttachments(m.attachments));
   box.appendChild(bubble);
+  if (m.role === "assistant" && !m.pending && m.route !== undefined)
+    box.appendChild(el("div", "provenance", provenanceLabel(m.route, m.grounded)));
   return box;
+}
+
+/* Turns ask.py's internal route string into the one honest sentence this
+   whole change exists for: not "grounding is on" (a setting), but "here is
+   what actually fed this specific answer" (an outcome). Unknown routes fall
+   through to the raw value rather than disappearing, so a new route added to
+   ask.py later shows up as *something* instead of silently going unlabeled. */
+const PROVENANCE_LABELS = {
+  document_registry: "your document library",
+  document_store: "your documents, full text",
+  hybrid_retrieval: "your documents",
+  local_workspace: "local code workspace",
+  external_search: "your documents + web search",
+  insufficient_local_evidence: "no strong match in your documents",
+  needs_verified_sources: "waiting on verified sources",
+  app_command_guard: "app command, not a search",
+  coder_request: "code writer",
+  redaction_request: "redaction tool",
+};
+function provenanceLabel(route, grounded){
+  if (!grounded) return "answered from the model's own knowledge -- no documents, no web search";
+  if (route === "external_search") return "answered using your documents + web search";
+  const known = PROVENANCE_LABELS[route];
+  return "answered from " + (known || (route || "an unspecified source").replace(/_/g, " "));
 }
 
 function renderActiveRequirements(requirements){
@@ -2018,6 +2059,7 @@ $("#contextToggle").onchange = e => {
   STATE.showContext = e.target.checked;
   renderChat();
 };
+$("#externalSearchAskToggle").onchange = saveExternalSearchFromAsk;
 try {
   STATE.showContext = window.localStorage.getItem("ask_show_context") === "1";
 } catch(e){}
@@ -2071,6 +2113,12 @@ async function sendAsk(){
     pending.sources = Object.keys(ev.evidence || {});
     pending.attachments = ev.attachments || [];
     pending.requirements = ev.requirements || [];
+    // Provenance for the reply that just streamed in -- what ask.py actually
+    // did this turn, not what the toggles merely requested. This is the
+    // direct fix for "I can't tell what just happened": ev.metrics.route and
+    // ev.grounded come straight back from ask.ask()'s own bookkeeping.
+    pending.route = (ev.metrics && ev.metrics.route) || null;
+    pending.grounded = !!ev.grounded;
     Object.assign(STATE.evidence, ev.evidence || {});
     renderChat();
     saveAskConversation();
@@ -2441,7 +2489,30 @@ async function saveExternalSearch(){
   if (r.error) return toast(r.error);
   STATE.tuning.settings.rag_external_search_enabled =
     $("#externalSearchToggle").checked ? "on" : "off";
+  STATE.externalSearchEnabled = $("#externalSearchToggle").checked;
+  const askToggle = $("#externalSearchAskToggle");
+  if (askToggle) askToggle.checked = STATE.externalSearchEnabled;
   toast($("#externalSearchToggle").checked ? "External search on" : "External search off");
+}
+
+/* Same underlying setting as the Tuning tab's toggle above -- one flag, two
+   places to flip it. Whichever one you touch, both stay in sync and the next
+   question immediately reflects it, since ask.py reads this fresh per turn
+   rather than caching it. */
+async function saveExternalSearchFromAsk(){
+  const checked = $("#externalSearchAskToggle").checked;
+  const r = await (await fetch("/api/tuning/settings", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(withProject({
+      rag_external_search_enabled: checked ? "on" : "off",
+    })),
+  })).json();
+  if (r.error){ toast(r.error); $("#externalSearchAskToggle").checked = STATE.externalSearchEnabled; return; }
+  STATE.externalSearchEnabled = checked;
+  STATE.tuning.settings.rag_external_search_enabled = checked ? "on" : "off";
+  const tuningToggle = $("#externalSearchToggle");
+  if (tuningToggle) tuningToggle.checked = checked;
+  toast(checked ? "Web search on for future questions" : "Web search off");
 }
 
 function maybeAutoReindex(){

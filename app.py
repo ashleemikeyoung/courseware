@@ -521,6 +521,11 @@ def status():
     return jsonify({
         "chunks": collection.count(),
         "ollama": bool(have),
+        # Read live off the same setting ask.py's _external_search_enabled()
+        # checks per turn, so the Ask bar's toggle can never drift from what
+        # actually happens on the next question -- one source of truth
+        # instead of a checkbox label that just describes intent.
+        "external_search_enabled": ask._external_search_enabled(),
         "models": sorted(have),
         "roles": [{"role": r, "model": m, "var": v,
                    "ok": (m if ":" in m else f"{m}:latest") in normalized}
