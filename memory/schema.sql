@@ -488,3 +488,35 @@ CREATE TABLE IF NOT EXISTS pii_scans (
     finding_count  INTEGER NOT NULL DEFAULT 0,
     scanned_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+
+-- ---------------------------------------------------------------------------
+-- Response feedback -- thumbs up/down on Ask answers. This is the actual
+-- training table: every rated turn, question and answer together, rating
+-- 'up' or 'down', with whatever route/grounded metadata ask.py already knew
+-- about that turn. Keyed by (project, turn_id) rather than by a
+-- query_quality_events row id, because turn_id is the one identifier the
+-- browser still has in hand at the moment someone clicks a thumb, often
+-- well after that quality-events row was written -- see ask.py's turn_id
+-- docstring on ask(). One row per (project, turn_id): re-rating the same
+-- answer overwrites the earlier vote instead of piling up duplicates.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS response_feedback (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    project      TEXT NOT NULL,
+    turn_id      TEXT NOT NULL,
+    question     TEXT NOT NULL,
+    answer       TEXT NOT NULL,
+    rating       TEXT NOT NULL,          -- 'up' | 'down'
+    note         TEXT,
+    route        TEXT,                   -- ask.py's metrics.route for this turn, if known
+    grounded     INTEGER,                -- 0/1, ask.py's result.grounded for this turn
+    model        TEXT,
+    rated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project, turn_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_response_feedback_project_rating
+    ON response_feedback(project, rating, rated_at);
+

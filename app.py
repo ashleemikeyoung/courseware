@@ -89,13 +89,18 @@ try:
     sys.path.insert(0, str(BASE_DIR / "memory"))
     from memory_client import (
         clear_ask_conversation,
+        clear_response_feedback,
+        get_response_feedback,
         get_search_criteria,
         get_setting,
         list_ask_conversations,
+        list_response_feedback,
         list_retrieval_misses,
         load_ask_conversation,
         new_ask_conversation,
+        record_response_feedback,
         record_retrieval_miss,
+        response_feedback_counts,
         restore_ask_conversation,
         save_ask_conversation,
         set_setting,
@@ -698,7 +703,15 @@ def _clean_chat_message(message: dict) -> dict:
     role = message.get("role")
     if role not in {"user", "assistant"}:
         return {}
-    return {"role": role, "content": str(message.get("content") or "")}
+    cleaned = {"role": role, "content": str(message.get("content") or "")}
+    # Kept so thumbs feedback (keyed on turn_id) can still be matched to the
+    # right bubble after a reload. Everything else about a turn is
+    # reconstructible from ask.ask()'s own tables, but turn_id only ever
+    # existed as something the browser minted for this one exchange, so it
+    # has to round-trip through storage here or the link is gone for good.
+    if role == "assistant" and message.get("turn_id"):
+        cleaned["turn_id"] = str(message.get("turn_id"))
+    return cleaned
 
 
 def _clean_chat_messages(messages: list) -> list:

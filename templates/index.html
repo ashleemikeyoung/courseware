@@ -465,6 +465,19 @@ textarea{resize:vertical;min-height:74px}
   font-family:var(--mono);font-size:10px;letter-spacing:.06em;
   color:var(--ink-faint);margin-top:8px;
 }
+.feedback{display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap}
+.fb-btn{
+  background:none;border:1px solid var(--rule);border-radius:2px;
+  cursor:pointer;padding:3px 9px;font-size:12px;line-height:1.4;
+  color:var(--ink-faint);
+}
+.fb-btn:hover{color:var(--ink);border-color:var(--ink-soft)}
+.fb-btn.active{border-color:var(--blue);color:var(--blue);background:var(--blue-wash)}
+.fb-btn.active.down{border-color:var(--red);color:var(--red);background:var(--red-wash)}
+.fb-note{
+  font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);
+  border-left:2px solid var(--rule);padding-left:8px;margin-left:2px;
+}
 .active-requirements span{
   border:1px solid var(--rule);background:var(--paper-2);
   border-radius:8px;padding:4px 8px;max-width:100%;
@@ -798,6 +811,21 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
       <div class="slab">
         <p class="eyebrow" style="margin-bottom:12px">Recent misses</p>
         <div id="missWrap"></div>
+      </div>
+
+      <div class="slab" style="margin-top:18px">
+        <p class="eyebrow" style="margin-bottom:12px">Response feedback</p>
+        <div class="row" style="margin-bottom:10px;align-items:center">
+          <select id="fbFilter" title="Filter by rating">
+            <option value="">All ratings</option>
+            <option value="up">Good only</option>
+            <option value="down">Bad only</option>
+          </select>
+          <span class="tiny" id="fbCounts"></span>
+          <button class="btn ghost small" id="btnExportFeedback" style="margin-left:auto">Export JSONL</button>
+        </div>
+        <div id="feedbackWrap"></div>
+        <div class="tiny" style="margin-top:10px">Click a row to read the full question and answer. Good rows are the positive examples, bad rows are the negative ones -- the export keeps that shape.</div>
       </div>
     </div>
 
@@ -1649,6 +1677,7 @@ async function loadAskConversation(){
     STATE.chat.loadedProject = STATE.project;
   }
   await loadAskConversationList();
+  await hydrateFeedback();
   renderChat();
 }
 
@@ -1729,6 +1758,7 @@ async function restoreAskConversation(id){
     STATE.chat.turnSeq = Number(saved.turn_seq || 0);
     STATE.evidence = {};
     $("#chatGlosses").innerHTML = "";
+    await hydrateFeedback();
     renderChat();
   } catch(e){
     toast("Could not restore that conversation");
@@ -1909,7 +1939,7 @@ function renderChat(){
     return;
   }
   col.innerHTML = "";
-  STATE.chat.messages.forEach(m => col.appendChild(chatBubble(m)));
+  STATE.chat.messages.forEach((m, i) => col.appendChild(chatBubble(m, i)));
   setContextVisibility(STATE.showContext);
   wireCitations(col, $("#chatGlosses"));
   window.scrollTo(0, document.body.scrollHeight);
@@ -2091,6 +2121,7 @@ async function sendAsk(){
   renderChat();
 
   const turnId = "t" + (++STATE.chat.turnSeq) + Date.now().toString(36).slice(-4);
+  pending.turn_id = turnId;
   const ground = $("#groundToggle").checked;
   const model = $("#askModel").value;
   // History excludes the pending placeholder and is trimmed server-side too;
@@ -2223,6 +2254,7 @@ async function loadTuning(){
     renderRedactionProfiles();
     renderCriteria();
     renderMisses();
+    loadFeedbackTable();
     loadMailConfig();
   } catch(e){
     toast("Could not load tuning");
@@ -2589,6 +2621,8 @@ $("#btnSubmitMiss").onclick = submitMiss;
 $("#autoReindexToggle").onchange = saveAutoReindex;
 $("#externalSearchToggle").onchange = saveExternalSearch;
 $("#btnReindexTuning").onclick = runTuningReindex;
+$("#fbFilter").onchange = loadFeedbackTable;
+$("#btnExportFeedback").onclick = exportFeedback;
 
 /* --- history ------------------------------------------------------------ */
 async function loadHistory(){
