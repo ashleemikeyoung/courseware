@@ -35,7 +35,7 @@ from writer import (
 # convention (which is what app.py and mcp_server.py both used to do --
 # two places quietly agreeing on the same borrowed default instead of ask.py
 # declaring its own). Callers can still override with an explicit model.
-from config import ASK_MODEL
+from config import ASK_MODEL, GOOGLE_API_KEY, GOOGLE_SEARCH_MODEL
 import coder
 import projects
 import quality
@@ -1727,6 +1727,114 @@ def _external_search_evidence(question: str, registry: CitationRegistry,
             result.get("url") or "external-search", -40, -40,
             "\n".join(details)))
     return evidence
+
+
+def _google_search_evidence(question: str, registry: CitationRegistry,
+                            limit: int = 5) -> list:
+    """
+    Real Google Search results via the Gemini API's google_search tool,
+    rather than scraping DuckDuckGo's HTML. Gemini's own answer text is
+    discarded on purpose -- see today's design conversation: a second AI's
+    prose is not ground truth just because it cites sources, so only the
+    grounding metadata (real titles and URLs Google's index actually
+    returned) becomes evidence here. The local ASK_MODEL still writes the
+    final answer and still goes through the same citation/defect/DMAIC
+    pipeline every other evidence source does.
+
+    Returns [] (never raises) when no key is configured or the call fails
+    for any reason, so callers can treat this exactly like every other
+    evidence source that might come back empty -- see _web_search_evidence
+    below for the DuckDuckGo fallback that covers this case.
+    """
+    if not GOOGLE_API_KEY:
+        return []
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GOOGLE_SEARCH_MODEL}:generateContent?key={GOOGLE_API_KEY}"
+    )
+    payload = {
+        "contents": [{"parts": [{"text": question or ""}]}],
+        "tools": [{"google_search": {}}],
+    }
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            data = json.loads(response.read().decode("utf-8", errors="replace"))
+    except Exception as e:
+        print(f"  [Warning: Google search grounding failed: {e}]")
+        return []
+
+    candidates = data.get("candidates") or []
+    if not candidates:
+        return []
+    grounding = candidates[0].get("groundingMetadata") or {}
+    chunks = grounding.get("groundingChunks") or []
+    if not chunks:
+        return []
+    supports = grounding.get("groundingSupports") or []
+    answer_text = "".join(
+        part.get("text", "")
+        for part in (candidates[0].get("content") or {}).get("parts", [])
+    )
+
+    # Map each source chunk to the segments of Gemini's own grounded answer
+    # that cite it, so the "snippet" shown for a source reflects what the
+    # grounded response actually drew from that page, not an unrelated
+    # excerpt -- the closest equivalent to a search engine's own snippet
+    # that this API surface offers.
+    snippets_by_chunk = {}
+    for support in supports:
+        segment = support.get("segment") or {}
+        text = segment.get("text") or ""
+        if not text:
+            start, end = segment.get("startIndex"), segment.get("endIndex")
+            if start is not None and end is not None:
+                text = answer_text[start:end]
+        if not text:
+            continue
+        for idx in support.get("groundingChunkIndices") or []:
+            snippets_by_chunk.setdefault(idx, []).append(text)
+
+    evidence = []
+    seen_urls = set()
+    for idx, chunk in enumerate(chunks[:limit]):
+        web = chunk.get("web") or {}
+        uri = web.get("uri") or ""
+        title = web.get("title") or ""
+        if not uri or uri in seen_urls:
+            continue
+        seen_urls.add(uri)
+        snippet = " ".join(snippets_by_chunk.get(idx, []))[:600]
+        details = [
+            "[Google Search grounding result]",
+            f"Title: {title}",
+            f"URL: {uri}",
+            f"Snippet: {snippet}",
+            "Reference seed: Use the visible title and URL; do not invent "
+            "missing authors, journal issue details, or DOIs.",
+        ]
+        evidence.append(registry.register(uri, -35, -35, "\n".join(details)))
+    return evidence
+
+
+def _web_search_evidence(question: str, registry: CitationRegistry,
+                         limit: int = 5) -> list:
+    """
+    The one call site every web-search branch in ask() should use. Prefers
+    real Google Search results (via Gemini's grounding tool) when a key is
+    configured; falls back to the existing DuckDuckGo scrape when it isn't,
+    or when Google's call comes back empty for any reason -- a missing or
+    failing premium feature degrades the search, it never breaks it.
+    """
+    evidence = _google_search_evidence(question, registry, limit=limit)
+    if evidence:
+        return evidence
+    return _external_search_evidence(question, registry, limit=limit)
 
 
 def _crossref_date_year(item: dict) -> int:
@@ -3481,7 +3589,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 and not evidence
                 and external_allowed
             ):
-                external = _external_search_evidence(
+                external = _web_search_evidence(
                     _external_query_text(last_user, prior_user_turns), registry)
                 if external:
                     evidence = external
@@ -3492,7 +3600,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 and external_allowed
                 and not needs_current_scholarly
             ):
-                external = _external_search_evidence(
+                external = _web_search_evidence(
                     _external_query_text(last_user, prior_user_turns), registry)
                 if external:
                     evidence.extend(external)
@@ -3504,7 +3612,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 and plan["intent"] != "general_qa"
                 and not needs_current_scholarly
             ):
-                external = _external_search_evidence(
+                external = _web_search_evidence(
                     _external_query_text(last_user, prior_user_turns), registry)
                 if external:
                     evidence.extend(external)
@@ -3516,7 +3624,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 external = _crossref_scholarly_evidence(
                     external_query, registry, limit=5)
                 if not external:
-                    external = _external_search_evidence(external_query, registry)
+                    external = _web_search_evidence(external_query, registry)
                 if external:
                     evidence.extend(external)
                     used_external_search = True

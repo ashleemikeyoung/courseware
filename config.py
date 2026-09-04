@@ -52,6 +52,14 @@ NOTES_MODEL = os.getenv("OLLAMA_NOTES_MODEL", "gemma4:e4b")
 # long-form drafting still wants something bigger.
 ASK_MODEL = os.getenv("OLLAMA_ASK_MODEL", DRAFT_MODEL)
 
+# --- ask.py: Google Search grounding for web-search evidence ------------
+# Optional. When empty, ask.py's web search falls back to the existing
+# DuckDuckGo-scraping path -- a missing key degrades the feature, it never
+# breaks the app. Get a free key (no credit card required) from Google AI
+# Studio at aistudio.google.com, then set GOOGLE_API_KEY in .env.
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
+GOOGLE_SEARCH_MODEL = os.getenv("GOOGLE_SEARCH_MODEL", "gemini-2.5-flash")
+
 # --- orchestrator.py: terminal specialist routing -----------------------
 CODER_MODEL = os.getenv("OLLAMA_CODER_MODEL", "qwen2.5-coder:32b")
 GENERAL_MODEL = os.getenv("OLLAMA_GENERAL_MODEL", "qwen3:32b")

@@ -478,6 +478,16 @@ textarea{resize:vertical;min-height:74px}
   font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);
   border-left:2px solid var(--rule);padding-left:8px;margin-left:2px;
 }
+.web-sources{margin-top:10px;border-top:1px solid var(--rule-soft);padding-top:8px}
+.web-sources .label{
+  font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-faint);margin-bottom:6px;
+}
+.web-source{margin-bottom:8px}
+.web-source a{color:var(--blue);font-size:13px;text-decoration:none}
+.web-source a:hover{text-decoration:underline}
+.web-source .snippet{font-size:12.5px;color:var(--ink-soft);margin-top:2px}
+.web-source .host{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)}
 .active-requirements span{
   border:1px solid var(--rule);background:var(--paper-2);
   border-radius:8px;padding:4px 8px;max-width:100%;
@@ -1962,7 +1972,53 @@ function chatBubble(m, index){
     box.appendChild(el("div", "provenance", provenanceLabel(m.route, m.grounded)));
   if (m.role === "assistant" && !m.pending && m.turn_id)
     box.appendChild(feedbackControls(m, index));
+  if (m.role === "assistant" && !m.pending && m.webSources && m.webSources.length)
+    box.appendChild(webSourcesList(m.webSources));
   return box;
+}
+
+/* The "never worse than just Googling it" guarantee: every web result that
+   fed this turn, shown here regardless of whether the model actually wove
+   it into a [C1] citation or the "Show source context" toggle is on. Worst
+   case, this list alone is the same thing a Google results page would have
+   handed you -- title, link, snippet -- with El Roi's synthesis above it as
+   a bonus, not a replacement. */
+function webSourcesList(sources){
+  const wrap = el("div", "web-sources");
+  wrap.appendChild(el("div", "label", "Sources"));
+  sources.forEach(s => {
+    const row = el("div", "web-source");
+    const a = el("a"); a.href = s.url; a.target = "_blank"; a.rel = "noopener";
+    a.textContent = s.title || s.url;
+    row.appendChild(a);
+    let host = "";
+    try { host = new URL(s.url).hostname.replace(/^www\./, ""); } catch(e){}
+    if (host) row.appendChild(el("span", "host", "  \u00b7 " + host));
+    if (s.snippet) row.appendChild(el("div", "snippet", s.snippet));
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+/* Pulls the structured web-result entries back out of a turn's evidence map
+   -- the [External web search result] blocks _external_search_evidence()
+   writes in ask.py -- and turns each one back into {url, title, snippet}
+   for webSourcesList() above. Deduped by URL, since the same source can
+   legitimately show up more than once across different retrieval passes
+   in a single turn. */
+function extractWebSources(evidence){
+  const seen = new Set();
+  const out = [];
+  Object.values(evidence || {}).forEach(ev => {
+    const url = ev.source || "";
+    if (!/^https?:\/\//.test(url) || seen.has(url)) return;
+    seen.add(url);
+    const text = ev.text || "";
+    const title = (text.match(/^Title:\s*(.*)$/m) || [])[1] || "";
+    const snippet = (text.match(/^Snippet:\s*(.*)$/m) || [])[1] || "";
+    out.push({url, title: title.trim(), snippet: snippet.trim()});
+  });
+  return out;
 }
 
 /* Thumbs for training data, not just a reaction emoji. A click writes
@@ -2255,6 +2311,7 @@ async function sendAsk(){
     // ev.grounded come straight back from ask.ask()'s own bookkeeping.
     pending.route = (ev.metrics && ev.metrics.route) || null;
     pending.grounded = !!ev.grounded;
+    pending.webSources = extractWebSources(ev.evidence);
     Object.assign(STATE.evidence, ev.evidence || {});
     renderChat();
     saveAskConversation();
