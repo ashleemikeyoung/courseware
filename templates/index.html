@@ -583,7 +583,49 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
   .tunegrid{grid-template-columns:1fr}
   .margin{position:static;max-height:none}
   .panel{padding:24px 18px 80px}
+  .home-layout{flex-direction:column}
+  .home-sidebar{width:auto;border-right:0;border-bottom:1px solid var(--rule);
+    max-height:16rem;position:static}
 }
+
+/* --- home sidebar --------------------------------------------------------
+   Ask-panel-only navigation: Projects and Chats, side by side with the
+   chat itself, the same shape as claude.ai's own sidebar. Deliberately
+   scoped to #p-ask rather than the whole app -- Setup/Compare/History/
+   Settings keep the existing top-rail project picker untouched, since
+   those pages weren't part of this pass and don't need their own copy of
+   this navigation. */
+.home-layout{display:flex;align-items:stretch;min-height:calc(100vh - 60px)}
+.home-sidebar{
+  width:15rem;flex:0 0 15rem;border-right:1px solid var(--rule);
+  padding:20px 14px;overflow-y:auto;
+}
+.home-main{flex:1;min-width:0}
+.home-main .wrap{padding:34px 40px 90px}
+.sidebar-section{margin-bottom:22px}
+.sidebar-head{
+  display:flex;align-items:center;justify-content:space-between;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-faint);margin-bottom:8px;padding:0 4px;
+}
+.sidebar-add{
+  background:none;border:1px solid var(--rule);border-radius:2px;cursor:pointer;
+  color:var(--ink-faint);width:18px;height:18px;line-height:1;font-size:13px;padding:0;
+}
+.sidebar-add:hover{color:var(--ink);border-color:var(--ink-soft)}
+.sidebar-item{
+  padding:7px 8px;border-radius:2px;cursor:pointer;font-size:13px;
+  color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.sidebar-item:hover{background:var(--paper-2);color:var(--ink)}
+.sidebar-item.active{background:var(--blue-wash);color:var(--blue);font-weight:600}
+.sidebar-chat{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.sidebar-chat-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.chat-tag{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;color:var(--ink-faint);
+  border:1px solid var(--rule);border-radius:2px;padding:1px 5px;flex:0 0 auto;
+}
+.sidebar-empty{font-size:12px;color:var(--ink-faint);padding:4px}
 </style>
 </head>
 <body>
@@ -645,7 +687,24 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 </div></section>
 
 <!-- ASK -->
-<section class="panel on" id="p-ask"><div class="wrap">
+<section class="panel on" id="p-ask"><div class="home-layout">
+  <aside class="home-sidebar" id="homeSidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-head">
+        <span>Projects</span>
+        <button class="sidebar-add" id="btnNewProjSidebar" title="New project">+</button>
+      </div>
+      <div id="sidebarProjects"></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-head">
+        <span>Chats</span>
+        <button class="sidebar-add" id="btnNewChatSidebar" title="New conversation">+</button>
+      </div>
+      <div id="sidebarChats"></div>
+    </div>
+  </aside>
+  <div class="home-main"><div class="wrap">
   <h1 class="bakash-title">
     <span class="word">El <span class="accent">ROI</span></span>
   </h1>
@@ -687,6 +746,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <select id="askHistory" title="Previous prompts"></select>
     <button class="btn" id="btnAsk">Send</button>
   </div>
+  </div></div>
 </div></section>
 
 <!-- SUMMARIZE -->
@@ -1108,6 +1168,7 @@ async function loadStatus(){
   buildModelPicker();
   buildAskModel();
   loadVersionInfo();
+  renderSidebarProjects();
 }
 
 $("#btnRescan").onclick = () =>
@@ -1712,6 +1773,66 @@ async function loadAskConversationList(){
     sel.appendChild(option);
   });
   sel.value = "";
+  loadSidebarChats();
+}
+
+/* --- home sidebar: Projects + Chats --------------------------------------
+   Deliberately reads STATE.projects (already loaded by loadStatus) and a
+   fresh cross-project conversation list rather than inventing a second
+   source of truth for either -- clicking here calls the exact same
+   switchProject()/restoreAskConversation() functions the existing top-rail
+   picker and saved-conversations dropdown already use, so there is only
+   ever one code path for "switch project" or "open a saved chat". */
+function renderSidebarProjects(){
+  const wrap = $("#sidebarProjects"); if (!wrap) return;
+  wrap.innerHTML = "";
+  (STATE.projects || []).forEach(p => {
+    const row = el("div", "sidebar-item" + (p.name === STATE.project ? " active" : ""),
+      p.label || p.name);
+    row.title = `${(p.chunks || 0).toLocaleString()} chunks`;
+    row.onclick = () => {
+      if (p.name === STATE.project) return;
+      $("#projSel").value = p.name;
+      switchProject(p.name);
+    };
+    wrap.appendChild(row);
+  });
+}
+
+async function loadSidebarChats(){
+  const wrap = $("#sidebarChats"); if (!wrap) return;
+  try {
+    const j = await (await fetch("/api/ask/conversations/all?limit=50")).json();
+    renderSidebarChats(j.conversations || []);
+  } catch(e){
+    wrap.innerHTML = "";
+  }
+}
+
+function renderSidebarChats(conversations){
+  const wrap = $("#sidebarChats"); if (!wrap) return;
+  wrap.innerHTML = "";
+  if (!conversations.length){
+    wrap.appendChild(el("div", "sidebar-empty", "No saved chats yet."));
+    return;
+  }
+  conversations.forEach(c => {
+    const row = el("div", "sidebar-item sidebar-chat");
+    row.appendChild(el("span", "sidebar-chat-title", c.title || "Untitled conversation"));
+    row.appendChild(el("span", "chat-tag", c.project || ""));
+    row.title = (c.archived_at || "").slice(0, 16);
+    row.onclick = () => openChatFromSidebar(c.id, c.project);
+    wrap.appendChild(row);
+  });
+}
+
+async function openChatFromSidebar(id, project){
+  if (project && project !== STATE.project){
+    $("#projSel").value = project;
+    await switchProject(project);
+  }
+  await restoreAskConversation(id);
+  loadSidebarChats();
 }
 
 async function saveAskConversation(){
@@ -3029,12 +3150,19 @@ $("#btnNewProj").onclick = async () => {
   await switchProject(r.name);
   toast(`Created ${r.path}`);
 };
+$("#btnNewProjSidebar").onclick = () => $("#btnNewProj").click();
+$("#btnNewChatSidebar").onclick = () => $("#btnNewChat").click();
 
 /* --- boot --------------------------------------------------------------- */
 (async () => {
   await loadProjects();
   await loadStatus();
-  await loadAskConversation();
+  // Fresh by default, recall on purpose: a full page load/restart archives
+  // whatever was live (same as clicking "New conversation") instead of
+  // silently resuming it. It's still one click away in the sidebar's Chats
+  // list or the saved-conversations dropdown -- nothing is lost, it just
+  // isn't dropped back in your lap without being asked for.
+  await newAskConversation();
   checkUpdateStatus();
   setInterval(checkUpdateStatus, 15000);
   if (STATE.project){
