@@ -2168,6 +2168,100 @@ def _tr_text(ref: str) -> str:
     return _tr_index().get(ref, "")
 
 
+# ---------------------------------------------------------------------------
+# /bible -- an explicit, deterministic command rather than hoping the model
+# reliably chooses to use the [SCRIPTURE] block format on its own. This
+# builds that block directly in Python from verified evidence, so its
+# formatting can never drift the way asking the model to produce it turned
+# out to (see the Genesis 1:1 case where it just described the verse in
+# prose instead). Same precedent as _is_coder_request's "code:" prefix --
+# an explicit command routes straight to a deterministic answer, no model
+# judgment call involved. If no recognizable reference is found in the text
+# after /bible, this returns None and the turn falls through to the normal
+# pipeline (still useful for a vague scripture *topic* with no direct verse
+# named), rather than a hard error.
+# ---------------------------------------------------------------------------
+BIBLE_COMMAND_RE = re.compile(r"^\s*/bible\b\s*(.*)$", re.IGNORECASE | re.DOTALL)
+
+
+def _is_bible_command(question: str) -> bool:
+    return bool(BIBLE_COMMAND_RE.match(question or ""))
+
+
+def _bible_command_query(question: str) -> str:
+    m = BIBLE_COMMAND_RE.match(question or "")
+    return (m.group(1) if m else "").strip()
+
+
+def _render_scripture_block(ref: str, translation: str, lang: str,
+                            en_text: str, orig_text: str) -> str:
+    lines = [f'[SCRIPTURE ref="{ref}" translation="{translation}" lang="{lang}"]']
+    if en_text:
+        lines.append(f"EN: {en_text}")
+    if orig_text:
+        lines.append(f"ORIG: {orig_text}")
+    lines.append("[/SCRIPTURE]")
+    return "\n".join(lines)
+
+
+def _answer_bible_command(question: str) -> dict:
+    if not _is_bible_command(question):
+        return None
+    query = _bible_command_query(question)
+    if not query:
+        return {
+            "text": (
+                "Give me a reference after /bible, for example "
+                "`/bible Genesis 1:1` or `/bible John 3:16`."
+            ),
+            "evidence": {}, "grounded": False, "passages_offered": 0,
+            "metrics": {"route": "bible_command", "found": False},
+        }
+
+    hits = _sefaria_find_refs(query)
+    nt_refs = [] if hits else _nt_refs_in_text(query)
+    if not hits and not nt_refs:
+        return None
+
+    blocks = []
+    translation = _configured_bible_translation()
+    for hit in hits:
+        if not hit.get("he_text") and not hit.get("en_text"):
+            continue
+        blocks.append(_render_scripture_block(
+            hit["ref"], hit.get("category") or "Sefaria", "he",
+            hit.get("en_text"), hit.get("he_text")))
+    for ref in nt_refs:
+        en_text, display_ref, translation_label = "", ref, translation.upper()
+        if translation == "esv":
+            data = _esv_fetch(ref)
+            if data:
+                passages = data.get("passages") or []
+                en_text = " ".join(" ".join(p.split()) for p in passages).strip()
+                display_ref = data.get("canonical") or ref
+                translation_label = "English Standard Version (ESV)"
+        else:
+            data = _bible_api_fetch(ref, translation=translation)
+            if data:
+                en_text = " ".join((data.get("text") or "").split())
+                display_ref = data.get("reference") or ref
+                translation_label = data.get("translation_name") or translation.upper()
+        greek_text = _tr_text(ref)
+        if not en_text and not greek_text:
+            continue
+        blocks.append(_render_scripture_block(
+            display_ref, translation_label, "grc", en_text, greek_text))
+
+    if not blocks:
+        return None
+
+    return {
+        "text": "\n\n".join(blocks),
+        "evidence": {}, "grounded": True, "passages_offered": len(blocks),
+        "metrics": {"route": "bible_command", "found": True, "count": len(blocks)},
+    }
+
+
 def _scripture_evidence_for_hits(hits: list, registry: CitationRegistry,
                                  limit: int = 4) -> list:
     evidence = []
@@ -3849,6 +3943,12 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             coder_action, last_user, plan, project=scope,
             improvements=["routed_explicit_coder_request_to_local_code_writer"])
 
+    bible_action = _answer_bible_command(last_user)
+    if bible_action:
+        return _quality_finish(
+            bible_action, last_user, plan, project=scope,
+            improvements=["answered_explicit_bible_command"])
+
     if ground and last_user.strip():
         redaction = _answer_redaction_request(last_user, project=scope)
         if redaction:
@@ -4040,6 +4140,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 plan["intent"] == "general_qa"
                 and external_allowed
                 and not needs_current_scholarly
+                and not _has_scripture_evidence(evidence)
             ):
                 external = _web_search_evidence(
                     _external_query_text(last_user, prior_user_turns), registry)
@@ -4105,21 +4206,33 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             )
         if _has_scripture_evidence(evidence):
             system += (
-                "\n\nScripture display convention -- two different formats "
-                "depending on what you're doing:\n"
+                "\n\nScripture display convention -- MANDATORY, not optional. "
+                "Two different formats depending on what you're doing:\n"
                 "(1) Citing a single key term: add a short list line after "
                 "your prose in the form 'word (transliteration) \u2014 brief "
                 "English gloss', using ONLY a word that literally appears in "
                 "the relevant source entry's original-language text (Hebrew "
                 "for Sefaria entries, Greek for Textus Receptus entries).\n"
-                "(2) Quoting an actual verse or more: use this exact block "
-                "format, one block per verse, never combining multiple "
-                "verses into one block and never wrapping it in markdown, "
-                "quotes, or code fences:\n"
+                "(2) Quoting an actual verse or more: you MUST use the exact "
+                "block format below, one block per verse, never combining "
+                "multiple verses into one block. NEVER describe the "
+                "reference, translation, or verse text in ordinary prose "
+                "instead -- do not write something like 'Genesis 1:1 says...' "
+                "followed by a quotation in a normal paragraph. Use the block, "
+                "with nothing else wrapped around it, not markdown, not "
+                "quotation marks, not a code fence:\n"
                 "[SCRIPTURE ref=\"Book Chapter:Verse\" translation=\"...\" "
                 "lang=\"he|grc\"]\n"
                 "EN: exact English text of that verse\n"
                 "ORIG: exact original-language text of that verse\n"
+                "[/SCRIPTURE]\n"
+                "For example (illustrative shape only -- always take the "
+                "real values from the source entry, never these "
+                "placeholders):\n"
+                "[SCRIPTURE ref=\"Genesis 1:1\" translation=\"KJV\" "
+                "lang=\"he\"]\n"
+                "EN: <the exact English verse text from the source entry>\n"
+                "ORIG: <the exact Hebrew text from the source entry>\n"
                 "[/SCRIPTURE]\n"
                 "Set lang to \"he\" for Sefaria/Hebrew entries or \"grc\" for "
                 "Textus Receptus/Greek entries. Take ref, translation, EN, "
