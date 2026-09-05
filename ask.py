@@ -35,7 +35,7 @@ from writer import (
 # convention (which is what app.py and mcp_server.py both used to do --
 # two places quietly agreeing on the same borrowed default instead of ask.py
 # declaring its own). Callers can still override with an explicit model.
-from config import ASK_MODEL, GOOGLE_API_KEY, GOOGLE_SEARCH_MODEL, ESV_API_KEY
+from config import ASK_MODEL, GOOGLE_API_KEY, GOOGLE_SEARCH_MODEL
 import coder
 import projects
 import quality
@@ -2039,39 +2039,11 @@ def _bible_api_fetch(ref: str, translation: str = "kjv") -> dict:
         return None
 
 
-def _esv_fetch(ref: str) -> dict:
-    """
-    Crossway's own ESV API (api.esv.org) -- a separate, licensed service
-    from bible-api.com's public-domain set, requiring its own free
-    registered key (config.ESV_API_KEY). Only called when that key is
-    configured; see _configured_bible_translation for the fallback when
-    it isn't.
-    """
-    url = (
-        "https://api.esv.org/v3/passage/text/?q=" + quote_plus(ref)
-        + "&include-passage-references=false&include-footnotes=false"
-        + "&include-footnote-body=false&include-headings=false"
-    )
-    req = urllib.request.Request(
-        url, headers={"Authorization": f"Token {ESV_API_KEY}",
-                     "User-Agent": "ElRoi/1.0 (mailto:local@example.invalid)"})
-    try:
-        with urllib.request.urlopen(req, timeout=12) as response:
-            return json.loads(response.read().decode("utf-8", errors="replace"))
-    except Exception as e:
-        print(f"  [Warning: ESV API fetch failed for {ref}: {e}]")
-        return None
-
-
 def _configured_bible_translation() -> str:
     try:
         value = str(get_setting("rag_bible_translation", "kjv")).strip().lower()
     except Exception:
         value = "kjv"
-    if value == "esv" and not ESV_API_KEY:
-        # Selected in Settings but no key configured yet -- degrade to KJV
-        # rather than silently failing every New Testament lookup.
-        return "kjv"
     return value or "kjv"
 
 
@@ -2314,6 +2286,29 @@ def _sefaria_fetch_ref(ref: str) -> dict:
         return None
 
 
+def _bible_api_fetch_range(book: str, chapter: int, start_verse: int,
+                           end_verse: int, translation: str) -> dict:
+    """
+    One bible-api.com call for a whole verse range, keyed by verse number
+    from its own 'verses' array -- instead of one call per verse, which
+    trips bible-api.com's stated rate limit on anything longer than about
+    fifteen verses in quick succession (the exact failure seen with a
+    /bible Genesis 1 request: English text silently stopped appearing
+    partway through the chapter). Returns {verse_num: text, ...} plus
+    'translation_name' under a None key; empty dict on any failure.
+    """
+    verse_part = str(start_verse) if end_verse == start_verse else f"{start_verse}-{end_verse}"
+    data = _bible_api_fetch(f"{book} {chapter}:{verse_part}", translation=translation)
+    if not data:
+        return {}
+    out = {None: data.get("translation_name")}
+    for v in data.get("verses") or []:
+        verse_num = v.get("verse")
+        if verse_num is not None:
+            out[verse_num] = " ".join((v.get("text") or "").split())
+    return out
+
+
 def _answer_bible_command(question: str) -> dict:
     if not _is_bible_command(question):
         return None
@@ -2343,14 +2338,20 @@ def _answer_bible_command(question: str) -> dict:
         data = _sefaria_fetch_ref(range_info["ref"])
         if data:
             he_list = data.get("he") or []
-            verse_num = range_info["start_verse"]
+            start_verse = range_info["start_verse"]
+            en_by_verse = {}
+            if he_list:
+                en_by_verse = _bible_api_fetch_range(
+                    range_info["book"], range_info["chapter"],
+                    start_verse, start_verse + len(he_list) - 1, translation)
+            verse_num = start_verse
             for i in range(len(he_list)):
                 he_text = _strip_html(he_list[i])
                 verse_ref = f"{range_info['book']} {range_info['chapter']}:{verse_num}"
-                en_text, _, _ = _translated_english(verse_ref, translation)
+                en_text = en_by_verse.get(verse_num, "")
                 if he_text or en_text:
                     blocks.append(_render_scripture_block(
-                        verse_ref, "Tanakh", "he", en_text, he_text))
+                        verse_ref, "", "he", en_text, he_text))
                 verse_num += 1
 
     hits = [] if blocks else _sefaria_find_refs(query)
@@ -2372,39 +2373,33 @@ def _answer_bible_command(question: str) -> dict:
         if ":" not in ref:
             # Whole chapter ("John 1", no verse) -- expand into one block
             # per verse using the locally cached Greek text to know how
-            # many verses exist, then reuse the same single-verse fetch as
-            # everywhere else for each one. Avoids depending on any
-            # particular chapter-shaped JSON response from bible-api.com
-            # or the ESV API, which this app has never actually verified.
+            # many verses exist, then ONE bulk bible-api.com call for the
+            # whole range (same rate-limit fix as the OT path above)
+            # rather than one call per verse.
             book, chapter_str = ref.rsplit(" ", 1)
             try:
                 chapter = int(chapter_str)
             except ValueError:
                 continue
             verse_count = _tr_chapter_verse_count(book, chapter)
+            if not verse_count:
+                continue
+            en_by_verse = _bible_api_fetch_range(book, chapter, 1, verse_count, translation)
+            translation_label = en_by_verse.get(None) or translation.upper()
             for verse_num in range(1, verse_count + 1):
                 verse_ref = f"{book} {chapter}:{verse_num}"
-                en_text, display_ref, translation_label = _translated_english(
-                    verse_ref, translation)
+                en_text = en_by_verse.get(verse_num, "")
                 greek_text = _tr_text(verse_ref)
                 if en_text or greek_text:
                     blocks.append(_render_scripture_block(
-                        display_ref, translation_label, "grc", en_text, greek_text))
+                        verse_ref, translation_label, "grc", en_text, greek_text))
             continue
         en_text, display_ref, translation_label = "", ref, translation.upper()
-        if translation == "esv":
-            data = _esv_fetch(ref)
-            if data:
-                passages = data.get("passages") or []
-                en_text = " ".join(" ".join(p.split()) for p in passages).strip()
-                display_ref = data.get("canonical") or ref
-                translation_label = "English Standard Version (ESV)"
-        else:
-            data = _bible_api_fetch(ref, translation=translation)
-            if data:
-                en_text = " ".join((data.get("text") or "").split())
-                display_ref = data.get("reference") or ref
-                translation_label = data.get("translation_name") or translation.upper()
+        data = _bible_api_fetch(ref, translation=translation)
+        if data:
+            en_text = " ".join((data.get("text") or "").split())
+            display_ref = data.get("reference") or ref
+            translation_label = data.get("translation_name") or translation.upper()
         greek_text = _tr_text(ref)
         if not en_text and not greek_text:
             continue
@@ -2434,13 +2429,6 @@ def _translated_english(ref: str, translation: str) -> tuple:
     Returns (english_text, display_ref, translation_label); english_text
     is empty on any failure, never raises.
     """
-    if translation == "esv":
-        data = _esv_fetch(ref)
-        if data:
-            passages = data.get("passages") or []
-            text = " ".join(" ".join(p.split()) for p in passages).strip()
-            return text, data.get("canonical") or ref, "English Standard Version (ESV)"
-        return "", ref, "English Standard Version (ESV)"
     data = _bible_api_fetch(ref, translation=translation)
     if data:
         text = " ".join((data.get("text") or "").split())
@@ -2460,9 +2448,9 @@ def _scripture_evidence_for_hits(hits: list, registry: CitationRegistry,
         category = hit.get("category") or "Sefaria library"
         en_text = hit.get("en_text") or ""
         translation_label = None
-        # Only override for genuine Tanakh references -- bible-api.com and
-        # the ESV API cover the Bible, not Talmud/Mishnah/Midrash, so those
-        # keep whatever English Sefaria itself provides; there's no other
+        # Only override for genuine Tanakh references -- bible-api.com
+        # covers the Bible, not Talmud/Mishnah/Midrash, so those keep
+        # whatever English Sefaria itself provides; there's no other
         # source for them.
         if category == "Tanakh":
             fetched_en, _, translation_label = _translated_english(hit["ref"], translation)
@@ -2499,20 +2487,11 @@ def _scripture_evidence_for_nt_refs(refs: list, registry: CitationRegistry,
             break
         en_text, display_ref, translation_label = "", ref, translation.upper()
         source_url = f"https://bible-api.com/{quote_plus(ref)}"
-        if translation == "esv":
-            data = _esv_fetch(ref)
-            if data:
-                passages = data.get("passages") or []
-                en_text = " ".join(" ".join(p.split()) for p in passages).strip()
-                display_ref = data.get("canonical") or ref
-                translation_label = "English Standard Version (ESV)"
-                source_url = "https://api.esv.org/v3/passage/text/?q=" + quote_plus(ref)
-        else:
-            data = _bible_api_fetch(ref, translation=translation)
-            if data:
-                en_text = " ".join((data.get("text") or "").split())
-                display_ref = data.get("reference") or ref
-                translation_label = data.get("translation_name") or translation.upper()
+        data = _bible_api_fetch(ref, translation=translation)
+        if data:
+            en_text = " ".join((data.get("text") or "").split())
+            display_ref = data.get("reference") or ref
+            translation_label = data.get("translation_name") or translation.upper()
         greek_text = _tr_text(ref)
         if not en_text and not greek_text:
             continue
@@ -2562,8 +2541,7 @@ def _scripture_evidence(question: str, context: str, existing_evidence: list,
 def _has_scripture_evidence(evidence: list) -> bool:
     return any(
         (getattr(ev, "source", "") or "").startswith(
-            ("https://www.sefaria.org/", "https://bible-api.com/",
-             "https://api.esv.org/"))
+            ("https://www.sefaria.org/", "https://bible-api.com/"))
         for ev in evidence or []
     )
 

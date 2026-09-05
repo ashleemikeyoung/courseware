@@ -691,7 +691,7 @@ TUNING_SETTING_KEYS = {
     "rag_topic_min_domain_hits", "rag_external_search_enabled",
     "rag_redaction_profiles", "rag_bible_translation", "rag_scripture_font_size",
 }
-BIBLE_TRANSLATIONS = {"kjv", "web", "asv", "ylt", "bbe", "darby", "esv"}
+BIBLE_TRANSLATIONS = {"kjv", "web", "asv", "ylt", "bbe", "darby"}
 SCRIPTURE_FONT_SIZES = {"small", "medium", "large"}
 
 

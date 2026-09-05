@@ -60,14 +60,6 @@ ASK_MODEL = os.getenv("OLLAMA_ASK_MODEL", DRAFT_MODEL)
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
 GOOGLE_SEARCH_MODEL = os.getenv("GOOGLE_SEARCH_MODEL", "gemini-2.5-flash")
 
-# --- ask.py: New Testament English translation ---------------------------
-# Optional. Only needed to use ESV specifically -- api.esv.org requires its
-# own free registered API key (Crossway's own service, separate from
-# bible-api.com). Every other supported translation (KJV, WEB, ASV, YLT,
-# Darby, BBE) is public domain and needs no key at all. Get a free key at
-# https://api.esv.org/ if you want ESV, then set ESV_API_KEY in .env.
-ESV_API_KEY = os.getenv("ESV_API_KEY", "")
-
 # --- orchestrator.py: terminal specialist routing -----------------------
 CODER_MODEL = os.getenv("OLLAMA_CODER_MODEL", "qwen2.5-coder:32b")
 GENERAL_MODEL = os.getenv("OLLAMA_GENERAL_MODEL", "qwen3:32b")
