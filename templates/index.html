@@ -488,6 +488,24 @@ textarea{resize:vertical;min-height:74px}
 .web-source a:hover{text-decoration:underline}
 .web-source .snippet{font-size:12.5px;color:var(--ink-soft);margin-top:2px}
 .web-source .host{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)}
+.scripture-block{
+  border:1px solid var(--rule);background:var(--paper-2);border-radius:2px;
+  padding:12px 16px;margin:10px 0;
+}
+.scripture-block + .scripture-block{margin-top:4px}
+.scripture-ref{
+  font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-faint);margin-bottom:6px;
+}
+.scripture-en{
+  font-family:var(--serif);font-size:15px;line-height:1.55;color:var(--ink);
+  margin:0 0 8px;
+}
+.scripture-orig{
+  font-family:var(--serif);font-size:16px;line-height:1.7;color:var(--ink-soft);
+  margin:0;padding-top:8px;border-top:1px dotted var(--rule);
+}
+.scripture-orig[dir="rtl"]{text-align:right}
 .active-requirements span{
   border:1px solid var(--rule);background:var(--paper-2);
   border-radius:8px;padding:4px 8px;max-width:100%;
@@ -1019,6 +1037,23 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
         <div class="log" id="tuninglog" style="display:none;margin-top:14px"></div>
       </div>
 
+      <div class="slab" style="margin-bottom:18px">
+        <p class="eyebrow" style="margin-bottom:12px">Scripture translation</p>
+        <div class="field" style="margin-bottom:10px">
+          <label for="bibleTranslation">New Testament translation</label>
+          <select id="bibleTranslation">
+            <option value="kjv">King James Version (KJV)</option>
+            <option value="web">World English Bible (WEB)</option>
+            <option value="asv">American Standard Version (ASV)</option>
+            <option value="ylt">Young's Literal Translation (YLT)</option>
+            <option value="darby">Darby Translation</option>
+            <option value="bbe">Bible in Basic English (BBE)</option>
+            <option value="esv">English Standard Version (ESV)</option>
+          </select>
+        </div>
+        <div class="tiny">Old Testament passages always use Sefaria's own Hebrew text. This only changes the English translation used for New Testament references. ESV requires a free key from api.esv.org set as ESV_API_KEY in .env -- without one, it falls back to KJV automatically.</div>
+      </div>
+
       <div class="slab">
         <p class="eyebrow" style="margin-bottom:12px">Submit miss</p>
         <div class="field"><label for="missQuery">Query</label>
@@ -1390,6 +1425,7 @@ function mdToHtml(md, opts = {}){
   const showCitations = opts.showCitations !== false;
   if (!showCitations) md = stripHiddenCitations(md);
   const lines = md.split("\n"); let out = [], list = null, code = null;
+  let scripture = null;
   const inline = t => esc(t)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
@@ -1400,6 +1436,33 @@ function mdToHtml(md, opts = {}){
     .replace(/\[([\w-]*C\d+)\]/g, (m, c) => showCitations ? citeHtml(c) : "");
   const close = () => { if (list){ out.push(`</${list}>`); list = null; } };
   for (const raw of lines){
+    // A [SCRIPTURE ref="..." translation="..." lang="he|grc"] ... [/SCRIPTURE]
+    // block is its own mini-format, not markdown -- see ask.py's "Scripture
+    // display convention" for why: a verse quotation needs English on top
+    // and the original-language text underneath, visually set apart from
+    // ordinary prose, rather than blending into a paragraph. Parsed as its
+    // own block state the same way a code fence is, so it can span
+    // multiple lines and can't be mistaken for a heading or list item.
+    if (scripture){
+      if (/^\s*\[\/SCRIPTURE\]\s*$/.test(raw)){
+        out.push(scriptureBlockHtml(scripture));
+        scripture = null;
+      } else {
+        const enMatch = raw.match(/^\s*EN:\s*(.*)$/);
+        const origMatch = raw.match(/^\s*ORIG:\s*(.*)$/);
+        if (enMatch) scripture.en = enMatch[1].trim();
+        else if (origMatch) scripture.orig = origMatch[1].trim();
+      }
+      continue;
+    }
+    const scriptureStart = raw.match(/^\s*\[SCRIPTURE\b([^\]]*)\]\s*$/);
+    if (scriptureStart){
+      close();
+      const attrs = parseScriptureAttrs(scriptureStart[1]);
+      scripture = {ref: attrs.ref || "", translation: attrs.translation || "",
+                   lang: attrs.lang || "", en: "", orig: ""};
+      continue;
+    }
     let fence = raw.match(/^\s*```\s*([\w.+-]*)\s*$/);
     if (fence){
       close();
@@ -1425,8 +1488,35 @@ function mdToHtml(md, opts = {}){
       out.push(`<li>${inline(m[1])}</li>`);
     } else { close(); out.push(`<p>${inline(l)}</p>`); }
   }
+  if (scripture) out.push(scriptureBlockHtml(scripture));
   if (code) out.push(codeBlockHtml(code.lang, code.lines.join("\n")));
   close(); return out.join("");
+}
+
+/* Attributes on a [SCRIPTURE ...] tag, order-independent -- the model is
+   told a specific attribute order in the system prompt, but this doesn't
+   depend on it holding exactly, the same defensiveness as everywhere else
+   markers can drift slightly from what was asked for. */
+function parseScriptureAttrs(attrString){
+  const attrs = {};
+  const re = /(\w+)="([^"]*)"/g;
+  let m;
+  while ((m = re.exec(attrString || ""))) attrs[m[1]] = m[2];
+  return attrs;
+}
+
+/* English on top, original language underneath -- the display convention
+   this exists for. dir="rtl" for Hebrew keeps punctuation and word order
+   reading correctly; Greek stays left-to-right by default. */
+function scriptureBlockHtml(s){
+  const label = s.ref + (s.translation ? ` (${s.translation})` : "");
+  const langAttr = s.lang === "he" ? ' dir="rtl" lang="he"' : ' lang="grc"';
+  let html = `<div class="scripture-block">`;
+  if (label.trim()) html += `<div class="scripture-ref">${esc(label)}</div>`;
+  if (s.en) html += `<p class="scripture-en">${esc(s.en)}</p>`;
+  if (s.orig) html += `<p class="scripture-orig"${langAttr}>${esc(s.orig)}</p>`;
+  html += `</div>`;
+  return html;
 }
 
 function codeBlockHtml(lang, code){
@@ -2534,6 +2624,7 @@ async function loadTuning(){
       STATE.tuning.settings.rag_auto_reindex_on_tuning === "on";
     $("#externalSearchToggle").checked =
       STATE.tuning.settings.rag_external_search_enabled === "on";
+    $("#bibleTranslation").value = STATE.tuning.settings.rag_bible_translation || "kjv";
     renderRedactionProfiles();
     renderCriteria();
     renderMisses();
@@ -2959,6 +3050,16 @@ $("#btnSaveRedactionProfiles").onclick = saveRedactionProfiles;
 $("#btnSubmitMiss").onclick = submitMiss;
 $("#autoReindexToggle").onchange = saveAutoReindex;
 $("#externalSearchToggle").onchange = saveExternalSearch;
+$("#bibleTranslation").onchange = async () => {
+  const value = $("#bibleTranslation").value;
+  const r = await (await fetch("/api/tuning/settings", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(withProject({ rag_bible_translation: value })),
+  })).json();
+  if (r.error) return toast(r.error);
+  STATE.tuning.settings.rag_bible_translation = value;
+  toast("New Testament translation saved");
+};
 $("#btnReindexTuning").onclick = runTuningReindex;
 $("#fbFilter").onchange = loadFeedbackTable;
 $("#btnExportFeedback").onclick = exportFeedback;

@@ -35,7 +35,7 @@ from writer import (
 # convention (which is what app.py and mcp_server.py both used to do --
 # two places quietly agreeing on the same borrowed default instead of ask.py
 # declaring its own). Callers can still override with an explicit model.
-from config import ASK_MODEL, GOOGLE_API_KEY, GOOGLE_SEARCH_MODEL
+from config import ASK_MODEL, GOOGLE_API_KEY, GOOGLE_SEARCH_MODEL, ESV_API_KEY
 import coder
 import projects
 import quality
@@ -1866,6 +1866,414 @@ def _web_search_evidence(question: str, registry: CitationRegistry,
     return _external_search_evidence(question, registry, limit=limit)
 
 
+# ---------------------------------------------------------------------------
+# Scripture and rabbinic-text sources -- verified text from Sefaria's real
+# reference-recognition model (the "Linker"), not a hand-built keyword or
+# book-name list. Sefaria's find-refs API runs an actual trained model (CNN
+# for English, BERT for Hebrew) over arbitrary text and returns every
+# citation it recognizes to anything in its library -- Tanakh, Talmud,
+# Mishnah, Midrash, and more -- along with which corpus each one belongs to.
+# That corpus label is what drives the First/Second Temple framing below;
+# nothing here guesses relevance from a topic word list.
+#
+# New Testament text isn't in Sefaria's library at all -- there is no
+# equivalent free, trained citation-recognition model for it that this
+# could lean on. The small New Testament book-name table below is the one
+# place a hand-built list remains, and it is purely structural: it exists
+# only to turn an explicit citation someone already wrote ("John 3:16")
+# into a valid bible-api.com request, never to guess what topic a vague
+# question is about.
+# ---------------------------------------------------------------------------
+_NT_BOOK_CANON = {
+    "matthew": "Matthew", "matt": "Matthew", "mt": "Matthew",
+    "mark": "Mark", "mk": "Mark",
+    "luke": "Luke", "lk": "Luke",
+    "john": "John", "jn": "John",
+    "acts": "Acts",
+    "romans": "Romans", "rom": "Romans",
+    "i corinthians": "I Corinthians", "1 corinthians": "I Corinthians",
+    "ii corinthians": "II Corinthians", "2 corinthians": "II Corinthians",
+    "galatians": "Galatians", "gal": "Galatians",
+    "ephesians": "Ephesians", "eph": "Ephesians",
+    "philippians": "Philippians", "phil": "Philippians",
+    "colossians": "Colossians", "col": "Colossians",
+    "i thessalonians": "I Thessalonians", "1 thessalonians": "I Thessalonians",
+    "ii thessalonians": "II Thessalonians", "2 thessalonians": "II Thessalonians",
+    "i timothy": "I Timothy", "1 timothy": "I Timothy",
+    "ii timothy": "II Timothy", "2 timothy": "II Timothy",
+    "titus": "Titus", "philemon": "Philemon", "philem": "Philemon",
+    "hebrews": "Hebrews", "heb": "Hebrews",
+    "james": "James", "jas": "James",
+    "i peter": "I Peter", "1 peter": "I Peter",
+    "ii peter": "II Peter", "2 peter": "II Peter",
+    "i john": "I John", "1 john": "I John",
+    "ii john": "II John", "2 john": "II John",
+    "iii john": "III John", "3 john": "III John",
+    "jude": "Jude",
+    "revelation": "Revelation", "rev": "Revelation", "apocalypse": "Revelation",
+}
+_NT_BOOK_ALTERNATION = "|".join(
+    re.escape(a) for a in sorted(_NT_BOOK_CANON, key=len, reverse=True)
+)
+NT_REF_RE = re.compile(
+    rf"\b({_NT_BOOK_ALTERNATION})\.?\s+(\d{{1,3}})(?::(\d{{1,3}})(?:-(\d{{1,3}}))?)?\b",
+    re.IGNORECASE,
+)
+
+
+def _nt_refs_in_text(text: str, limit: int = 6) -> list:
+    refs, seen = [], set()
+    for m in NT_REF_RE.finditer(text or ""):
+        book = _NT_BOOK_CANON.get(m.group(1).lower())
+        if not book:
+            continue
+        chapter, verse, verse_end = m.group(2), m.group(3), m.group(4)
+        ref = f"{book} {chapter}"
+        if verse:
+            ref += f":{verse}"
+            if verse_end:
+                ref += f"-{verse_end}"
+        if ref in seen:
+            continue
+        seen.add(ref)
+        refs.append(ref)
+        if len(refs) >= limit:
+            break
+    return refs
+
+
+def _sefaria_join(value) -> str:
+    if isinstance(value, list):
+        return " ".join(_strip_html(v) for v in value if v)
+    return _strip_html(value or "")
+
+
+def _sefaria_find_refs(text: str, timeout_s: float = 6.0) -> list:
+    """
+    Calls Sefaria's real Linker model (POST /api/find-refs, an async task --
+    see developers.sefaria.org/docs/linker-api) over arbitrary text and
+    returns every citation it recognizes anywhere in its library, each
+    tagged with its actual primaryCategory (Tanakh, Talmud, Mishnah, ...).
+    This is model output, not a lookup against a list this file maintains.
+    Never raises: any failure (network, timeout, no task_id, task never
+    completing inside timeout_s) just means no Sefaria hits this turn.
+    """
+    if not (text or "").strip():
+        return []
+    url = "https://www.sefaria.org/api/find-refs?with_text=1"
+    payload = {"text": {"title": "", "body": text}, "lang": "en"}
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json",
+                 "User-Agent": "ElRoi/1.0 (mailto:local@example.invalid)"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8", errors="replace"))
+    except Exception as e:
+        print(f"  [Warning: Sefaria find-refs request failed: {e}]")
+        return []
+    task_id = data.get("task_id")
+    if not task_id:
+        return []
+
+    poll_url = f"https://www.sefaria.org/api/async/{quote_plus(task_id)}"
+    deadline = time.time() + timeout_s
+    result = None
+    while time.time() < deadline:
+        try:
+            req2 = urllib.request.Request(
+                poll_url,
+                headers={"User-Agent": "ElRoi/1.0 (mailto:local@example.invalid)"})
+            with urllib.request.urlopen(req2, timeout=5) as response:
+                poll_data = json.loads(response.read().decode("utf-8", errors="replace"))
+        except Exception as e:
+            print(f"  [Warning: Sefaria find-refs poll failed: {e}]")
+            return []
+        if poll_data.get("ready"):
+            result = poll_data.get("result")
+            break
+        time.sleep(0.4)
+    if not result:
+        return []
+
+    hits, seen = [], set()
+    for section in ("title", "body"):
+        block = result.get(section) or {}
+        ref_data = block.get("refData") or {}
+        for res in block.get("results") or []:
+            for ref in res.get("refs") or []:
+                if ref in seen:
+                    continue
+                seen.add(ref)
+                info = ref_data.get(ref) or {}
+                hits.append({
+                    "ref": ref,
+                    "url": info.get("url") or ref.replace(" ", "."),
+                    "category": info.get("primaryCategory") or "",
+                    "he_text": _sefaria_join(info.get("he")),
+                    "en_text": _sefaria_join(info.get("en")),
+                })
+    return hits
+
+
+def _bible_api_fetch(ref: str, translation: str = "kjv") -> dict:
+    url = f"https://bible-api.com/{quote_plus(ref)}?translation={quote_plus(translation)}"
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "ElRoi/1.0 (mailto:local@example.invalid)"})
+    try:
+        with urllib.request.urlopen(req, timeout=12) as response:
+            return json.loads(response.read().decode("utf-8", errors="replace"))
+    except Exception as e:
+        print(f"  [Warning: bible-api.com fetch failed for {ref}: {e}]")
+        return None
+
+
+def _esv_fetch(ref: str) -> dict:
+    """
+    Crossway's own ESV API (api.esv.org) -- a separate, licensed service
+    from bible-api.com's public-domain set, requiring its own free
+    registered key (config.ESV_API_KEY). Only called when that key is
+    configured; see _configured_bible_translation for the fallback when
+    it isn't.
+    """
+    url = (
+        "https://api.esv.org/v3/passage/text/?q=" + quote_plus(ref)
+        + "&include-passage-references=false&include-footnotes=false"
+        + "&include-footnote-body=false&include-headings=false"
+    )
+    req = urllib.request.Request(
+        url, headers={"Authorization": f"Token {ESV_API_KEY}",
+                     "User-Agent": "ElRoi/1.0 (mailto:local@example.invalid)"})
+    try:
+        with urllib.request.urlopen(req, timeout=12) as response:
+            return json.loads(response.read().decode("utf-8", errors="replace"))
+    except Exception as e:
+        print(f"  [Warning: ESV API fetch failed for {ref}: {e}]")
+        return None
+
+
+def _configured_bible_translation() -> str:
+    try:
+        value = str(get_setting("rag_bible_translation", "kjv")).strip().lower()
+    except Exception:
+        value = "kjv"
+    if value == "esv" and not ESV_API_KEY:
+        # Selected in Settings but no key configured yet -- degrade to KJV
+        # rather than silently failing every New Testament lookup.
+        return "kjv"
+    return value or "kjv"
+
+
+# ---------------------------------------------------------------------------
+# Textus Receptus Greek New Testament -- public domain by age (the printed
+# TR tradition runs from Erasmus 1516 through Scrivener 1894), reconstructed
+# here from the Center for New Testament Restoration's KJTR dataset: a
+# modern, word-level, properly accented Unicode transcription built
+# specifically to match the Greek underlying the King James Version,
+# released CC BY 4.0. Chosen over byztxt's older Scrivener transcription
+# because that one is an unaccented ASCII transliteration (no polytonic
+# Greek at all), a real quality step down from what this app has been
+# giving for Hebrew all along -- this KJTR source keeps real accented Greek
+# and pairs naturally with KJV as the English translation. No API, no key:
+# a one-time fetch, parsed into a reference-keyed local cache, then read
+# from disk after that -- same pattern as the OT/Hebrew and other NT paths.
+# ---------------------------------------------------------------------------
+_TR_CACHE = None
+TR_SOURCE_URL = "https://raw.githubusercontent.com/Center-for-New-Testament-Restoration/KJTR/main/KJTR.tsv"
+TR_BOOKS = {
+    40: "Matthew", 41: "Mark", 42: "Luke", 43: "John", 44: "Acts",
+    45: "Romans", 46: "I Corinthians", 47: "II Corinthians", 48: "Galatians",
+    49: "Ephesians", 50: "Philippians", 51: "Colossians",
+    52: "I Thessalonians", 53: "II Thessalonians",
+    54: "I Timothy", 55: "II Timothy", 56: "Titus", 57: "Philemon",
+    58: "Hebrews", 59: "James", 60: "I Peter", 61: "II Peter",
+    62: "I John", 63: "II John", 64: "III John", 65: "Jude", 66: "Revelation",
+}
+
+
+def _tr_cache_path() -> Path:
+    return Path(__file__).resolve().parent / "data" / "textus_receptus.tsv"
+
+
+def _download_textus_receptus() -> bool:
+    req = urllib.request.Request(
+        TR_SOURCE_URL,
+        headers={"User-Agent": "ElRoi/1.0 (mailto:local@example.invalid)"})
+    try:
+        with urllib.request.urlopen(req, timeout=25) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        print(f"  [Warning: Textus Receptus (KJTR) download failed: {e}]")
+        return False
+
+    words_by_verse = {}
+    lines = raw.splitlines()
+    for line in lines[1:]:  # skip the "Verse\tModern\t..." header row
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        verse_ref, word = parts[0], parts[1]
+        if len(verse_ref) != 8 or not verse_ref.isdigit():
+            continue
+        word = word.replace("\u00b6", "").strip()  # strip pilcrow paragraph marks
+        if not word:
+            continue
+        words_by_verse.setdefault(verse_ref, []).append(word)
+
+    rows = []
+    for verse_ref, words in words_by_verse.items():
+        book_num, chapter, verse = int(verse_ref[:2]), int(verse_ref[2:5]), int(verse_ref[5:8])
+        book = TR_BOOKS.get(book_num)
+        if not book:
+            continue
+        rows.append(f"{book} {chapter}:{verse}\t{' '.join(words)}")
+    if not rows:
+        return False
+
+    path = _tr_cache_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(rows), encoding="utf-8")
+    except Exception as e:
+        print(f"  [Warning: could not cache Textus Receptus locally: {e}]")
+        return False
+    return True
+
+
+def _tr_index() -> dict:
+    global _TR_CACHE
+    if _TR_CACHE is not None:
+        return _TR_CACHE
+    path = _tr_cache_path()
+    if not path.exists() and not _download_textus_receptus():
+        _TR_CACHE = {}
+        return _TR_CACHE
+    index = {}
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if "\t" not in line:
+                continue
+            ref, text = line.split("\t", 1)
+            index[ref] = text
+    except Exception as e:
+        print(f"  [Warning: could not read cached Textus Receptus text: {e}]")
+        index = {}
+    _TR_CACHE = index
+    return index
+
+
+def _tr_text(ref: str) -> str:
+    return _tr_index().get(ref, "")
+
+
+def _scripture_evidence_for_hits(hits: list, registry: CitationRegistry,
+                                 limit: int = 4) -> list:
+    evidence = []
+    for hit in hits:
+        if len(evidence) >= limit:
+            break
+        if not hit.get("he_text") and not hit.get("en_text"):
+            continue
+        category = hit.get("category") or "Sefaria library"
+        source_url = f"https://www.sefaria.org/{hit['url']}"
+        details = [
+            f"[Scripture/text source: Sefaria, category: {category}]",
+            f"Reference: {hit['ref']}",
+        ]
+        if hit.get("he_text"):
+            details.append(f"Hebrew (original text, pointed): {hit['he_text']}")
+        if hit.get("en_text"):
+            details.append(f"English translation: {hit['en_text']}")
+        details.append(
+            "Reference seed: cite this reference exactly as given. If Hebrew "
+            "text is present, quote term(s) only as they literally appear "
+            "above, each with a transliteration and a brief English gloss. "
+            "Never invent a word, transliteration, or verse not present here."
+        )
+        evidence.append(registry.register(source_url, -25, -25, "\n".join(details)))
+    return evidence
+
+
+def _scripture_evidence_for_nt_refs(refs: list, registry: CitationRegistry,
+                                    limit: int = 4) -> list:
+    translation = _configured_bible_translation()
+    evidence = []
+    for ref in refs:
+        if len(evidence) >= limit:
+            break
+        en_text, display_ref, translation_label = "", ref, translation.upper()
+        source_url = f"https://bible-api.com/{quote_plus(ref)}"
+        if translation == "esv":
+            data = _esv_fetch(ref)
+            if data:
+                passages = data.get("passages") or []
+                en_text = " ".join(" ".join(p.split()) for p in passages).strip()
+                display_ref = data.get("canonical") or ref
+                translation_label = "English Standard Version (ESV)"
+                source_url = "https://api.esv.org/v3/passage/text/?q=" + quote_plus(ref)
+        else:
+            data = _bible_api_fetch(ref, translation=translation)
+            if data:
+                en_text = " ".join((data.get("text") or "").split())
+                display_ref = data.get("reference") or ref
+                translation_label = data.get("translation_name") or translation.upper()
+        greek_text = _tr_text(ref)
+        if not en_text and not greek_text:
+            continue
+        details = [
+            "[Scripture source: New Testament -- Textus Receptus Greek "
+            "(public domain/CC BY 4.0) where available, plus a public-domain "
+            "or licensed English translation]",
+            f"Reference: {display_ref} ({translation_label})",
+        ]
+        if greek_text:
+            details.append(f"Greek (Textus Receptus): {greek_text}")
+        if en_text:
+            details.append(f"English text: {en_text}")
+        details.append(
+            "Reference seed: cite this reference exactly as given. If Greek "
+            "text is present, quote term(s) only as they literally appear "
+            "above, each with a transliteration and a brief English gloss. "
+            "Never invent a word, transliteration, or verse not present here."
+        )
+        evidence.append(registry.register(source_url, -25, -25, "\n".join(details)))
+    return evidence
+
+
+def _scripture_evidence(question: str, context: str, existing_evidence: list,
+                        registry: CitationRegistry, limit: int = 4) -> list:
+    """
+    Never gated behind the external-search toggle, and never gated behind a
+    topic keyword list either: Sefaria's own model decides what counts as a
+    real citation, this just asks it. Checks the question, recent context,
+    AND whatever evidence has already been gathered -- so a reference
+    surfaced by web search or a local document still gets consulted at the
+    source before the model writes about it.
+    """
+    haystack = "\n".join([question or "", context or ""] + [
+        f"{getattr(ev, 'source', '')}\n{getattr(ev, 'text', '')}"
+        for ev in existing_evidence or []
+    ])
+    evidence = _scripture_evidence_for_hits(
+        _sefaria_find_refs(haystack), registry, limit=limit)
+    if len(evidence) < limit:
+        remaining = limit - len(evidence)
+        evidence.extend(_scripture_evidence_for_nt_refs(
+            _nt_refs_in_text(haystack, limit=remaining), registry, limit=remaining))
+    return evidence
+
+
+def _has_scripture_evidence(evidence: list) -> bool:
+    return any(
+        (getattr(ev, "source", "") or "").startswith(
+            ("https://www.sefaria.org/", "https://bible-api.com/",
+             "https://api.esv.org/"))
+        for ev in evidence or []
+    )
+
+
 def _crossref_date_year(item: dict) -> int:
     for key in ("published-print", "published-online", "published", "created"):
         parts = ((item.get(key) or {}).get("date-parts") or [[]])[0]
@@ -3597,6 +4005,10 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 if len(filtered) != len(evidence):
                     evidence = filtered
                     improvements.append("filtered_weak_project_context")
+            scripture = _scripture_evidence(last_user, recent_context, evidence, registry)
+            if scripture:
+                evidence = scripture + evidence
+                improvements.append("added_scripture_evidence")
             source_count = len({
                 ev.source for ev in evidence
                 if ev.source and ev.source != "document-index"
@@ -3690,6 +4102,53 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 "user asks for a References section, include reference entries "
                 "for the cited external sources using the visible title and "
                 "URL rather than replacing the section with a note."
+            )
+        if _has_scripture_evidence(evidence):
+            system += (
+                "\n\nScripture display convention -- two different formats "
+                "depending on what you're doing:\n"
+                "(1) Citing a single key term: add a short list line after "
+                "your prose in the form 'word (transliteration) \u2014 brief "
+                "English gloss', using ONLY a word that literally appears in "
+                "the relevant source entry's original-language text (Hebrew "
+                "for Sefaria entries, Greek for Textus Receptus entries).\n"
+                "(2) Quoting an actual verse or more: use this exact block "
+                "format, one block per verse, never combining multiple "
+                "verses into one block and never wrapping it in markdown, "
+                "quotes, or code fences:\n"
+                "[SCRIPTURE ref=\"Book Chapter:Verse\" translation=\"...\" "
+                "lang=\"he|grc\"]\n"
+                "EN: exact English text of that verse\n"
+                "ORIG: exact original-language text of that verse\n"
+                "[/SCRIPTURE]\n"
+                "Set lang to \"he\" for Sefaria/Hebrew entries or \"grc\" for "
+                "Textus Receptus/Greek entries. Take ref, translation, EN, "
+                "and ORIG exactly from that source entry's Reference, "
+                "translation label, English text, and Hebrew/Greek text "
+                "fields -- never invent or paraphrase them. Omit the ORIG "
+                "line entirely (not a blank one) when that source entry has "
+                "no original-language text. Never quote scripture or "
+                "Talmudic text for a reference that was not provided as "
+                "source material this turn, and never invent a word, "
+                "transliteration, or verse not present in the material "
+                "given."
+            )
+        if _has_scripture_evidence(evidence):
+            system += (
+                "\n\nJewish historical-source framing: distinguish which corpus "
+                "a claim actually comes from before stating it. A source entry's "
+                "category (Tanakh vs. Talmud/Mishnah/Midrash) tells you which "
+                "era it belongs to -- a practice or belief attested directly in "
+                "a Tanakh entry belongs to the First Temple period's own "
+                "biblical record. A practice, interpretation, or legal ruling "
+                "from a Talmud, Mishnah, or Midrash entry belongs to the Second "
+                "Temple and post-Temple rabbinic period, even when that later "
+                "view is the one practiced or taught as normative today. Do not "
+                "project a Talmudic-era elaboration onto the biblical text as "
+                "though scripture itself already said it. When the era matters "
+                "to the answer, name it and name the source type -- biblical "
+                "vs. rabbinic/Talmudic -- explicitly, rather than blending them "
+                "into one undifferentiated account."
             )
     apa_seed_text = _apa_seed_block(evidence)
     if apa_seed_text:

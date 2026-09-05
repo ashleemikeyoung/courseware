@@ -689,8 +689,9 @@ TUNING_SETTING_KEYS = {
     "rag_chunk_size", "rag_chunk_overlap", "rag_auto_reindex_on_tuning",
     "rag_supported_extensions", "rag_ignored_dirs",
     "rag_topic_min_domain_hits", "rag_external_search_enabled",
-    "rag_redaction_profiles",
+    "rag_redaction_profiles", "rag_bible_translation",
 }
+BIBLE_TRANSLATIONS = {"kjv", "web", "asv", "ylt", "bbe", "darby", "esv"}
 
 
 def _memory_required():
@@ -738,6 +739,8 @@ def api_tuning():
                 "rag_external_search_enabled", "off"),
             "rag_redaction_profiles": get_setting(
                 "rag_redaction_profiles", "legal_privileged"),
+            "rag_bible_translation": get_setting(
+                "rag_bible_translation", "kjv"),
             "rag_topic_min_domain_hits": get_setting(
                 "rag_topic_min_domain_hits", "5"),
             "rag_supported_extensions": get_setting(
@@ -821,6 +824,13 @@ def api_tuning_settings():
                 if item.strip()
             ]
             value = ",".join(dict.fromkeys(values))
+            saved[key] = value
+            set_setting(key, value)
+            continue
+        if key == "rag_bible_translation":
+            value = str(body.get(key) or "").strip().lower()
+            if value not in BIBLE_TRANSLATIONS:
+                return jsonify({"error": "unknown bible translation"}), 400
             saved[key] = value
             set_setting(key, value)
             continue
