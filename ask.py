@@ -1924,7 +1924,8 @@ _NT_BOOK_ALTERNATION = "|".join(
     re.escape(a) for a in sorted(_NT_BOOK_CANON, key=len, reverse=True)
 )
 NT_REF_RE = re.compile(
-    rf"\b({_NT_BOOK_ALTERNATION})\.?\s+(\d{{1,3}})(?::(\d{{1,3}})(?:-(\d{{1,3}}))?)?\b",
+    rf"\b({_NT_BOOK_ALTERNATION})\.?\s+(?:chapter\s+)?(\d{{1,3}})"
+    rf"(?::(\d{{1,3}})(?:-(\d{{1,3}}))?)?\b",
     re.IGNORECASE,
 )
 
@@ -2176,6 +2177,21 @@ def _tr_text(ref: str) -> str:
     return _tr_index().get(ref, "")
 
 
+def _tr_chapter_verse_count(book: str, chapter: int) -> int:
+    """
+    How many verses a New Testament chapter has, read straight from the
+    locally cached Textus Receptus index rather than guessing or trusting a
+    chapter-shaped API response. Used to expand a whole-chapter /bible
+    request ("John 1", no verse given) into one block per verse.
+    """
+    prefix = f"{book} {chapter}:"
+    verses = [
+        int(key[len(prefix):]) for key in _tr_index()
+        if key.startswith(prefix) and key[len(prefix):].isdigit()
+    ]
+    return max(verses) if verses else 0
+
+
 # ---------------------------------------------------------------------------
 # /bible -- an explicit, deterministic command rather than hoping the model
 # reliably chooses to use the [SCRIPTURE] block format on its own. This
@@ -2255,8 +2271,8 @@ _BIBLE_CMD_OT_BOOKS = {
 _BIBLE_CMD_OT_ALTERNATION = "|".join(
     re.escape(a) for a in sorted(_BIBLE_CMD_OT_BOOKS, key=len, reverse=True))
 BIBLE_CMD_RANGE_RE = re.compile(
-    rf"\b({_BIBLE_CMD_OT_ALTERNATION})\.?\s+(\d{{1,3}}):(\d{{1,3}})"
-    rf"(?:\s*(?:-|to)\s*(?:\d{{1,3}}:)?(\d{{1,3}}))?\b",
+    rf"\b({_BIBLE_CMD_OT_ALTERNATION})\.?\s+(?:chapter\s+)?(\d{{1,3}})"
+    rf"(?::(\d{{1,3}})(?:\s*(?:-|to)\s*(?:\d{{1,3}}:)?(\d{{1,3}}))?)?\b",
     re.IGNORECASE,
 )
 
@@ -2268,11 +2284,20 @@ def _bible_cmd_ot_range(query: str):
     book = _BIBLE_CMD_OT_BOOKS.get(m.group(1).lower())
     if not book:
         return None
-    chapter, start_verse = int(m.group(2)), int(m.group(3))
+    chapter = int(m.group(2))
+    book_part = book.replace(" ", "_")
+    if not m.group(3):
+        # No verse given at all -- "Genesis 1" or "Genesis chapter 1" means
+        # the whole chapter. Sefaria's texts API accepts a bare "Book.C"
+        # ref and returns every verse in it as an array, which the caller
+        # below splits into one block per verse exactly like a range does.
+        return {"ref": f"{book_part}.{chapter}", "book": book,
+                "chapter": chapter, "start_verse": 1, "whole_chapter": True}
+    start_verse = int(m.group(3))
     end_verse = int(m.group(4)) if m.group(4) else start_verse
     if end_verse < start_verse:
         start_verse, end_verse = end_verse, start_verse
-    ref = f"{book.replace(' ', '_')}.{chapter}.{start_verse}-{end_verse}"
+    ref = f"{book_part}.{chapter}.{start_verse}-{end_verse}"
     return {"ref": ref, "book": book, "chapter": chapter,
             "start_verse": start_verse, "end_verse": end_verse}
 
@@ -2306,7 +2331,29 @@ def _answer_bible_command(question: str) -> dict:
     translation = _configured_bible_translation()
     blocks = []
 
-    hits = _sefaria_find_refs(query)
+    # Deterministic parser tried FIRST for anything it recognizes (plain
+    # "Book C", "Book C:V", or "Book C:V-V" patterns) -- Sefaria's linker is
+    # a real NLP model but tends to return a chapter-level reference as one
+    # merged block of text rather than split per verse, which fails the
+    # "verse by verse, with addresses" display this command exists for.
+    # The linker is only consulted as a fallback for reference shapes this
+    # simple regex doesn't cover at all (Talmud/Mishnah, unusual phrasing).
+    range_info = _bible_cmd_ot_range(query)
+    if range_info:
+        data = _sefaria_fetch_ref(range_info["ref"])
+        if data:
+            he_list = data.get("he") or []
+            verse_num = range_info["start_verse"]
+            for i in range(len(he_list)):
+                he_text = _strip_html(he_list[i])
+                verse_ref = f"{range_info['book']} {range_info['chapter']}:{verse_num}"
+                en_text, _, _ = _translated_english(verse_ref, translation)
+                if he_text or en_text:
+                    blocks.append(_render_scripture_block(
+                        verse_ref, "Tanakh", "he", en_text, he_text))
+                verse_num += 1
+
+    hits = [] if blocks else _sefaria_find_refs(query)
     for hit in hits:
         he_text = hit.get("he_text") or ""
         en_text = hit.get("en_text") or ""
@@ -2320,24 +2367,30 @@ def _answer_bible_command(question: str) -> dict:
             hit["ref"], hit.get("category") or "Sefaria", "he",
             en_text, he_text))
 
-    if not hits:
-        range_info = _bible_cmd_ot_range(query)
-        if range_info:
-            data = _sefaria_fetch_ref(range_info["ref"])
-            if data:
-                he_list = data.get("he") or []
-                verse_num = range_info["start_verse"]
-                for i in range(len(he_list)):
-                    he_text = _strip_html(he_list[i])
-                    verse_ref = f"{range_info['book']} {range_info['chapter']}:{verse_num}"
-                    en_text, _, _ = _translated_english(verse_ref, translation)
-                    if he_text or en_text:
-                        blocks.append(_render_scripture_block(
-                            verse_ref, "Tanakh", "he", en_text, he_text))
-                    verse_num += 1
-
-    nt_refs = [] if (hits or blocks) else _nt_refs_in_text(query)
+    nt_refs = [] if (blocks or hits) else _nt_refs_in_text(query)
     for ref in nt_refs:
+        if ":" not in ref:
+            # Whole chapter ("John 1", no verse) -- expand into one block
+            # per verse using the locally cached Greek text to know how
+            # many verses exist, then reuse the same single-verse fetch as
+            # everywhere else for each one. Avoids depending on any
+            # particular chapter-shaped JSON response from bible-api.com
+            # or the ESV API, which this app has never actually verified.
+            book, chapter_str = ref.rsplit(" ", 1)
+            try:
+                chapter = int(chapter_str)
+            except ValueError:
+                continue
+            verse_count = _tr_chapter_verse_count(book, chapter)
+            for verse_num in range(1, verse_count + 1):
+                verse_ref = f"{book} {chapter}:{verse_num}"
+                en_text, display_ref, translation_label = _translated_english(
+                    verse_ref, translation)
+                greek_text = _tr_text(verse_ref)
+                if en_text or greek_text:
+                    blocks.append(_render_scripture_block(
+                        display_ref, translation_label, "grc", en_text, greek_text))
+            continue
         en_text, display_ref, translation_label = "", ref, translation.upper()
         if translation == "esv":
             data = _esv_fetch(ref)
