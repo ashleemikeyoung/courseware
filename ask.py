@@ -2200,6 +2200,84 @@ def _render_scripture_block(ref: str, translation: str, lang: str,
     return "\n".join(lines)
 
 
+# Public (no leading underscore) since terminal/plain-text consumers of
+# ask.ask()'s output -- currently orchestrator.py, potentially MCP later --
+# need this too, not just the code inside this module. A browser's own
+# JS parser (mdToHtml) turns a [SCRIPTURE] block into a styled card; a
+# terminal has no equivalent, so without this the literal ref="..."/EN:/
+# ORIG:/[/SCRIPTURE] tags print verbatim instead of rendering as anything.
+#
+# Hebrew specifically gets wrapped in Unicode directional isolates (RIGHT-
+# TO-LEFT ISOLATE / POP DIRECTIONAL ISOLATE) rather than printed bare: a
+# browser gets correct right-to-left rendering from the <p dir="rtl">
+# attribute the web app already sets on that element, but a terminal has
+# no equivalent unless told explicitly -- without an isolate marking where
+# the right-to-left run starts and ends, a terminal's own bidi algorithm
+# can visually reverse or scramble Hebrew sitting next to Latin verse
+# numbers and reference labels. Greek stays left-to-right, so it needs no
+# such wrapping.
+_RLI = "\u2067"   # RIGHT-TO-LEFT ISOLATE
+_PDI = "\u2069"   # POP DIRECTIONAL ISOLATE
+
+_SCRIPTURE_START_RE = re.compile(
+    r'^\s*\[SCRIPTURE\s+ref="([^"]*)"\s+translation="([^"]*)"\s+lang="([^"]*)"\]\s*$'
+)
+_SCRIPTURE_END_RE = re.compile(r'^\s*\[/SCRIPTURE\]\s*$')
+_SCRIPTURE_EN_RE = re.compile(r'^\s*EN:\s*(.*)$')
+_SCRIPTURE_ORIG_RE = re.compile(r'^\s*ORIG:\s*(.*)$')
+
+
+def _format_scripture_block_for_terminal(block: dict) -> str:
+    label = block["ref"]
+    if block.get("translation"):
+        label += f" ({block['translation']})"
+    lines = [label]
+    if block.get("en"):
+        lines.append(block["en"])
+    if block.get("orig"):
+        orig = block["orig"]
+        if block.get("lang") == "he":
+            orig = f"{_RLI}{orig}{_PDI}"
+        lines.append(orig)
+    return "\n".join(lines)
+
+
+def render_scripture_for_terminal(text: str) -> str:
+    """
+    Parse this app's [SCRIPTURE ...]/EN:/ORIG:/[/SCRIPTURE] block format
+    out of plain text and replace each one with clean, readable lines for
+    a terminal -- reference, English, then original-language text (Hebrew
+    isolated for correct right-to-left display; see the module comment
+    above). Text outside a block passes through completely unchanged, and
+    an unterminated block at the end of the text still renders rather
+    than being silently dropped.
+    """
+    lines = (text or "").split("\n")
+    out, block = [], None
+    for raw in lines:
+        if block is not None:
+            if _SCRIPTURE_END_RE.match(raw):
+                out.append(_format_scripture_block_for_terminal(block))
+                block = None
+                continue
+            en_match = _SCRIPTURE_EN_RE.match(raw)
+            orig_match = _SCRIPTURE_ORIG_RE.match(raw)
+            if en_match:
+                block["en"] = en_match.group(1).strip()
+            elif orig_match:
+                block["orig"] = orig_match.group(1).strip()
+            continue
+        start_match = _SCRIPTURE_START_RE.match(raw)
+        if start_match:
+            block = {"ref": start_match.group(1), "translation": start_match.group(2),
+                     "lang": start_match.group(3), "en": "", "orig": ""}
+            continue
+        out.append(raw)
+    if block is not None:
+        out.append(_format_scripture_block_for_terminal(block))
+    return "\n".join(out)
+
+
 # Sefaria's find-refs linker (used everywhere else in this file) is a real
 # NLP model, but it doesn't reliably parse a "chapter:verse to
 # chapter:verse" range phrasing -- it's tuned for citations as people
