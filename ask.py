@@ -21,6 +21,7 @@ import json
 import re
 import time
 import html
+import unicodedata
 import urllib.request
 from pathlib import Path
 from urllib.parse import parse_qs, quote_plus, unquote, urlencode, urlparse
@@ -2207,24 +2208,48 @@ def _render_scripture_block(ref: str, translation: str, lang: str,
 # terminal has no equivalent, so without this the literal ref="..."/EN:/
 # ORIG:/[/SCRIPTURE] tags print verbatim instead of rendering as anything.
 #
-# Hebrew specifically gets wrapped in Unicode directional isolates (RIGHT-
-# TO-LEFT ISOLATE / POP DIRECTIONAL ISOLATE) rather than printed bare: a
-# browser gets correct right-to-left rendering from the <p dir="rtl">
-# attribute the web app already sets on that element, but a terminal has
-# no equivalent unless told explicitly -- without an isolate marking where
-# the right-to-left run starts and ends, a terminal's own bidi algorithm
-# can visually reverse or scramble Hebrew sitting next to Latin verse
-# numbers and reference labels. Greek stays left-to-right, so it needs no
-# such wrapping.
-_RLI = "\u2067"   # RIGHT-TO-LEFT ISOLATE
-_PDI = "\u2069"   # POP DIRECTIONAL ISOLATE
-
+# Hebrew specifically needs its character order physically reversed before
+# printing, not just marked with Unicode bidi isolates -- confirmed against
+# a real terminal: isolates alone still came out backwards. Most terminal
+# emulators (including stock macOS Terminal.app) never implement the
+# Unicode Bidirectional Algorithm at all; they print bytes left-to-right in
+# storage order no matter what invisible control characters surround them.
+# Hebrew text is always stored in logical (reading) order -- the letter
+# that should appear rightmost on screen comes FIRST in storage -- so a
+# bidi-blind terminal ends up putting that letter on the left instead.
+# Reversing the stored order ourselves is the standard workaround: printed
+# naively left-to-right, the reversed sequence lands in the correct visual
+# positions. Greek stays left-to-right, so it needs no such handling.
 _SCRIPTURE_START_RE = re.compile(
     r'^\s*\[SCRIPTURE\s+ref="([^"]*)"\s+translation="([^"]*)"\s+lang="([^"]*)"\]\s*$'
 )
 _SCRIPTURE_END_RE = re.compile(r'^\s*\[/SCRIPTURE\]\s*$')
 _SCRIPTURE_EN_RE = re.compile(r'^\s*EN:\s*(.*)$')
 _SCRIPTURE_ORIG_RE = re.compile(r'^\s*ORIG:\s*(.*)$')
+
+
+def _reverse_rtl_graphemes(text: str) -> str:
+    """
+    Reverse text into terminal display order for a right-to-left script, by
+    whole grapheme cluster (a base letter plus any niqqud/cantillation
+    marks combining onto it) rather than by individual character. A plain
+    text[::-1] would separate each vowel point from its own consonant and
+    reattach it to the wrong neighbor once printed; grouping combining
+    marks with the base character they follow before reversing keeps every
+    mark on its correct letter while still flipping the overall order.
+    """
+    clusters = []
+    current = ""
+    for ch in text:
+        if unicodedata.combining(ch) and current:
+            current += ch
+        else:
+            if current:
+                clusters.append(current)
+            current = ch
+    if current:
+        clusters.append(current)
+    return "".join(reversed(clusters))
 
 
 def _format_scripture_block_for_terminal(block: dict) -> str:
@@ -2237,7 +2262,7 @@ def _format_scripture_block_for_terminal(block: dict) -> str:
     if block.get("orig"):
         orig = block["orig"]
         if block.get("lang") == "he":
-            orig = f"{_RLI}{orig}{_PDI}"
+            orig = _reverse_rtl_graphemes(orig)
         lines.append(orig)
     return "\n".join(lines)
 
@@ -2347,9 +2372,30 @@ def _bible_cmd_ot_range(query: str):
     end_verse = int(m.group(4)) if m.group(4) else start_verse
     if end_verse < start_verse:
         start_verse, end_verse = end_verse, start_verse
-    ref = f"{book_part}.{chapter}.{start_verse}-{end_verse}"
+    if end_verse == start_verse:
+        ref = f"{book_part}.{chapter}.{start_verse}"
+    else:
+        ref = f"{book_part}.{chapter}.{start_verse}-{end_verse}"
     return {"ref": ref, "book": book, "chapter": chapter,
             "start_verse": start_verse, "end_verse": end_verse}
+
+
+def _sefaria_verse_list(value) -> list:
+    """
+    Sefaria's texts API returns the 'he' field as a plain string for a
+    genuinely single-verse reference, but as a list of one string per verse
+    for anything spanning more than one verse (a whole chapter, or an
+    explicit range). Treating a string as a list without normalizing first
+    silently iterates the STRING'S CHARACTERS instead of its verses -- the
+    exact bug that turned a single-verse /bible request into dozens of
+    one-character "verses", each just a fragment of the HTML tag wrapping
+    the decorated first letter.
+    """
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value:
+        return [value]
+    return []
 
 
 def _sefaria_fetch_ref(ref: str) -> dict:
@@ -2415,7 +2461,7 @@ def _answer_bible_command(question: str) -> dict:
     if range_info:
         data = _sefaria_fetch_ref(range_info["ref"])
         if data:
-            he_list = data.get("he") or []
+            he_list = _sefaria_verse_list(data.get("he"))
             start_verse = range_info["start_verse"]
             en_by_verse = {}
             if he_list:

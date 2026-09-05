@@ -31,7 +31,10 @@ import summarize
 # once ask.py's version was generalized -- MCP sessions (which route
 # through ask.py, not this terminal loop) got the fix, terminal sessions
 # didn't. One implementation now, so the two paths can't drift apart again.
-from ask import _reference_terms_from_context, ask as ask_with_sources
+from ask import (
+    _reference_terms_from_context, _is_bible_command,
+    render_scripture_for_terminal, ask as ask_with_sources,
+)
 
 # OLLAMA_URL and every *_MODEL name come from config.py -- see that
 # module's docstring. This also fixes a latent bug: the load_dotenv() this
@@ -1078,16 +1081,23 @@ if __name__ == "__main__":
         # (stale context, an updated index, or a since-flagged answer could
         # all make a fresh run the right call) or silently re-running every
         # time (which is the actual cost this exists to avoid).
+        #
+        # /bible always skips this entirely -- it's a deterministic, cheap
+        # lookup keyed to a specific address, and reusing a stale cached
+        # answer for it fights the whole point of asking for a specific
+        # verse: the person wants what's true right now, not what an
+        # earlier (possibly since-fixed) run happened to produce.
         cached = None
-        try:
-            cached = find_cached_answer(q, project=_memory_project())
-        except Exception as e:
-            print(f"  [Warning: could not check memory-db for a cached answer: {e}]",
-                  flush=True)
+        if not _is_bible_command(q):
+            try:
+                cached = find_cached_answer(q, project=_memory_project())
+            except Exception as e:
+                print(f"  [Warning: could not check memory-db for a cached answer: {e}]",
+                      flush=True)
 
         if cached:
             print(f"\n[You asked this before, on {cached['asked_at']}]")
-            print(f"\n--- Cached Answer ---\n{cached['answer']}")
+            print(f"\n--- Cached Answer ---\n{render_scripture_for_terminal(cached['answer'])}")
             rerun = input("\nRe-run fresh instead? [y/N] ").strip().lower()
             if not rerun.startswith("y"):
                 _record_recent_turn(q, cached["answer"])
@@ -1112,9 +1122,9 @@ if __name__ == "__main__":
         print(f"\n[Routed to: {result['routed_to']} | Synthesized by: {result['synthesized_by']}]")
 
         if result["ollama_draft"]:
-            print(f"\n--- Specialist Draft ---\n{result['ollama_draft']}")
+            print(f"\n--- Specialist Draft ---\n{render_scripture_for_terminal(result['ollama_draft'])}")
 
-        print(f"\n--- Final Answer ---\n{answer_to_show}")
+        print(f"\n--- Final Answer ---\n{render_scripture_for_terminal(answer_to_show)}")
 
         if result["sources"]:
             print(f"\n[Sources: {', '.join(result['sources'])}]")
