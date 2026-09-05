@@ -1689,7 +1689,15 @@ def _external_search_allowed(policy: str = None) -> bool:
 
 
 def _strip_html(value: str) -> str:
-    text = re.sub(r"<[^>]+>", " ", value or "")
+    # Tags stripped to nothing, not to a space: a space was safe for DDG's
+    # HTML (separate elements already have real whitespace between them in
+    # the source), but broke Sefaria's Hebrew text, which sometimes wraps
+    # a single letter or word in an inline tag (e.g. Genesis 1:1's
+    # decorated opening letter) -- replacing that tag with a space split
+    # the word in two ("\u05d1\u05bc\u05b0 \u05e8\u05b5\u05d0\u05e9\u05c1\u05b4\u05d9\u05ea"
+    # instead of one word). Any genuinely separate text this collapses
+    # together is still caught by the existing whitespace-collapse below.
+    text = re.sub(r"<[^>]+>", "", value or "")
     return " ".join(html.unescape(text).split())
 
 
@@ -2204,6 +2212,83 @@ def _render_scripture_block(ref: str, translation: str, lang: str,
     return "\n".join(lines)
 
 
+# Sefaria's find-refs linker (used everywhere else in this file) is a real
+# NLP model, but it doesn't reliably parse a "chapter:verse to
+# chapter:verse" range phrasing -- it's tuned for citations as people
+# normally write them, not always for a range written out in words. Rather
+# than let /bible silently fail on a phrasing the linker doesn't like, this
+# is a small, deterministic fallback used ONLY when the linker found
+# nothing at all for a /bible command. It exists to parse a reference the
+# user already explicitly typed after /bible -- not to guess a topic from
+# free text -- the same distinction that kept the New Testament book table
+# earlier. Same-chapter ranges only; a genuinely cross-chapter range still
+# needs the linker or a differently-phrased retry.
+_BIBLE_CMD_OT_BOOKS = {
+    "genesis": "Genesis", "gen": "Genesis",
+    "exodus": "Exodus", "exod": "Exodus", "ex": "Exodus",
+    "leviticus": "Leviticus", "lev": "Leviticus",
+    "numbers": "Numbers", "num": "Numbers",
+    "deuteronomy": "Deuteronomy", "deut": "Deuteronomy", "dt": "Deuteronomy",
+    "joshua": "Joshua", "josh": "Joshua",
+    "judges": "Judges", "judg": "Judges", "ruth": "Ruth",
+    "i samuel": "I Samuel", "1 samuel": "I Samuel",
+    "ii samuel": "II Samuel", "2 samuel": "II Samuel",
+    "i kings": "I Kings", "1 kings": "I Kings",
+    "ii kings": "II Kings", "2 kings": "II Kings",
+    "isaiah": "Isaiah", "isa": "Isaiah",
+    "jeremiah": "Jeremiah", "jer": "Jeremiah",
+    "ezekiel": "Ezekiel", "ezek": "Ezekiel",
+    "hosea": "Hosea", "joel": "Joel", "amos": "Amos",
+    "obadiah": "Obadiah", "jonah": "Jonah", "micah": "Micah",
+    "nahum": "Nahum", "habakkuk": "Habakkuk",
+    "zephaniah": "Zephaniah", "haggai": "Haggai",
+    "zechariah": "Zechariah", "malachi": "Malachi",
+    "psalms": "Psalms", "psalm": "Psalms", "ps": "Psalms",
+    "proverbs": "Proverbs", "prov": "Proverbs", "job": "Job",
+    "song of songs": "Song of Songs", "lamentations": "Lamentations",
+    "ecclesiastes": "Ecclesiastes", "esther": "Esther",
+    "daniel": "Daniel", "dan": "Daniel",
+    "ezra": "Ezra", "nehemiah": "Nehemiah",
+    "i chronicles": "I Chronicles", "1 chronicles": "I Chronicles",
+    "ii chronicles": "II Chronicles", "2 chronicles": "II Chronicles",
+}
+_BIBLE_CMD_OT_ALTERNATION = "|".join(
+    re.escape(a) for a in sorted(_BIBLE_CMD_OT_BOOKS, key=len, reverse=True))
+BIBLE_CMD_RANGE_RE = re.compile(
+    rf"\b({_BIBLE_CMD_OT_ALTERNATION})\.?\s+(\d{{1,3}}):(\d{{1,3}})"
+    rf"(?:\s*(?:-|to)\s*(?:\d{{1,3}}:)?(\d{{1,3}}))?\b",
+    re.IGNORECASE,
+)
+
+
+def _bible_cmd_ot_range(query: str):
+    m = BIBLE_CMD_RANGE_RE.search(query or "")
+    if not m:
+        return None
+    book = _BIBLE_CMD_OT_BOOKS.get(m.group(1).lower())
+    if not book:
+        return None
+    chapter, start_verse = int(m.group(2)), int(m.group(3))
+    end_verse = int(m.group(4)) if m.group(4) else start_verse
+    if end_verse < start_verse:
+        start_verse, end_verse = end_verse, start_verse
+    ref = f"{book.replace(' ', '_')}.{chapter}.{start_verse}-{end_verse}"
+    return {"ref": ref, "book": book, "chapter": chapter,
+            "start_verse": start_verse, "end_verse": end_verse}
+
+
+def _sefaria_fetch_ref(ref: str) -> dict:
+    url = f"https://www.sefaria.org/api/texts/{quote_plus(ref)}?context=0&pad=0"
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "ElRoi/1.0 (mailto:local@example.invalid)"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            return json.loads(response.read().decode("utf-8", errors="replace"))
+    except Exception as e:
+        print(f"  [Warning: Sefaria direct range fetch failed for {ref}: {e}]")
+        return None
+
+
 def _answer_bible_command(question: str) -> dict:
     if not _is_bible_command(question):
         return None
@@ -2218,19 +2303,40 @@ def _answer_bible_command(question: str) -> dict:
             "metrics": {"route": "bible_command", "found": False},
         }
 
-    hits = _sefaria_find_refs(query)
-    nt_refs = [] if hits else _nt_refs_in_text(query)
-    if not hits and not nt_refs:
-        return None
-
-    blocks = []
     translation = _configured_bible_translation()
+    blocks = []
+
+    hits = _sefaria_find_refs(query)
     for hit in hits:
-        if not hit.get("he_text") and not hit.get("en_text"):
+        he_text = hit.get("he_text") or ""
+        en_text = hit.get("en_text") or ""
+        if hit.get("category") == "Tanakh":
+            fetched_en, _, _ = _translated_english(hit["ref"], translation)
+            if fetched_en:
+                en_text = fetched_en
+        if not he_text and not en_text:
             continue
         blocks.append(_render_scripture_block(
             hit["ref"], hit.get("category") or "Sefaria", "he",
-            hit.get("en_text"), hit.get("he_text")))
+            en_text, he_text))
+
+    if not hits:
+        range_info = _bible_cmd_ot_range(query)
+        if range_info:
+            data = _sefaria_fetch_ref(range_info["ref"])
+            if data:
+                he_list = data.get("he") or []
+                verse_num = range_info["start_verse"]
+                for i in range(len(he_list)):
+                    he_text = _strip_html(he_list[i])
+                    verse_ref = f"{range_info['book']} {range_info['chapter']}:{verse_num}"
+                    en_text, _, _ = _translated_english(verse_ref, translation)
+                    if he_text or en_text:
+                        blocks.append(_render_scripture_block(
+                            verse_ref, "Tanakh", "he", en_text, he_text))
+                    verse_num += 1
+
+    nt_refs = [] if (hits or blocks) else _nt_refs_in_text(query)
     for ref in nt_refs:
         en_text, display_ref, translation_label = "", ref, translation.upper()
         if translation == "esv":
@@ -2262,24 +2368,65 @@ def _answer_bible_command(question: str) -> dict:
     }
 
 
+def _translated_english(ref: str, translation: str) -> tuple:
+    """
+    English text for ANY reference (Old or New Testament alike) from the
+    user's actually-configured translation, rather than trusting whatever
+    English a source happens to bundle by default. Sefaria's own bundled
+    English for Tanakh is the 1985 JPS translation -- it was silently
+    overriding the Settings translation choice for every Old Testament
+    verse, which is the bug this fixes. bible-api.com covers the full
+    Bible (Old and New Testament alike), so the exact same fetch already
+    used for New Testament English now covers Old Testament English too.
+    Returns (english_text, display_ref, translation_label); english_text
+    is empty on any failure, never raises.
+    """
+    if translation == "esv":
+        data = _esv_fetch(ref)
+        if data:
+            passages = data.get("passages") or []
+            text = " ".join(" ".join(p.split()) for p in passages).strip()
+            return text, data.get("canonical") or ref, "English Standard Version (ESV)"
+        return "", ref, "English Standard Version (ESV)"
+    data = _bible_api_fetch(ref, translation=translation)
+    if data:
+        text = " ".join((data.get("text") or "").split())
+        return (text, data.get("reference") or ref,
+                data.get("translation_name") or translation.upper())
+    return "", ref, translation.upper()
+
+
 def _scripture_evidence_for_hits(hits: list, registry: CitationRegistry,
                                  limit: int = 4) -> list:
+    translation = _configured_bible_translation()
     evidence = []
     for hit in hits:
         if len(evidence) >= limit:
             break
-        if not hit.get("he_text") and not hit.get("en_text"):
-            continue
+        he_text = hit.get("he_text") or ""
         category = hit.get("category") or "Sefaria library"
+        en_text = hit.get("en_text") or ""
+        translation_label = None
+        # Only override for genuine Tanakh references -- bible-api.com and
+        # the ESV API cover the Bible, not Talmud/Mishnah/Midrash, so those
+        # keep whatever English Sefaria itself provides; there's no other
+        # source for them.
+        if category == "Tanakh":
+            fetched_en, _, translation_label = _translated_english(hit["ref"], translation)
+            if fetched_en:
+                en_text = fetched_en
+        if not he_text and not en_text:
+            continue
         source_url = f"https://www.sefaria.org/{hit['url']}"
         details = [
             f"[Scripture/text source: Sefaria, category: {category}]",
             f"Reference: {hit['ref']}",
         ]
-        if hit.get("he_text"):
-            details.append(f"Hebrew (original text, pointed): {hit['he_text']}")
-        if hit.get("en_text"):
-            details.append(f"English translation: {hit['en_text']}")
+        if he_text:
+            details.append(f"Hebrew (original text, pointed): {he_text}")
+        if en_text:
+            label = f" ({translation_label})" if translation_label else ""
+            details.append(f"English text{label}: {en_text}")
         details.append(
             "Reference seed: cite this reference exactly as given. If Hebrew "
             "text is present, quote term(s) only as they literally appear "

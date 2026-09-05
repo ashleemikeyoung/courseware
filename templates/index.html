@@ -14,6 +14,13 @@
   if (!t) t = (window.matchMedia &&
     window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
   document.documentElement.setAttribute("data-theme", t);
+  // Same instant-apply reasoning as theme above: scripture blocks can render
+  // the moment a saved conversation loads, well before Settings is ever
+  // visited, so this has to come from a cached value at boot rather than
+  // waiting on a /api/tuning round trip.
+  var sz;
+  try { sz = window.localStorage.getItem("scripture_size"); } catch(e){}
+  document.documentElement.setAttribute("data-scripture-size", sz || "medium");
 })();
 </script>
 <style>
@@ -92,6 +99,19 @@
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   --wordmark:"Caveat","Cormorant Garamond",cursive;
   --measure:34rem;
+  /* Scripture text runs noticeably larger than body copy by default (this
+     is quoted primary-source text, not incidental prose), with small/large
+     variants selectable in Settings. [data-scripture-size] overrides below. */
+  --scripture-en-size:18px; --scripture-en-lh:1.6;
+  --scripture-orig-size:20px; --scripture-orig-lh:1.75;
+}
+[data-scripture-size="small"]{
+  --scripture-en-size:14px; --scripture-en-lh:1.55;
+  --scripture-orig-size:15px; --scripture-orig-lh:1.65;
+}
+[data-scripture-size="large"]{
+  --scripture-en-size:22px; --scripture-en-lh:1.65;
+  --scripture-orig-size:26px; --scripture-orig-lh:1.85;
 }
 /* Self-hosted, not a Google Fonts <link> -- see the note above about "no
    web fonts, no CDN". Caveat ships as a single variable-weight file
@@ -478,16 +498,6 @@ textarea{resize:vertical;min-height:74px}
   font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);
   border-left:2px solid var(--rule);padding-left:8px;margin-left:2px;
 }
-.web-sources{margin-top:10px;border-top:1px solid var(--rule-soft);padding-top:8px}
-.web-sources .label{
-  font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
-  color:var(--ink-faint);margin-bottom:6px;
-}
-.web-source{margin-bottom:8px}
-.web-source a{color:var(--blue);font-size:13px;text-decoration:none}
-.web-source a:hover{text-decoration:underline}
-.web-source .snippet{font-size:12.5px;color:var(--ink-soft);margin-top:2px}
-.web-source .host{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)}
 .scripture-block{
   border:1px solid var(--rule);background:var(--paper-2);border-radius:2px;
   padding:12px 16px;margin:10px 0;
@@ -498,11 +508,13 @@ textarea{resize:vertical;min-height:74px}
   color:var(--ink-faint);margin-bottom:6px;
 }
 .scripture-en{
-  font-family:var(--serif);font-size:15px;line-height:1.55;color:var(--ink);
+  font-family:var(--serif);font-size:var(--scripture-en-size);
+  line-height:var(--scripture-en-lh);color:var(--ink);
   margin:0 0 8px;
 }
 .scripture-orig{
-  font-family:var(--serif);font-size:16px;line-height:1.7;color:var(--ink-soft);
+  font-family:var(--serif);font-size:var(--scripture-orig-size);
+  line-height:var(--scripture-orig-lh);color:var(--ink-soft);
   margin:0;padding-top:8px;border-top:1px dotted var(--rule);
 }
 .scripture-orig[dir="rtl"]{text-align:right}
@@ -1051,6 +1063,14 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
             <option value="esv">English Standard Version (ESV)</option>
           </select>
         </div>
+        <div class="field" style="margin-bottom:10px">
+          <label for="scriptureFontSize">Scripture text size</label>
+          <select id="scriptureFontSize">
+            <option value="small">Small</option>
+            <option value="medium">Medium</option>
+            <option value="large">Large</option>
+          </select>
+        </div>
         <div class="tiny">Old Testament passages always use Sefaria's own Hebrew text. This only changes the English translation used for New Testament references. ESV requires a free key from api.esv.org set as ESV_API_KEY in .env -- without one, it falls back to KJV automatically.</div>
       </div>
 
@@ -1099,6 +1119,14 @@ function setTheme(name){
 }
 document.querySelectorAll("[data-theme-set]").forEach(b =>
   b.onclick = () => setTheme(b.dataset.themeSet));
+
+/* Same pattern as setTheme() above: applies instantly (no page reload,
+   no waiting on Settings to load) and caches to localStorage so the next
+   boot picks it up before the first scripture block ever renders. */
+function applyScriptureFontSize(size){
+  document.documentElement.setAttribute("data-scripture-size", size);
+  try { window.localStorage.setItem("scripture_size", size); } catch(e){}
+}
 
 /* --- tabs --------------------------------------------------------------- */
 $("#nav").addEventListener("click", e => {
@@ -2183,53 +2211,7 @@ function chatBubble(m, index){
     box.appendChild(el("div", "provenance", provenanceLabel(m.route, m.grounded)));
   if (m.role === "assistant" && !m.pending && m.turn_id)
     box.appendChild(feedbackControls(m, index));
-  if (m.role === "assistant" && !m.pending && m.webSources && m.webSources.length)
-    box.appendChild(webSourcesList(m.webSources));
   return box;
-}
-
-/* The "never worse than just Googling it" guarantee: every web result that
-   fed this turn, shown here regardless of whether the model actually wove
-   it into a [C1] citation or the "Show source context" toggle is on. Worst
-   case, this list alone is the same thing a Google results page would have
-   handed you -- title, link, snippet -- with El Roi's synthesis above it as
-   a bonus, not a replacement. */
-function webSourcesList(sources){
-  const wrap = el("div", "web-sources");
-  wrap.appendChild(el("div", "label", "Sources"));
-  sources.forEach(s => {
-    const row = el("div", "web-source");
-    const a = el("a"); a.href = s.url; a.target = "_blank"; a.rel = "noopener";
-    a.textContent = s.title || s.url;
-    row.appendChild(a);
-    let host = "";
-    try { host = new URL(s.url).hostname.replace(/^www\./, ""); } catch(e){}
-    if (host) row.appendChild(el("span", "host", "  \u00b7 " + host));
-    if (s.snippet) row.appendChild(el("div", "snippet", s.snippet));
-    wrap.appendChild(row);
-  });
-  return wrap;
-}
-
-/* Pulls the structured web-result entries back out of a turn's evidence map
-   -- the [External web search result] blocks _external_search_evidence()
-   writes in ask.py -- and turns each one back into {url, title, snippet}
-   for webSourcesList() above. Deduped by URL, since the same source can
-   legitimately show up more than once across different retrieval passes
-   in a single turn. */
-function extractWebSources(evidence){
-  const seen = new Set();
-  const out = [];
-  Object.values(evidence || {}).forEach(ev => {
-    const url = ev.source || "";
-    if (!/^https?:\/\//.test(url) || seen.has(url)) return;
-    seen.add(url);
-    const text = ev.text || "";
-    const title = (text.match(/^Title:\s*(.*)$/m) || [])[1] || "";
-    const snippet = (text.match(/^Snippet:\s*(.*)$/m) || [])[1] || "";
-    out.push({url, title: title.trim(), snippet: snippet.trim()});
-  });
-  return out;
 }
 
 /* Thumbs for training data, not just a reaction emoji. A click writes
@@ -2522,7 +2504,6 @@ async function sendAsk(){
     // ev.grounded come straight back from ask.ask()'s own bookkeeping.
     pending.route = (ev.metrics && ev.metrics.route) || null;
     pending.grounded = !!ev.grounded;
-    pending.webSources = extractWebSources(ev.evidence);
     Object.assign(STATE.evidence, ev.evidence || {});
     renderChat();
     saveAskConversation();
@@ -2625,6 +2606,8 @@ async function loadTuning(){
     $("#externalSearchToggle").checked =
       STATE.tuning.settings.rag_external_search_enabled === "on";
     $("#bibleTranslation").value = STATE.tuning.settings.rag_bible_translation || "kjv";
+    $("#scriptureFontSize").value = STATE.tuning.settings.rag_scripture_font_size || "medium";
+    applyScriptureFontSize($("#scriptureFontSize").value);
     renderRedactionProfiles();
     renderCriteria();
     renderMisses();
@@ -3059,6 +3042,17 @@ $("#bibleTranslation").onchange = async () => {
   if (r.error) return toast(r.error);
   STATE.tuning.settings.rag_bible_translation = value;
   toast("New Testament translation saved");
+};
+$("#scriptureFontSize").onchange = async () => {
+  const value = $("#scriptureFontSize").value;
+  applyScriptureFontSize(value);
+  const r = await (await fetch("/api/tuning/settings", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(withProject({ rag_scripture_font_size: value })),
+  })).json();
+  if (r.error) return toast(r.error);
+  STATE.tuning.settings.rag_scripture_font_size = value;
+  toast("Scripture text size saved");
 };
 $("#btnReindexTuning").onclick = runTuningReindex;
 $("#fbFilter").onchange = loadFeedbackTable;
