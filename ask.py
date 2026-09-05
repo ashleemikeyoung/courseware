@@ -55,8 +55,14 @@ from memory_client import (
     record_query_quality,
 )
 
-CHAT_SYSTEM = """You are a direct, capable assistant. Answer plainly, without
-preamble, without restating the question, and without padding for length.
+CHAT_SYSTEM = """You are a direct, capable assistant. Answer the question
+fully and specifically -- do not pad with filler, but do not compress a
+substantive question into a vague gesture at the answer either. When a
+question has multiple distinct parts, categories, or enumerable items (for
+example "list the X, then list the Y"), answer each part completely, using
+markdown headers and bullet lists to organize it, the way a well-written
+reference article would. Never sacrifice completeness for brevity on a
+factual or research question.
 
 You may be given source material retrieved from the user's local document
 library or, when explicitly enabled, external web search results. When you are:
@@ -66,7 +72,8 @@ library or, when explicitly enabled, external web search results. When you are:
     file name, title, and author it states -- treat it as settling those
     specific facts, even if other passages only discuss the work in passing.
   - Ground your answer in the material and cite inline with markers like
-    [C1] that refer to the numbered passages given to you.
+    [C1] that refer to the numbered passages given to you. Each marker goes
+    in its own brackets -- write [C1][C2], never [C1, C2] or [C1,C2].
   - Use ONLY markers that were actually given to you. Never invent one.
   - Treat local passages as preferred research context, not as a cage. Only
     say the local material was insufficient when the user explicitly asks
@@ -92,8 +99,12 @@ If no source material is given, or none of it is relevant, answer from your
 own knowledge. Do not cite a marker under any circumstance if no source
 material was provided."""
 
-UNGROUNDED_CHAT_SYSTEM = """You are a direct, capable assistant. Answer plainly,
-without restating the question, and without padding for length.
+UNGROUNDED_CHAT_SYSTEM = """You are a direct, capable assistant. Answer the
+question fully and specifically -- do not pad with filler, but do not
+compress a substantive question into a vague gesture at the answer either.
+When a question has multiple distinct parts, categories, or enumerable items,
+answer each part completely, using markdown headers and bullet lists to
+organize it, the way a well-written reference article would.
 
 The user has turned document grounding off for this turn. Do not require local
 source material, do not refuse because no documents were provided, and do not
@@ -119,6 +130,24 @@ not use bullets, numbered lists, markdown headings, or labels such as "Key
 Points" inside either field. End the annotation with a complete sentence."""
 
 MARKER_RE = re.compile(r"\[(C\d+)\]")
+# Model's citation-leak failure mode: several markers glued into one
+# bracket, "[C3, C7]" or "[C3,C7]", instead of separate valid ones. Neither
+# MARKER_RE nor BARE_MARKER_RE recognize that shape at all, so today it just
+# leaks through as literal bracketed text in the reply instead of becoming
+# real citation chips -- this is the exact bug seen in the Torah/Talmud
+# answer ("[C19, C20]"). Splitting it into separate brackets before any of
+# the marker-processing logic below runs means a slip here degrades
+# gracefully into normal citations instead of visible garbage, regardless of
+# how well the system-prompt instruction above holds up.
+COMBINED_MARKER_RE = re.compile(r"\[((?:C\d+)(?:\s*,\s*C\d+)+)\]")
+
+
+def _split_combined_markers(text: str) -> str:
+    def expand(m):
+        return "".join(f"[{tok.strip()}]" for tok in m.group(1).split(","))
+    return COMBINED_MARKER_RE.sub(expand, text or "")
+
+
 # Same shape, loosened to also catch a degenerate response BEFORE prefixing,
 # where the model has produced nothing but bracketed marker after marker.
 BARE_MARKER_RE = re.compile(r"\[C\d+\]")
@@ -3804,7 +3833,8 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             # so clearing only `evidence` above left real source chips
             # attached to a message that has nothing to do with them.
 
-    text, evidence_out = _prefix_markers(text, registry, turn_id, evidence)
+    text, evidence_out = _prefix_markers(
+        _split_combined_markers(text), registry, turn_id, evidence)
     text = _tidy_apa_output(text, active_requirements)
     text, repair_metrics, repair_improvements = _repair_apa7_with_model(
         text, active_requirements, full, model, num_ctx, effective_num_predict,
