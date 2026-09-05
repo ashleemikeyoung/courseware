@@ -2519,6 +2519,32 @@ def _answer_bible_command(question: str) -> dict:
                         verse_ref, translation_label, "grc", en_text, greek_text))
             continue
         en_text, display_ref, translation_label = "", ref, translation.upper()
+
+        # A verse range like "Romans 2:1-5" -- bible-api.com happily
+        # returns combined English for the whole range in one call, which
+        # is why only English ever showed up here: _tr_text() looks up the
+        # local Greek cache by an exact single-verse key ("Romans 2:1", not
+        # "Romans 2:1-5"), so a range string never matches anything in it
+        # and Greek silently came back empty. Expand into one block per
+        # verse instead, same pattern as the whole-chapter case above, so
+        # each verse gets its own correctly-keyed Greek lookup.
+        range_match = re.match(r"^(.+) (\d+):(\d+)-(\d+)$", ref)
+        if range_match:
+            book, chapter_str, start_str, end_str = range_match.groups()
+            chapter = int(chapter_str)
+            start_verse, end_verse = int(start_str), int(end_str)
+            en_by_verse = _bible_api_fetch_range(
+                book, chapter, start_verse, end_verse, translation)
+            translation_label = en_by_verse.get(None) or translation.upper()
+            for verse_num in range(start_verse, end_verse + 1):
+                verse_ref = f"{book} {chapter}:{verse_num}"
+                en_text = en_by_verse.get(verse_num, "")
+                greek_text = _tr_text(verse_ref)
+                if en_text or greek_text:
+                    blocks.append(_render_scripture_block(
+                        verse_ref, translation_label, "grc", en_text, greek_text))
+            continue
+
         data = _bible_api_fetch(ref, translation=translation)
         if data:
             en_text = " ".join((data.get("text") or "").split())

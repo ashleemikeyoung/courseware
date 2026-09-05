@@ -638,7 +638,16 @@ def start_file_watcher():
                 and not any(part in ignored_dirs() or part.startswith(".")
                             for part in f.relative_to(folder).parts[:-1])
             }
-            indexed = get_indexed_sources()
+            # source_type="file" matters here: get_indexed_sources() with no
+            # filter also returns any "mail/..."-prefixed entries from email
+            # indexing, which this loop's own `current` dict can never
+            # contain (it only ever walks real files under DOCUMENTS_FOLDER).
+            # Comparing against the unfiltered set meant a permanent key
+            # mismatch whenever any email content was indexed at all --
+            # "needs_update" was true on every single tick regardless of
+            # whether any real file had changed, which is why this kept
+            # rescanning and finding 0 new/updated/removed forever.
+            indexed = get_indexed_sources(source_type="file")
 
             needs_update = (
                 set(current.keys()) != set(indexed.keys()) or
