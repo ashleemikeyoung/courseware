@@ -1699,6 +1699,9 @@ def _strip_html(value: str) -> str:
     # instead of one word). Any genuinely separate text this collapses
     # together is still caught by the existing whitespace-collapse below.
     text = re.sub(r"<[^>]+>", "", value or "")
+    # Sefaria's Hebrew text may include Masoretic paragraph-division markers
+    # such as petuchah/setumah. They describe layout, not the verse itself.
+    text = re.sub(r"\{[\u05e4\u05e1]\}", "", text)
     return " ".join(html.unescape(text).split())
 
 
@@ -2190,6 +2193,186 @@ def _bible_command_query(question: str) -> str:
     return (m.group(1) if m else "").strip()
 
 
+# ---------------------------------------------------------------------------
+# Transliteration -- a pronunciation aid, not a scholarly transliteration.
+# It works from the actual Unicode diacritics present in the verse text.
+# ---------------------------------------------------------------------------
+_HEBREW_CONSONANTS = {
+    "\u05d0": "", "\u05d1": "v", "\u05d2": "g", "\u05d3": "d", "\u05d4": "h",
+    "\u05d5": "v", "\u05d6": "z", "\u05d7": "ch", "\u05d8": "t", "\u05d9": "y",
+    "\u05da": "kh", "\u05db": "kh", "\u05dc": "l", "\u05dd": "m", "\u05de": "m",
+    "\u05df": "n", "\u05e0": "n", "\u05e1": "s", "\u05e2": "'", "\u05e3": "f",
+    "\u05e4": "f", "\u05e5": "ts", "\u05e6": "ts", "\u05e7": "k", "\u05e8": "r",
+    "\u05e9": "sh", "\u05ea": "t",
+}
+_HEBREW_DAGESH_OVERRIDE = {
+    "\u05d1": "b", "\u05db": "k", "\u05da": "k", "\u05e4": "p", "\u05e3": "p",
+}
+_HEBREW_VOWELS = {
+    "\u05b0": "e", "\u05b1": "e", "\u05b2": "a", "\u05b3": "o",
+    "\u05b4": "i", "\u05b5": "e", "\u05b6": "e", "\u05b7": "a",
+    "\u05b8": "a", "\u05b9": "o", "\u05ba": "o", "\u05bb": "u",
+    "\u05c7": "o",
+}
+_HEBREW_HOLAM_MARKS = {"\u05b9", "\u05ba"}
+_HEBREW_SHEVA = "\u05b0"
+_HEBREW_DAGESH = "\u05bc"
+_HEBREW_SIN_DOT = "\u05c2"
+
+
+def _transliterate_hebrew_word(word: str) -> str:
+    out = []
+    chars = list(word)
+    i = 0
+    prev_vowel = ""
+    word_start = True
+    while i < len(chars):
+        ch = chars[i]
+        if not ("\u05d0" <= ch <= "\u05ea"):
+            if ch == "\u05be":
+                out.append("-")
+            i += 1
+            prev_vowel = ""
+            continue
+
+        base = ch
+        i += 1
+        has_dagesh = False
+        has_sin_dot = False
+        vowel_mark = None
+        while i < len(chars) and unicodedata.combining(chars[i]):
+            mark = chars[i]
+            if mark == _HEBREW_DAGESH:
+                has_dagesh = True
+            elif mark == _HEBREW_SIN_DOT:
+                has_sin_dot = True
+            elif mark in _HEBREW_VOWELS:
+                vowel_mark = mark
+            i += 1
+
+        is_word_start = word_start
+        word_start = False
+        vowel = _HEBREW_VOWELS.get(vowel_mark) if vowel_mark else None
+        if vowel_mark == _HEBREW_SHEVA:
+            vowel = "e" if is_word_start else ""
+
+        if base == "\u05d5":
+            if vowel_mark in _HEBREW_HOLAM_MARKS:
+                out.append("o")
+                prev_vowel = "o"
+                continue
+            if has_dagesh and vowel_mark is None:
+                out.append("u")
+                prev_vowel = "u"
+                continue
+            if vowel_mark is None and prev_vowel:
+                continue
+            out.append("v")
+            if vowel:
+                out.append(vowel)
+            prev_vowel = vowel or ""
+            continue
+
+        if base == "\u05d9" and vowel_mark is None and not has_dagesh and prev_vowel:
+            if prev_vowel != "i":
+                out.append("i")
+            prev_vowel = "i"
+            continue
+
+        letter = _HEBREW_CONSONANTS.get(base, "")
+        if has_dagesh and base in _HEBREW_DAGESH_OVERRIDE:
+            letter = _HEBREW_DAGESH_OVERRIDE[base]
+        if base == "\u05e9":
+            letter = "s" if has_sin_dot else "sh"
+
+        out.append(letter)
+        if vowel:
+            out.append(vowel)
+        prev_vowel = vowel or ""
+
+    return "".join(out)
+
+
+def transliterate_hebrew(text: str) -> str:
+    words = (text or "").split()
+    return " ".join(_transliterate_hebrew_word(w) for w in words if w)
+
+
+_GREEK_BASE = {
+    "\u03b1": "a", "\u03b2": "b", "\u03b3": "g", "\u03b4": "d", "\u03b5": "e",
+    "\u03b6": "z", "\u03b7": "\u0113", "\u03b8": "th", "\u03b9": "i",
+    "\u03ba": "k", "\u03bb": "l", "\u03bc": "m", "\u03bd": "n",
+    "\u03be": "x", "\u03bf": "o", "\u03c0": "p", "\u03c1": "r",
+    "\u03c2": "s", "\u03c3": "s", "\u03c4": "t", "\u03c5": "u",
+    "\u03c6": "ph", "\u03c7": "ch", "\u03c8": "ps", "\u03c9": "\u014d",
+}
+_GREEK_VOWELS = set("\u03b1\u03b5\u03b7\u03b9\u03bf\u03c5\u03c9")
+_GREEK_ROUGH_BREATHING = "\u0314"
+_GREEK_DIAERESIS = "\u0308"
+_GREEK_DIPHTHONGS = {
+    ("\u03b1", "\u03b9"): "ai", ("\u03b5", "\u03b9"): "ei",
+    ("\u03bf", "\u03b9"): "oi", ("\u03c5", "\u03b9"): "ui",
+    ("\u03b1", "\u03c5"): "au", ("\u03b5", "\u03c5"): "eu",
+    ("\u03b7", "\u03c5"): "\u0113u", ("\u03bf", "\u03c5"): "ou",
+}
+_GREEK_GAMMA_NASAL_FOLLOWERS = set("\u03b3\u03ba\u03c7\u03be")
+
+
+def _transliterate_greek_word(word: str) -> str:
+    text = unicodedata.normalize("NFD", word)
+    clusters = []
+    i = 0
+    while i < len(text):
+        base = text[i]
+        i += 1
+        rough = diaer = False
+        while i < len(text) and unicodedata.combining(text[i]):
+            mark = text[i]
+            if mark == _GREEK_ROUGH_BREATHING:
+                rough = True
+            elif mark == _GREEK_DIAERESIS:
+                diaer = True
+            i += 1
+        clusters.append([base.lower(), rough, diaer])
+
+    out = []
+    i = 0
+    while i < len(clusters):
+        base, rough, diaer = clusters[i]
+        if base not in _GREEK_BASE:
+            out.append(base)
+            i += 1
+            continue
+
+        if (base in _GREEK_VOWELS and i + 1 < len(clusters)
+                and clusters[i + 1][0] in _GREEK_VOWELS
+                and not clusters[i + 1][2]
+                and (base, clusters[i + 1][0]) in _GREEK_DIPHTHONGS):
+            nxt = clusters[i + 1]
+            spelling = _GREEK_DIPHTHONGS[(base, nxt[0])]
+            out.append(("h" + spelling) if nxt[1] else spelling)
+            i += 2
+            continue
+
+        letter = _GREEK_BASE.get(base, base)
+        if base == "\u03c1" and rough:
+            letter = "rh"
+        elif rough:
+            letter = "h" + letter
+        if (base == "\u03b3" and i + 1 < len(clusters)
+                and clusters[i + 1][0] in _GREEK_GAMMA_NASAL_FOLLOWERS):
+            letter = "n"
+        out.append(letter)
+        i += 1
+
+    return "".join(out)
+
+
+def transliterate_greek(text: str) -> str:
+    words = (text or "").split()
+    return " ".join(_transliterate_greek_word(w) for w in words if w)
+
+
 def _render_scripture_block(ref: str, translation: str, lang: str,
                             en_text: str, orig_text: str) -> str:
     lines = [f'[SCRIPTURE ref="{ref}" translation="{translation}" lang="{lang}"]']
@@ -2197,6 +2380,14 @@ def _render_scripture_block(ref: str, translation: str, lang: str,
         lines.append(f"EN: {en_text}")
     if orig_text:
         lines.append(f"ORIG: {orig_text}")
+        if lang == "he":
+            translit = transliterate_hebrew(orig_text)
+        elif lang == "grc":
+            translit = transliterate_greek(orig_text)
+        else:
+            translit = ""
+        if translit:
+            lines.append(f"TRANS: {translit}")
     lines.append("[/SCRIPTURE]")
     return "\n".join(lines)
 
@@ -2226,6 +2417,7 @@ _SCRIPTURE_START_RE = re.compile(
 _SCRIPTURE_END_RE = re.compile(r'^\s*\[/SCRIPTURE\]\s*$')
 _SCRIPTURE_EN_RE = re.compile(r'^\s*EN:\s*(.*)$')
 _SCRIPTURE_ORIG_RE = re.compile(r'^\s*ORIG:\s*(.*)$')
+_SCRIPTURE_TRANS_RE = re.compile(r'^\s*TRANS:\s*(.*)$')
 
 
 def _reverse_rtl_graphemes(text: str) -> str:
@@ -2237,6 +2429,9 @@ def _reverse_rtl_graphemes(text: str) -> str:
     reattach it to the wrong neighbor once printed; grouping combining
     marks with the base character they follow before reversing keeps every
     mark on its correct letter while still flipping the overall order.
+
+    Word-boundary spaces are widened after reversal so terminal output keeps
+    Hebrew words visually distinct without splitting individual letters.
     """
     clusters = []
     current = ""
@@ -2249,7 +2444,7 @@ def _reverse_rtl_graphemes(text: str) -> str:
             current = ch
     if current:
         clusters.append(current)
-    return "".join(reversed(clusters))
+    return "".join("  " if c.isspace() else c for c in reversed(clusters))
 
 
 def _format_scripture_block_for_terminal(block: dict) -> str:
@@ -2263,7 +2458,10 @@ def _format_scripture_block_for_terminal(block: dict) -> str:
         orig = block["orig"]
         if block.get("lang") == "he":
             orig = _reverse_rtl_graphemes(orig)
+            orig = f"\x1b#6{orig}"
         lines.append(orig)
+    if block.get("trans"):
+        lines.append(block["trans"])
     return "\n".join(lines)
 
 
@@ -2287,15 +2485,19 @@ def render_scripture_for_terminal(text: str) -> str:
                 continue
             en_match = _SCRIPTURE_EN_RE.match(raw)
             orig_match = _SCRIPTURE_ORIG_RE.match(raw)
+            trans_match = _SCRIPTURE_TRANS_RE.match(raw)
             if en_match:
                 block["en"] = en_match.group(1).strip()
             elif orig_match:
                 block["orig"] = orig_match.group(1).strip()
+            elif trans_match:
+                block["trans"] = trans_match.group(1).strip()
             continue
         start_match = _SCRIPTURE_START_RE.match(raw)
         if start_match:
             block = {"ref": start_match.group(1), "translation": start_match.group(2),
-                     "lang": start_match.group(3), "en": "", "orig": ""}
+                     "lang": start_match.group(3), "en": "", "orig": "",
+                     "trans": ""}
             continue
         out.append(raw)
     if block is not None:
