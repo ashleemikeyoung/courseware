@@ -521,6 +521,12 @@ textarea{resize:vertical;min-height:74px}
   margin:0;padding-top:8px;border-top:1px dotted var(--rule);
 }
 .scripture-orig[dir="rtl"]{text-align:right}
+.scripture-align{
+  border-radius:3px;padding:0 1px;transition:background .12s ease,color .12s ease;
+}
+.scripture-align.lit{
+  background:rgba(178,127,74,.22);color:var(--ink);
+}
 .morph-word{
   position:relative;border-bottom:1px dotted var(--ink-faint);
   cursor:help;text-decoration:none;
@@ -1564,12 +1570,89 @@ function parseScriptureAttrs(attrString){
 function scriptureBlockHtml(s){
   const label = s.ref + (s.translation ? ` (${s.translation})` : "");
   const langAttr = s.lang === "he" ? ' dir="rtl" lang="he"' : ' lang="grc"';
+  const morph = scriptureMorphItems(s);
+  const alignment = scriptureAlignment(s, morph);
   let html = `<div class="scripture-block">`;
   if (label.trim()) html += `<div class="scripture-ref">${esc(label)}</div>`;
-  if (s.en) html += `<p class="scripture-en">${esc(s.en)}</p>`;
-  if (s.orig) html += `<p class="scripture-orig"${langAttr}>${scriptureOrigHtml(s)}</p>`;
-  if (s.trans) html += `<p class="scripture-trans">${esc(s.trans)}</p>`;
+  if (s.en) html += `<p class="scripture-en">${scriptureLinkedLineHtml(s.en, alignment.en)}</p>`;
+  if (s.orig) html += `<p class="scripture-orig"${langAttr}>${scriptureOrigHtml(s, morph)}</p>`;
+  if (s.trans) html += `<p class="scripture-trans">${scriptureLinkedLineHtml(s.trans, alignment.trans)}</p>`;
   html += `</div>`;
+  return html;
+}
+
+function scriptureAlignment(s, morph){
+  const count = morph.length;
+  if (!count) return {en: {}, trans: {}};
+  return {
+    en: scriptureEnglishAlignment(s, count),
+    trans: scriptureOneToOneAlignment(count)
+  };
+}
+
+function scriptureOneToOneAlignment(count){
+  const map = {};
+  for (let i = 0; i < count; i++) map[i] = i;
+  return map;
+}
+
+function scriptureEnglishAlignment(s, count){
+  const wordCount = scriptureWordCount(s.en);
+  if (!wordCount || !count) return {};
+
+  const ref = (s.ref || "").trim().toLowerCase();
+  if (s.lang === "he" && ref === "genesis 1:1") {
+    return scriptureGroupsToWordMap([
+      [0, 1, 2], // בְּרֵאשִׁית: In the beginning
+      [4],       // בָּרָא: created
+      [3],       // אֱלֹהִים: God
+      [5, 6],    // אֵת: direct-object marker for the heaven
+      [5, 6],    // הַשָּׁמַיִם: the heaven
+      [7, 8, 9], // וְאֵת: and + direct-object marker for the earth
+      [8, 9],    // הָאָרֶץ: the earth
+    ], wordCount);
+  }
+
+  const groups = [];
+  for (let i = 0; i < count; i++) {
+    const start = Math.round(i * wordCount / count);
+    const end = Math.round((i + 1) * wordCount / count);
+    const indexes = [];
+    for (let j = start; j < end; j++) indexes.push(j);
+    groups.push(indexes);
+  }
+  return scriptureGroupsToWordMap(groups, wordCount);
+}
+
+function scriptureWordCount(text){
+  return ((text || "").match(/\S+/g) || []).length;
+}
+
+function scriptureGroupsToWordMap(groups, wordCount){
+  const map = {};
+  groups.forEach((indexes, alignIndex) => {
+    indexes.forEach(wordIndex => {
+      if (wordIndex >= 0 && wordIndex < wordCount) {
+        if (!map[wordIndex]) map[wordIndex] = [];
+        map[wordIndex].push(alignIndex);
+      }
+    });
+  });
+  return map;
+}
+
+function scriptureLinkedLineHtml(text, wordMap){
+  const re = /\S+/g;
+  let html = "", last = 0, wordIndex = 0, match;
+  while ((match = re.exec(text || ""))) {
+    html += esc((text || "").slice(last, match.index));
+    const word = match[0];
+    const alignIndexes = wordMap[wordIndex++];
+    if (!alignIndexes || !alignIndexes.length) html += esc(word);
+    else html += `<span class="scripture-align" data-align-index="${alignIndexes.join(" ")}">${esc(word)}</span>`;
+    last = match.index + word.length;
+  }
+  html += esc((text || "").slice(last));
   return html;
 }
 
@@ -1597,8 +1680,7 @@ function morphTooltip(item){
   return lines.join("\n");
 }
 
-function scriptureOrigHtml(s){
-  const morph = scriptureMorphItems(s);
+function scriptureOrigHtml(s, morph){
   if (!morph.length) return esc(s.orig);
   const wordRe = s.lang === "he"
     ? /[\u05d0-\u05ea][\u0591-\u05c7\u05d0-\u05ea\u05be]*/g
@@ -1609,7 +1691,7 @@ function scriptureOrigHtml(s){
     const word = match[0];
     const item = morph[idx++];
     if (item) {
-      html += `<span class="morph-word" tabindex="0" data-morph="${escAttr(morphTooltip(item))}">${esc(word)}</span>`;
+      html += `<span class="scripture-align morph-word" tabindex="0" data-align-index="${idx - 1}" data-morph="${escAttr(morphTooltip(item))}">${esc(word)}</span>`;
     } else {
       html += esc(word);
     }
@@ -1679,6 +1761,24 @@ function citeHtml(c){
   return `<button class="cite${known ? "" : " ghostmark"}" data-c="${c}" ` +
          `title="${known ? "Show source" : "No such source"}">${c}</button>`;
 }
+
+function setScriptureLinkedHighlight(target, on){
+  const mark = target.closest(".scripture-align[data-align-index]");
+  if (!mark) return;
+  const block = mark.closest(".scripture-block");
+  if (!block) return;
+  const indexes = (mark.dataset.alignIndex || "").split(/\s+/).filter(Boolean);
+  if (!indexes.length) return;
+  block.querySelectorAll(".scripture-align[data-align-index]").forEach(el => {
+    const other = (el.dataset.alignIndex || "").split(/\s+/);
+    if (indexes.some(idx => other.includes(idx))) el.classList.toggle("lit", on);
+  });
+}
+
+document.addEventListener("pointerover", e => setScriptureLinkedHighlight(e.target, true));
+document.addEventListener("pointerout", e => setScriptureLinkedHighlight(e.target, false));
+document.addEventListener("focusin", e => setScriptureLinkedHighlight(e.target, true));
+document.addEventListener("focusout", e => setScriptureLinkedHighlight(e.target, false));
 
 /* Shared by the document galley and the chat galley: clicking any [Cn] marker
    inside containerEl slides its source into marginEl.glosses. One definition
