@@ -532,23 +532,35 @@ textarea{resize:vertical;min-height:74px}
   cursor:help;text-decoration:none;
 }
 .morph-word:focus{outline:1px solid var(--accent);outline-offset:2px}
-.morph-word::after{
-  content:attr(data-morph);position:absolute;left:calc(100% + 10px);top:50%;
-  transform:translateY(-50%);z-index:20;display:none;width:max-content;
-  max-width:min(340px,78vw);white-space:pre-line;text-align:left;
+.morph-popover{
+  position:absolute;left:calc(100% + 12px);top:54px;z-index:20;
+  display:none;width:max-content;max-width:min(360px,34vw);
+  white-space:normal;text-align:left;
   font-family:var(--mono);font-size:13px;line-height:1.55;font-style:normal;
   color:var(--paper);background:var(--ink);border:1px solid var(--ink);
   border-radius:4px;padding:10px 12px;box-shadow:0 10px 24px rgba(0,0,0,.18);
 }
-.morph-word:hover::after,.morph-word:focus::after{display:block}
-.scripture-orig .morph-word{position:static}
-.scripture-orig .morph-word::after{
-  left:calc(100% + 12px);top:54px;transform:none;
-  max-width:min(360px,34vw);
+.morph-popover.open{display:block}
+.morph-popover.frozen{outline:2px solid rgba(178,127,74,.65)}
+.morph-popover .morph-line{margin:0 0 3px}
+.morph-popover .morph-actions{
+  display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;padding-top:8px;
+  border-top:1px solid rgba(255,255,255,.18);
+}
+.morph-popover .morph-ref{
+  border:1px solid rgba(255,255,255,.24);background:rgba(255,255,255,.08);
+  color:var(--paper);border-radius:4px;padding:2px 6px;
+  font:inherit;font-size:12px;cursor:pointer;
+}
+.morph-popover .morph-ref:hover,.morph-popover .morph-ref:focus{
+  background:rgba(255,255,255,.18);outline:none;
+}
+.morph-popover .morph-hint{
+  margin-top:8px;color:rgba(255,255,255,.7);font-size:11px;
 }
 @media (max-width:1100px){
-  .scripture-orig .morph-word{position:relative}
-  .scripture-orig .morph-word::after{
+  .morph-word{position:relative}
+  .morph-popover{
     left:50%;top:calc(100% + 8px);transform:translateX(-50%);
     max-width:min(340px,78vw);
   }
@@ -1140,6 +1152,7 @@ let STATE = { outline:null, evidence:{}, models:[], busy:false,
               project:null, projects:[], showContext:false };
 STATE.tuning = { criteria: [], misses: [], settings: {} };
 STATE.mail = { settings: {} };
+STATE.morph = { anchor:null, panel:null, frozen:false };
 
 /* Every request carries the project explicitly. The server holds no session,
    so there is no way to be looking at one project and writing into another. */
@@ -1692,6 +1705,14 @@ function morphTooltip(item){
   return lines.join("\n");
 }
 
+function morphPayload(item){
+  try {
+    return JSON.stringify(item || {});
+  } catch(e) {
+    return "{}";
+  }
+}
+
 function scriptureOrigHtml(s, morph){
   if (!morph.length) return esc(s.orig);
   const wordRe = s.lang === "he"
@@ -1703,7 +1724,7 @@ function scriptureOrigHtml(s, morph){
     const word = match[0];
     const item = morph[idx++];
     if (item) {
-      html += `<span class="scripture-align morph-word" tabindex="0" data-align-index="${idx - 1}" data-morph="${escAttr(morphTooltip(item))}">${esc(word)}</span>`;
+      html += `<span class="scripture-align morph-word" tabindex="0" data-align-index="${idx - 1}" data-morph="${escAttr(morphTooltip(item))}" data-morph-json="${escAttr(morphPayload(item))}">${esc(word)}</span>`;
     } else {
       html += esc(word);
     }
@@ -1781,16 +1802,138 @@ function setScriptureLinkedHighlight(target, on){
   if (!block) return;
   const indexes = (mark.dataset.alignIndex || "").split(/\s+/).filter(Boolean);
   if (!indexes.length) return;
+  if (!on && STATE.morph.frozen && STATE.morph.anchor) {
+    const frozenBlock = STATE.morph.anchor.closest(".scripture-block");
+    const frozenIndexes = (STATE.morph.anchor.dataset.alignIndex || "").split(/\s+/);
+    if (block === frozenBlock && indexes.some(idx => frozenIndexes.includes(idx))) return;
+  }
   block.querySelectorAll(".scripture-align[data-align-index]").forEach(el => {
     const other = (el.dataset.alignIndex || "").split(/\s+/);
     if (indexes.some(idx => other.includes(idx))) el.classList.toggle("lit", on);
   });
 }
 
-document.addEventListener("pointerover", e => setScriptureLinkedHighlight(e.target, true));
-document.addEventListener("pointerout", e => setScriptureLinkedHighlight(e.target, false));
-document.addEventListener("focusin", e => setScriptureLinkedHighlight(e.target, true));
-document.addEventListener("focusout", e => setScriptureLinkedHighlight(e.target, false));
+function clearScriptureHighlight(anchor){
+  if (!anchor) return;
+  const block = anchor.closest(".scripture-block");
+  const indexes = (anchor.dataset.alignIndex || "").split(/\s+/).filter(Boolean);
+  if (!block || !indexes.length) return;
+  block.querySelectorAll(".scripture-align[data-align-index]").forEach(el => {
+    const other = (el.dataset.alignIndex || "").split(/\s+/);
+    if (indexes.some(idx => other.includes(idx))) el.classList.remove("lit");
+  });
+}
+
+function morphPanel(){
+  if (STATE.morph.panel) return STATE.morph.panel;
+  const panel = el("div", "morph-popover");
+  panel.addEventListener("click", e => {
+    const refButton = e.target.closest(".morph-ref");
+    if (!refButton) return;
+    e.preventDefault();
+    const input = $("#askInput");
+    const scrollX = window.scrollX, scrollY = window.scrollY;
+    input.value = `/bible ${refButton.dataset.ref || refButton.textContent}`;
+    autoResize(input);
+    try { input.focus({preventScroll:true}); } catch(err) { input.focus(); }
+    input.selectionStart = input.selectionEnd = input.value.length;
+    window.scrollTo(scrollX, scrollY);
+    toast("Verse lookup is ready");
+  });
+  STATE.morph.panel = panel;
+  return panel;
+}
+
+function morphItemFromWord(word){
+  try {
+    return JSON.parse(word.dataset.morphJson || "{}");
+  } catch(e) {
+    return {};
+  }
+}
+
+function morphPanelHtml(item, frozen){
+  const rows = [
+    ["Lemma", item.lemma],
+    ["Root", item.root],
+    ["Part of speech", item.part_of_speech],
+    ["Parsing", item.parsing],
+    ["Definition", item.definition],
+    ["Grammar", item.grammar],
+  ].filter(row => row[1]);
+  let html = rows.map(([label, value]) =>
+    `<div class="morph-line"><strong>${esc(label)}:</strong> ${esc(value)}</div>`
+  ).join("");
+  const refs = Array.isArray(item.same_form_refs) ? item.same_form_refs : [];
+  if (refs.length) {
+    html += `<div class="morph-actions">` + refs.map(ref =>
+      `<button type="button" class="morph-ref" data-ref="${escAttr(ref)}">${esc(ref)}</button>`
+    ).join("") + `</div>`;
+  }
+  html += `<div class="morph-hint">${frozen ? "Frozen" : "Press F to freeze"} · Esc closes</div>`;
+  return html;
+}
+
+function showMorphPanel(anchor, frozen = false){
+  if (!anchor || !anchor.classList.contains("morph-word")) return;
+  if (STATE.morph.frozen && !frozen && STATE.morph.anchor !== anchor) return;
+  const block = anchor.closest(".scripture-block");
+  if (!block) return;
+  const panel = morphPanel();
+  if (panel.parentElement !== block) block.appendChild(panel);
+  STATE.morph.anchor = anchor;
+  STATE.morph.frozen = !!frozen;
+  panel.innerHTML = morphPanelHtml(morphItemFromWord(anchor), STATE.morph.frozen);
+  panel.className = "morph-popover open" + (STATE.morph.frozen ? " frozen" : "");
+  setScriptureLinkedHighlight(anchor, true);
+}
+
+function hideMorphPanel(force = false){
+  if (STATE.morph.frozen && !force) return;
+  clearScriptureHighlight(STATE.morph.anchor);
+  if (STATE.morph.panel) STATE.morph.panel.classList.remove("open", "frozen");
+  STATE.morph.anchor = null;
+  STATE.morph.frozen = false;
+}
+
+function maybeHideMorphPanel(){
+  setTimeout(() => {
+    if (STATE.morph.frozen) return;
+    const panel = STATE.morph.panel;
+    const anchor = STATE.morph.anchor;
+    if ((panel && panel.matches(":hover")) || (anchor && anchor.matches(":hover,:focus"))) return;
+    hideMorphPanel(true);
+  }, 80);
+}
+
+document.addEventListener("pointerover", e => {
+  const word = e.target.closest(".morph-word");
+  if (word) showMorphPanel(word);
+  setScriptureLinkedHighlight(e.target, true);
+});
+document.addEventListener("pointerout", e => {
+  setScriptureLinkedHighlight(e.target, false);
+  if (e.target.closest(".morph-word") || e.target.closest(".morph-popover")) maybeHideMorphPanel();
+});
+document.addEventListener("focusin", e => {
+  const word = e.target.closest(".morph-word");
+  if (word) showMorphPanel(word);
+  setScriptureLinkedHighlight(e.target, true);
+});
+document.addEventListener("focusout", e => {
+  setScriptureLinkedHighlight(e.target, false);
+  if (e.target.closest(".morph-word")) maybeHideMorphPanel();
+});
+document.addEventListener("keydown", e => {
+  const typing = e.target.closest("input, textarea, select") || e.target.isContentEditable;
+  if (typing) return;
+  if ((e.key || "").toLowerCase() === "f" && STATE.morph.anchor) {
+    e.preventDefault();
+    showMorphPanel(STATE.morph.anchor, !STATE.morph.frozen);
+  } else if (e.key === "Escape") {
+    hideMorphPanel(true);
+  }
+});
 
 /* Shared by the document galley and the chat galley: clicking any [Cn] marker
    inside containerEl slides its source into marginEl.glosses. One definition
