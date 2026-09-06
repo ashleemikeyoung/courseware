@@ -49,6 +49,14 @@ _HEBREW_LEXICON = {
         "grammar": "Marks a definite direct object; usually untranslated.",
         "definition": "direct-object marker",
     },
+    "ואת": {
+        "lemma": "את",
+        "root": "",
+        "part_of_speech": "particle",
+        "parsing": "direct-object marker with prefixed conjunction",
+        "grammar": "The prefix ו means 'and'; את marks a definite direct object and is usually untranslated.",
+        "definition": "and + direct-object marker",
+    },
     "השמים": {
         "lemma": "שמים",
         "root": "שׁמם",
@@ -197,16 +205,29 @@ def _display_root(value: str, fallback: str) -> str:
 def _hebrew_fallback(word: str) -> dict:
     key = _hebrew_key(word)
     prefixes = []
-    if key[:1] in {"ו", "ב", "ל", "כ", "מ", "ה"} and len(key) > 2:
-        names = {
-            "ו": "conjunction prefix",
-            "ב": "preposition prefix",
-            "ל": "preposition prefix",
-            "כ": "comparison prefix",
-            "מ": "preposition prefix",
-            "ה": "definite article",
-        }
-        prefixes.append(names[key[0]])
+    prefix_names = {
+        "ו": "conjunction prefix",
+        "ב": "preposition prefix",
+        "ל": "preposition prefix",
+        "כ": "comparison prefix",
+        "מ": "preposition prefix",
+        "ה": "definite article",
+    }
+    while key and key[:1] in prefix_names and len(key) > 2:
+        prefixes.append(prefix_names[key[0]])
+        stripped = key[1:]
+        if stripped in _HEBREW_LEXICON:
+            base = dict(_HEBREW_LEXICON[stripped])
+            base["parsing"] = ", ".join(prefixes + [base.get("parsing", "")]).strip(", ")
+            if prefixes:
+                prefix_text = "; ".join(prefixes)
+                grammar = base.get("grammar", "")
+                base["grammar"] = f"{prefix_text}. {grammar}".strip()
+            return base
+        key = stripped
+    key = _hebrew_key(word)
+    if key[:1] in prefix_names and len(key) > 2:
+        prefixes.append(prefix_names[key[0]])
     number = "plural" if key.endswith(("ים", "ות")) else ""
     return {
         "lemma": key,

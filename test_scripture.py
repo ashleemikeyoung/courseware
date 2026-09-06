@@ -63,6 +63,19 @@ def test_morphology_includes_other_same_form_refs():
     assert "John 1:14" in items[0]["same_form_refs"]
 
 
+def test_hebrew_morphology_includes_genesis_particles():
+    items = morphology.analyze_text(
+        "he",
+        "בְּרֵאשִׁית בָּרָא אֱלֹהִים אֵת הַשָּׁמַיִם וְאֵת הָאָרֶץ",
+        current_ref="Genesis 1:1",
+    )
+
+    by_surface = {item["surface"]: item for item in items}
+    assert by_surface["אֵת"]["part_of_speech"] == "particle"
+    assert by_surface["וְאֵת"]["part_of_speech"] == "particle"
+    assert "prefixed conjunction" in by_surface["וְאֵת"]["parsing"]
+
+
 def test_scripture_mode_tracks_user_history():
     messages = [
         {"role": "user", "content": "/bible Genesis 1:1"},
