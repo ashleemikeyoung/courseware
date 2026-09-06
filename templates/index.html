@@ -104,14 +104,17 @@
      variants selectable in Settings. [data-scripture-size] overrides below. */
   --scripture-en-size:18px; --scripture-en-lh:1.6;
   --scripture-orig-size:20px; --scripture-orig-lh:1.75;
+  --scripture-trans-size:15px; --scripture-trans-lh:1.55;
 }
 [data-scripture-size="small"]{
   --scripture-en-size:14px; --scripture-en-lh:1.55;
   --scripture-orig-size:15px; --scripture-orig-lh:1.65;
+  --scripture-trans-size:12px; --scripture-trans-lh:1.45;
 }
 [data-scripture-size="large"]{
   --scripture-en-size:22px; --scripture-en-lh:1.65;
   --scripture-orig-size:26px; --scripture-orig-lh:1.85;
+  --scripture-trans-size:18px; --scripture-trans-lh:1.6;
 }
 /* Self-hosted, not a Google Fonts <link> -- see the note above about "no
    web fonts, no CDN". Caveat ships as a single variable-weight file
@@ -518,6 +521,11 @@ textarea{resize:vertical;min-height:74px}
   margin:0;padding-top:8px;border-top:1px dotted var(--rule);
 }
 .scripture-orig[dir="rtl"]{text-align:right}
+.scripture-trans{
+  font-family:var(--serif);font-size:var(--scripture-trans-size);
+  line-height:var(--scripture-trans-lh);font-style:italic;color:var(--ink-faint);
+  margin:6px 0 0;
+}
 .active-requirements span{
   border:1px solid var(--rule);background:var(--paper-2);
   border-radius:8px;padding:4px 8px;max-width:100%;
@@ -1477,8 +1485,10 @@ function mdToHtml(md, opts = {}){
       } else {
         const enMatch = raw.match(/^\s*EN:\s*(.*)$/);
         const origMatch = raw.match(/^\s*ORIG:\s*(.*)$/);
+        const transMatch = raw.match(/^\s*TRANS:\s*(.*)$/);
         if (enMatch) scripture.en = enMatch[1].trim();
         else if (origMatch) scripture.orig = origMatch[1].trim();
+        else if (transMatch) scripture.trans = transMatch[1].trim();
       }
       continue;
     }
@@ -1487,7 +1497,7 @@ function mdToHtml(md, opts = {}){
       close();
       const attrs = parseScriptureAttrs(scriptureStart[1]);
       scripture = {ref: attrs.ref || "", translation: attrs.translation || "",
-                   lang: attrs.lang || "", en: "", orig: ""};
+                   lang: attrs.lang || "", en: "", orig: "", trans: ""};
       continue;
     }
     let fence = raw.match(/^\s*```\s*([\w.+-]*)\s*$/);
@@ -1532,9 +1542,9 @@ function parseScriptureAttrs(attrString){
   return attrs;
 }
 
-/* English on top, original language underneath -- the display convention
-   this exists for. dir="rtl" for Hebrew keeps punctuation and word order
-   reading correctly; Greek stays left-to-right by default. */
+/* English on top, original language in the middle, transliteration underneath.
+   dir="rtl" for Hebrew keeps punctuation and word order reading correctly;
+   Greek stays left-to-right by default. */
 function scriptureBlockHtml(s){
   const label = s.ref + (s.translation ? ` (${s.translation})` : "");
   const langAttr = s.lang === "he" ? ' dir="rtl" lang="he"' : ' lang="grc"';
@@ -1542,6 +1552,7 @@ function scriptureBlockHtml(s){
   if (label.trim()) html += `<div class="scripture-ref">${esc(label)}</div>`;
   if (s.en) html += `<p class="scripture-en">${esc(s.en)}</p>`;
   if (s.orig) html += `<p class="scripture-orig"${langAttr}>${esc(s.orig)}</p>`;
+  if (s.trans) html += `<p class="scripture-trans">${esc(s.trans)}</p>`;
   html += `</div>`;
   return html;
 }
