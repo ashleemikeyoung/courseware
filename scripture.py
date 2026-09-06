@@ -1190,6 +1190,7 @@ def _has_scripture_evidence(evidence: list) -> bool:
 
 
 answer_bible_command = _answer_bible_command
+is_bible_command = _is_bible_command
 scripture_evidence = _scripture_evidence
 has_scripture_evidence = _has_scripture_evidence
 
@@ -1197,6 +1198,7 @@ __all__ = [
     "answer_bible_command",
     "enrich_scripture_morphology",
     "has_scripture_evidence",
+    "is_bible_command",
     "render_scripture_for_terminal",
     "is_scripture_mode_exit",
     "scripture_mode_active",

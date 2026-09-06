@@ -32,9 +32,10 @@ import summarize
 # through ask.py, not this terminal loop) got the fix, terminal sessions
 # didn't. One implementation now, so the two paths can't drift apart again.
 from ask import (
-    _reference_terms_from_context, _is_bible_command,
+    _reference_terms_from_context,
     render_scripture_for_terminal, ask as ask_with_sources,
 )
+from scripture import is_bible_command
 
 # OLLAMA_URL and every *_MODEL name come from config.py -- see that
 # module's docstring. This also fixes a latent bug: the load_dotenv() this
@@ -1097,7 +1098,7 @@ if __name__ == "__main__":
         # verse: the person wants what's true right now, not what an
         # earlier (possibly since-fixed) run happened to produce.
         cached = None
-        if not _is_bible_command(q):
+        if not is_bible_command(q):
             try:
                 cached = find_cached_answer(q, project=_memory_project())
             except Exception as e:

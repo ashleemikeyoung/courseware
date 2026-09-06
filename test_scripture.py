@@ -19,6 +19,7 @@ def test_terminal_renderer_keeps_transliteration_below_original():
         "EN: In the beginning was the Word",
         "ORIG: Λόγος",
         "TRANS: logos",
+        'MORPH: [{"surface":"Λόγος","lemma":"λόγος","root":"λεγ","part_of_speech":"noun","parsing":"nominative masculine singular","same_form_refs":["John 1:14"]}]',
         "[/SCRIPTURE]",
     ])
 
@@ -28,6 +29,8 @@ def test_terminal_renderer_keeps_transliteration_below_original():
     assert "In the beginning was the Word" in rendered
     assert "Λόγος" in rendered
     assert rendered.splitlines()[-1] == "logos"
+    assert "Morphology:" not in rendered
+    assert "same form:" not in rendered
 
 
 def test_morphology_analyzes_seed_lexicon_words():
