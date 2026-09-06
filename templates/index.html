@@ -521,6 +521,20 @@ textarea{resize:vertical;min-height:74px}
   margin:0;padding-top:8px;border-top:1px dotted var(--rule);
 }
 .scripture-orig[dir="rtl"]{text-align:right}
+.morph-word{
+  position:relative;border-bottom:1px dotted var(--ink-faint);
+  cursor:help;text-decoration:none;
+}
+.morph-word:focus{outline:1px solid var(--accent);outline-offset:2px}
+.morph-word::after{
+  content:attr(data-morph);position:absolute;left:50%;bottom:calc(100% + 8px);
+  transform:translateX(-50%);z-index:20;display:none;width:max-content;
+  max-width:min(280px,70vw);white-space:pre-line;text-align:left;
+  font-family:var(--mono);font-size:11px;line-height:1.45;font-style:normal;
+  color:var(--paper);background:var(--ink);border:1px solid var(--ink);
+  border-radius:4px;padding:8px 10px;box-shadow:0 10px 24px rgba(0,0,0,.18);
+}
+.morph-word:hover::after,.morph-word:focus::after{display:block}
 .scripture-trans{
   font-family:var(--serif);font-size:var(--scripture-trans-size);
   line-height:var(--scripture-trans-lh);font-style:italic;color:var(--ink-faint);
@@ -1486,9 +1500,11 @@ function mdToHtml(md, opts = {}){
         const enMatch = raw.match(/^\s*EN:\s*(.*)$/);
         const origMatch = raw.match(/^\s*ORIG:\s*(.*)$/);
         const transMatch = raw.match(/^\s*TRANS:\s*(.*)$/);
+        const morphMatch = raw.match(/^\s*MORPH:\s*(.*)$/);
         if (enMatch) scripture.en = enMatch[1].trim();
         else if (origMatch) scripture.orig = origMatch[1].trim();
         else if (transMatch) scripture.trans = transMatch[1].trim();
+        else if (morphMatch) scripture.morph = morphMatch[1].trim();
       }
       continue;
     }
@@ -1497,7 +1513,7 @@ function mdToHtml(md, opts = {}){
       close();
       const attrs = parseScriptureAttrs(scriptureStart[1]);
       scripture = {ref: attrs.ref || "", translation: attrs.translation || "",
-                   lang: attrs.lang || "", en: "", orig: "", trans: ""};
+                   lang: attrs.lang || "", en: "", orig: "", trans: "", morph: ""};
       continue;
     }
     let fence = raw.match(/^\s*```\s*([\w.+-]*)\s*$/);
@@ -1551,9 +1567,52 @@ function scriptureBlockHtml(s){
   let html = `<div class="scripture-block">`;
   if (label.trim()) html += `<div class="scripture-ref">${esc(label)}</div>`;
   if (s.en) html += `<p class="scripture-en">${esc(s.en)}</p>`;
-  if (s.orig) html += `<p class="scripture-orig"${langAttr}>${esc(s.orig)}</p>`;
+  if (s.orig) html += `<p class="scripture-orig"${langAttr}>${scriptureOrigHtml(s)}</p>`;
   if (s.trans) html += `<p class="scripture-trans">${esc(s.trans)}</p>`;
   html += `</div>`;
+  return html;
+}
+
+function scriptureMorphItems(s){
+  if (!s.morph) return [];
+  try {
+    const parsed = JSON.parse(s.morph);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch(e) {
+    return [];
+  }
+}
+
+function morphTooltip(item){
+  const lines = [];
+  if (item.lemma) lines.push(`Lemma: ${item.lemma}`);
+  if (item.transliteration) lines.push(`Translit: ${item.transliteration}`);
+  if (item.part_of_speech) lines.push(`Part of speech: ${item.part_of_speech}`);
+  if (item.parsing) lines.push(`Parsing: ${item.parsing}`);
+  if (item.definition) lines.push(`Definition: ${item.definition}`);
+  if (item.grammar) lines.push(`Grammar: ${item.grammar}`);
+  return lines.join("\n");
+}
+
+function scriptureOrigHtml(s){
+  const morph = scriptureMorphItems(s);
+  if (!morph.length) return esc(s.orig);
+  const wordRe = s.lang === "he"
+    ? /[\u05d0-\u05ea][\u0591-\u05c7\u05d0-\u05ea\u05be]*/g
+    : /[\u0370-\u03ff\u1f00-\u1fff]+/g;
+  let html = "", last = 0, idx = 0, match;
+  while ((match = wordRe.exec(s.orig || ""))) {
+    html += esc((s.orig || "").slice(last, match.index));
+    const word = match[0];
+    const item = morph[idx++];
+    if (item) {
+      html += `<span class="morph-word" tabindex="0" data-morph="${escAttr(morphTooltip(item))}">${esc(word)}</span>`;
+    } else {
+      html += esc(word);
+    }
+    last = match.index + word.length;
+  }
+  html += esc((s.orig || "").slice(last));
   return html;
 }
 

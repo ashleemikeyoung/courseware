@@ -18,6 +18,8 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import quote_plus
 
+import morphology
+
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR / "memory"))
 
@@ -546,6 +548,11 @@ def _render_scripture_block(ref: str, translation: str, lang: str,
             translit = ""
         if translit:
             lines.append(f"TRANS: {translit}")
+        morph = morphology.analyze_text(lang, orig_text, transliteration=translit)
+        if morph:
+            lines.append(
+                "MORPH: " + json.dumps(morph, ensure_ascii=False, separators=(",", ":"))
+            )
     lines.append("[/SCRIPTURE]")
     return "\n".join(lines)
 
@@ -576,6 +583,7 @@ _SCRIPTURE_END_RE = re.compile(r'^\s*\[/SCRIPTURE\]\s*$')
 _SCRIPTURE_EN_RE = re.compile(r'^\s*EN:\s*(.*)$')
 _SCRIPTURE_ORIG_RE = re.compile(r'^\s*ORIG:\s*(.*)$')
 _SCRIPTURE_TRANS_RE = re.compile(r'^\s*TRANS:\s*(.*)$')
+_SCRIPTURE_MORPH_RE = re.compile(r'^\s*MORPH:\s*(.*)$')
 
 
 def _reverse_rtl_graphemes(text: str) -> str:
@@ -623,6 +631,82 @@ def _format_scripture_block_for_terminal(block: dict) -> str:
     return "\n".join(lines)
 
 
+def enrich_scripture_morphology(text: str) -> str:
+    """
+    Add TRANS/MORPH lines to any existing [SCRIPTURE] block that has ORIG text.
+
+    Deterministic /bible responses already include these fields, but ordinary
+    Ask responses may contain model-written scripture blocks. This normalizes
+    both paths before the browser renders hover metadata.
+    """
+    lines = (text or "").split("\n")
+    out, block = [], None
+
+    def flush(current: dict) -> None:
+        if not current:
+            return
+        lang = current["lang"]
+        orig = current["orig"]
+        trans = current["trans"]
+        morph = current["morph"]
+        if orig and not trans:
+            if lang == "he":
+                trans = transliterate_hebrew(orig)
+            elif lang == "grc":
+                trans = transliterate_greek(orig)
+        if orig and not morph:
+            items = morphology.analyze_text(lang, orig, transliteration=trans)
+            if items:
+                morph = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
+        out.append(current["start"])
+        out.extend(current["body"])
+        if trans and not current["had_trans"]:
+            out.append(f"TRANS: {trans}")
+        if morph and not current["had_morph"]:
+            out.append(f"MORPH: {morph}")
+        out.append(current["end"] or "[/SCRIPTURE]")
+
+    for raw in lines:
+        if block is not None:
+            if _SCRIPTURE_END_RE.match(raw):
+                block["end"] = raw
+                flush(block)
+                block = None
+                continue
+            orig_match = _SCRIPTURE_ORIG_RE.match(raw)
+            trans_match = _SCRIPTURE_TRANS_RE.match(raw)
+            morph_match = _SCRIPTURE_MORPH_RE.match(raw)
+            if orig_match:
+                block["orig"] = orig_match.group(1).strip()
+            elif trans_match:
+                block["trans"] = trans_match.group(1).strip()
+                block["had_trans"] = True
+            elif morph_match:
+                block["morph"] = morph_match.group(1).strip()
+                block["had_morph"] = True
+            block["body"].append(raw)
+            continue
+
+        start_match = _SCRIPTURE_START_RE.match(raw)
+        if start_match:
+            block = {
+                "start": raw,
+                "end": "",
+                "lang": start_match.group(3),
+                "body": [],
+                "orig": "",
+                "trans": "",
+                "morph": "",
+                "had_trans": False,
+                "had_morph": False,
+            }
+            continue
+        out.append(raw)
+    if block is not None:
+        flush(block)
+    return "\n".join(out)
+
+
 def render_scripture_for_terminal(text: str) -> str:
     """
     Parse this app's [SCRIPTURE ...]/EN:/ORIG:/[/SCRIPTURE] block format
@@ -644,18 +728,21 @@ def render_scripture_for_terminal(text: str) -> str:
             en_match = _SCRIPTURE_EN_RE.match(raw)
             orig_match = _SCRIPTURE_ORIG_RE.match(raw)
             trans_match = _SCRIPTURE_TRANS_RE.match(raw)
+            morph_match = _SCRIPTURE_MORPH_RE.match(raw)
             if en_match:
                 block["en"] = en_match.group(1).strip()
             elif orig_match:
                 block["orig"] = orig_match.group(1).strip()
             elif trans_match:
                 block["trans"] = trans_match.group(1).strip()
+            elif morph_match:
+                block["morph"] = morph_match.group(1).strip()
             continue
         start_match = _SCRIPTURE_START_RE.match(raw)
         if start_match:
             block = {"ref": start_match.group(1), "translation": start_match.group(2),
                      "lang": start_match.group(3), "en": "", "orig": "",
-                     "trans": ""}
+                     "trans": "", "morph": ""}
             continue
         out.append(raw)
     if block is not None:
@@ -1062,6 +1149,7 @@ has_scripture_evidence = _has_scripture_evidence
 
 __all__ = [
     "answer_bible_command",
+    "enrich_scripture_morphology",
     "has_scripture_evidence",
     "render_scripture_for_terminal",
     "scripture_evidence",

@@ -43,8 +43,8 @@ import quality
 import redactor
 import summarize
 from scripture import (
-    answer_bible_command, has_scripture_evidence, render_scripture_for_terminal,
-    scripture_evidence,
+    answer_bible_command, enrich_scripture_morphology, has_scripture_evidence,
+    render_scripture_for_terminal, scripture_evidence,
 )
 
 # writer.py's import above already inserts memory/ onto sys.path (see its
@@ -3919,6 +3919,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             # so clearing only `evidence` above left real source chips
             # attached to a message that has nothing to do with them.
 
+    text = enrich_scripture_morphology(text)
     text, evidence_out = _prefix_markers(
         _split_combined_markers(text), registry, turn_id, evidence)
     text = _tidy_apa_output(text, active_requirements)
