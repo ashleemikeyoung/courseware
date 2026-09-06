@@ -541,14 +541,14 @@ textarea{resize:vertical;min-height:74px}
   border-radius:4px;padding:10px 12px;box-shadow:0 10px 24px rgba(0,0,0,.18);
 }
 .morph-word:hover::after,.morph-word:focus::after{display:block}
-.scripture-orig[dir="rtl"] .morph-word{position:static}
-.scripture-orig[dir="rtl"] .morph-word::after{
+.scripture-orig .morph-word{position:static}
+.scripture-orig .morph-word::after{
   left:calc(100% + 12px);top:54px;transform:none;
   max-width:min(360px,34vw);
 }
 @media (max-width:1100px){
-  .scripture-orig[dir="rtl"] .morph-word{position:relative}
-  .scripture-orig[dir="rtl"] .morph-word::after{
+  .scripture-orig .morph-word{position:relative}
+  .scripture-orig .morph-word::after{
     left:50%;top:calc(100% + 8px);transform:translateX(-50%);
     max-width:min(340px,78vw);
   }
