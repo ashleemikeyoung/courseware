@@ -76,6 +76,27 @@ def test_hebrew_morphology_includes_genesis_particles():
     assert "prefixed conjunction" in by_surface["וְאֵת"]["parsing"]
 
 
+def test_hebrew_morphology_includes_other_same_form_refs():
+    items = morphology.analyze_text(
+        "he",
+        "בְּרֵאשִׁית בָּרָא אֱלֹהִים אֵת הַשָּׁמַיִם וְאֵת הָאָרֶץ",
+        current_ref="Genesis 1:1",
+    )
+
+    by_surface = {item["surface"]: item for item in items}
+    assert "Jeremiah 26:1" in by_surface["בְּרֵאשִׁית"]["same_form_refs"]
+    assert "Genesis 2:3" in by_surface["בָּרָא"]["same_form_refs"]
+    assert "Genesis 2:1" in by_surface["הַשָּׁמַיִם"]["same_form_refs"]
+    assert "Genesis 6:11" in by_surface["הָאָרֶץ"]["same_form_refs"]
+
+
+def test_hebrew_morphology_splits_maqaf_forms_for_same_form_refs():
+    items = morphology.analyze_text("he", "אֶת־הָאָדָם", current_ref="Genesis 1:27")
+
+    assert items[0]["surface"] == "אֶת"
+    assert "Genesis 1:1" in items[0]["same_form_refs"]
+
+
 def test_scripture_mode_tracks_user_history():
     messages = [
         {"role": "user", "content": "/bible Genesis 1:1"},

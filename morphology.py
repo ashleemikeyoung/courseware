@@ -13,7 +13,7 @@ import re
 import unicodedata
 from pathlib import Path
 
-_HEBREW_WORD_RE = re.compile(r"[\u05d0-\u05ea][\u0591-\u05c7\u05d0-\u05ea\u05be]*")
+_HEBREW_WORD_RE = re.compile(r"[\u05d0-\u05ea][\u0591-\u05bd\u05bf-\u05c7\u05d0-\u05ea]*")
 _GREEK_WORD_RE = re.compile(r"[\u0370-\u03ff\u1f00-\u1fff]+")
 
 _HEBREW_LEXICON = {
@@ -183,6 +183,7 @@ _GREEK_LEXICON = {
 }
 
 _GREEK_FORM_REFS = None
+_HEBREW_FORM_REFS = None
 
 
 def _without_marks(text: str) -> str:
@@ -269,14 +270,13 @@ def _tr_cache_path() -> Path:
     return Path(__file__).resolve().parent / "data" / "textus_receptus.tsv"
 
 
-def _greek_form_refs() -> dict[str, list[str]]:
-    global _GREEK_FORM_REFS
-    if _GREEK_FORM_REFS is not None:
-        return _GREEK_FORM_REFS
+def _hebrew_cache_path() -> Path:
+    return Path(__file__).resolve().parent / "data" / "hebrew_bible.tsv"
+
+
+def _verse_form_refs(path: Path, word_re: re.Pattern, key_fn) -> dict[str, list[str]]:
     refs: dict[str, list[str]] = {}
-    path = _tr_cache_path()
     if not path.exists():
-        _GREEK_FORM_REFS = refs
         return refs
     try:
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -284,23 +284,43 @@ def _greek_form_refs() -> dict[str, list[str]]:
                 continue
             ref, verse_text = line.split("\t", 1)
             seen_in_verse = set()
-            for match in _GREEK_WORD_RE.finditer(verse_text):
-                key = _greek_key(match.group(0))
+            for match in word_re.finditer(verse_text):
+                key = key_fn(match.group(0))
                 if not key or key in seen_in_verse:
                     continue
                 seen_in_verse.add(key)
                 refs.setdefault(key, []).append(ref)
     except Exception:
         refs = {}
-    _GREEK_FORM_REFS = refs
     return refs
+
+
+def _hebrew_form_refs() -> dict[str, list[str]]:
+    global _HEBREW_FORM_REFS
+    if _HEBREW_FORM_REFS is not None:
+        return _HEBREW_FORM_REFS
+    _HEBREW_FORM_REFS = _verse_form_refs(
+        _hebrew_cache_path(), _HEBREW_WORD_RE, _hebrew_key)
+    return _HEBREW_FORM_REFS
+
+
+def _greek_form_refs() -> dict[str, list[str]]:
+    global _GREEK_FORM_REFS
+    if _GREEK_FORM_REFS is not None:
+        return _GREEK_FORM_REFS
+    _GREEK_FORM_REFS = _verse_form_refs(_tr_cache_path(), _GREEK_WORD_RE, _greek_key)
+    return _GREEK_FORM_REFS
 
 
 def _same_form_refs(lang: str, key: str, current_ref: str | None, limit: int = 8) -> list[str]:
     current = (current_ref or "").strip()
-    if lang != "grc":
+    if lang == "he":
+        form_refs = _hebrew_form_refs()
+    elif lang == "grc":
+        form_refs = _greek_form_refs()
+    else:
         return []
-    candidates = [ref for ref in _greek_form_refs().get(key, []) if ref != current]
+    candidates = [ref for ref in form_refs.get(key, []) if ref != current]
     current_match = re.match(r"^(.+?)\s+(\d+):(\d+)$", current)
     if current_match:
         current_book, current_chapter, _ = current_match.groups()

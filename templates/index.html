@@ -1716,7 +1716,7 @@ function morphPayload(item){
 function scriptureOrigHtml(s, morph){
   if (!morph.length) return esc(s.orig);
   const wordRe = s.lang === "he"
-    ? /[\u05d0-\u05ea][\u0591-\u05c7\u05d0-\u05ea\u05be]*/g
+    ? /[\u05d0-\u05ea][\u0591-\u05bd\u05bf-\u05c7\u05d0-\u05ea]*/g
     : /[\u0370-\u03ff\u1f00-\u1fff]+/g;
   let html = "", last = 0, idx = 0, match;
   while ((match = wordRe.exec(s.orig || ""))) {
