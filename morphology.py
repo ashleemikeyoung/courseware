@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from pathlib import Path
 
 _HEBREW_WORD_RE = re.compile(r"[\u05d0-\u05ea][\u0591-\u05c7\u05d0-\u05ea\u05be]*")
 _GREEK_WORD_RE = re.compile(r"[\u0370-\u03ff\u1f00-\u1fff]+")
@@ -18,6 +19,7 @@ _GREEK_WORD_RE = re.compile(r"[\u0370-\u03ff\u1f00-\u1fff]+")
 _HEBREW_LEXICON = {
     "בראשית": {
         "lemma": "ראשית",
+        "root": "ראשׁ",
         "part_of_speech": "noun",
         "parsing": "feminine singular construct with prefixed preposition",
         "grammar": "The prefix ב means 'in/at/by'; the noun is in construct form.",
@@ -25,6 +27,7 @@ _HEBREW_LEXICON = {
     },
     "ברא": {
         "lemma": "ברא",
+        "root": "ברא",
         "part_of_speech": "verb",
         "parsing": "qal perfect, 3rd masculine singular",
         "grammar": "A completed-action Hebrew verb form.",
@@ -32,6 +35,7 @@ _HEBREW_LEXICON = {
     },
     "אלהים": {
         "lemma": "אלהים",
+        "root": "אלה",
         "part_of_speech": "noun",
         "parsing": "masculine plural form, often singular in meaning for Israel's God",
         "grammar": "Plural-looking form used with singular verbs in this context.",
@@ -39,6 +43,7 @@ _HEBREW_LEXICON = {
     },
     "את": {
         "lemma": "את",
+        "root": "",
         "part_of_speech": "particle",
         "parsing": "direct-object marker",
         "grammar": "Marks a definite direct object; usually untranslated.",
@@ -46,6 +51,7 @@ _HEBREW_LEXICON = {
     },
     "השמים": {
         "lemma": "שמים",
+        "root": "שׁמם",
         "part_of_speech": "noun",
         "parsing": "masculine plural with definite article",
         "grammar": "The prefix ה marks definiteness.",
@@ -53,6 +59,7 @@ _HEBREW_LEXICON = {
     },
     "הארץ": {
         "lemma": "ארץ",
+        "root": "ארץ",
         "part_of_speech": "noun",
         "parsing": "feminine singular with definite article",
         "grammar": "The prefix ה marks definiteness.",
@@ -63,6 +70,7 @@ _HEBREW_LEXICON = {
 _GREEK_LEXICON = {
     "εν": {
         "lemma": "ἐν",
+        "root": "ἐν",
         "part_of_speech": "preposition",
         "parsing": "preposition with dative",
         "grammar": "Takes a dative object; often marks location or sphere.",
@@ -70,6 +78,7 @@ _GREEK_LEXICON = {
     },
     "λογος": {
         "lemma": "λόγος",
+        "root": "λεγ",
         "part_of_speech": "noun",
         "parsing": "nominative masculine singular",
         "grammar": "Often the subject form of a masculine singular noun.",
@@ -77,6 +86,7 @@ _GREEK_LEXICON = {
     },
     "θεος": {
         "lemma": "θεός",
+        "root": "θε",
         "part_of_speech": "noun",
         "parsing": "nominative masculine singular",
         "grammar": "Subject/complement form of a masculine singular noun.",
@@ -84,6 +94,7 @@ _GREEK_LEXICON = {
     },
     "αρχη": {
         "lemma": "ἀρχή",
+        "root": "ἀρχ",
         "part_of_speech": "noun",
         "parsing": "dative feminine singular after preposition in this phrase",
         "grammar": "With ἐν, it functions as 'in the beginning'.",
@@ -91,6 +102,7 @@ _GREEK_LEXICON = {
     },
     "ην": {
         "lemma": "εἰμί",
+        "root": "εἰμί",
         "part_of_speech": "verb",
         "parsing": "imperfect active indicative, 3rd singular",
         "grammar": "Past continuous form of 'to be'.",
@@ -98,6 +110,7 @@ _GREEK_LEXICON = {
     },
     "προς": {
         "lemma": "πρός",
+        "root": "πρός",
         "part_of_speech": "preposition",
         "parsing": "preposition with accusative in this phrase",
         "grammar": "Marks motion/towardness or relationship with its object.",
@@ -105,6 +118,7 @@ _GREEK_LEXICON = {
     },
     "και": {
         "lemma": "καί",
+        "root": "καί",
         "part_of_speech": "conjunction",
         "parsing": "coordinating conjunction",
         "grammar": "Connects words, clauses, or sentences.",
@@ -112,6 +126,7 @@ _GREEK_LEXICON = {
     },
     "ο": {
         "lemma": "ὁ",
+        "root": "ὁ",
         "part_of_speech": "article",
         "parsing": "nominative masculine singular article",
         "grammar": "Definite article agreeing with a masculine singular noun.",
@@ -119,6 +134,7 @@ _GREEK_LEXICON = {
     },
     "η": {
         "lemma": "ὁ",
+        "root": "ὁ",
         "part_of_speech": "article",
         "parsing": "nominative feminine singular article",
         "grammar": "Definite article agreeing with a feminine singular noun.",
@@ -126,6 +142,7 @@ _GREEK_LEXICON = {
     },
     "το": {
         "lemma": "ὁ",
+        "root": "ὁ",
         "part_of_speech": "article",
         "parsing": "nominative/accusative neuter singular article",
         "grammar": "Definite article agreeing with a neuter singular noun.",
@@ -133,6 +150,7 @@ _GREEK_LEXICON = {
     },
     "του": {
         "lemma": "ὁ",
+        "root": "ὁ",
         "part_of_speech": "article",
         "parsing": "genitive masculine/neuter singular article",
         "grammar": "Definite article in a possessive/descriptive case form.",
@@ -140,6 +158,7 @@ _GREEK_LEXICON = {
     },
     "τον": {
         "lemma": "ὁ",
+        "root": "ὁ",
         "part_of_speech": "article",
         "parsing": "accusative masculine singular article",
         "grammar": "Definite article agreeing with an accusative masculine singular noun.",
@@ -147,12 +166,15 @@ _GREEK_LEXICON = {
     },
     "τω": {
         "lemma": "ὁ",
+        "root": "ὁ",
         "part_of_speech": "article",
         "parsing": "dative masculine/neuter singular article",
         "grammar": "Definite article in an indirect-object/location case form.",
         "definition": "to/for/in the",
     },
 }
+
+_GREEK_FORM_REFS = None
 
 
 def _without_marks(text: str) -> str:
@@ -166,6 +188,10 @@ def _hebrew_key(word: str) -> str:
 
 def _greek_key(word: str) -> str:
     return "".join(ch for ch in _without_marks(word) if "\u0370" <= ch <= "\u03ff")
+
+
+def _display_root(value: str, fallback: str) -> str:
+    return value or fallback
 
 
 def _hebrew_fallback(word: str) -> dict:
@@ -184,6 +210,7 @@ def _hebrew_fallback(word: str) -> dict:
     number = "plural" if key.endswith(("ים", "ות")) else ""
     return {
         "lemma": key,
+        "root": _display_root(_strip_hebrew_prefixes(key), key),
         "part_of_speech": "unknown",
         "parsing": ", ".join(prefixes + ([number] if number else [])) or "not parsed",
         "grammar": "Rule-based Hebrew hint; add a morphology dataset for full parsing.",
@@ -203,6 +230,7 @@ def _greek_fallback(word: str) -> dict:
         pos, parsing = "unknown", "not parsed"
     return {
         "lemma": key,
+        "root": key,
         "part_of_speech": pos,
         "parsing": parsing,
         "grammar": "Rule-based Greek hint; add a morphology dataset for full parsing.",
@@ -210,15 +238,68 @@ def _greek_fallback(word: str) -> dict:
     }
 
 
-def _apply_transliteration(items: list[dict], transliteration: str | None) -> None:
-    parts = (transliteration or "").split()
-    if len(parts) != len(items):
-        return
-    for item, trans in zip(items, parts):
-        item["transliteration"] = trans
+def _strip_hebrew_prefixes(key: str) -> str:
+    while len(key) > 3 and key[:1] in {"ו", "ב", "ל", "כ", "מ", "ה"}:
+        key = key[1:]
+    return key
 
 
-def analyze_text(lang: str, text: str, transliteration: str | None = None) -> list[dict]:
+def _tr_cache_path() -> Path:
+    return Path(__file__).resolve().parent / "data" / "textus_receptus.tsv"
+
+
+def _greek_form_refs() -> dict[str, list[str]]:
+    global _GREEK_FORM_REFS
+    if _GREEK_FORM_REFS is not None:
+        return _GREEK_FORM_REFS
+    refs: dict[str, list[str]] = {}
+    path = _tr_cache_path()
+    if not path.exists():
+        _GREEK_FORM_REFS = refs
+        return refs
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if "\t" not in line:
+                continue
+            ref, verse_text = line.split("\t", 1)
+            seen_in_verse = set()
+            for match in _GREEK_WORD_RE.finditer(verse_text):
+                key = _greek_key(match.group(0))
+                if not key or key in seen_in_verse:
+                    continue
+                seen_in_verse.add(key)
+                refs.setdefault(key, []).append(ref)
+    except Exception:
+        refs = {}
+    _GREEK_FORM_REFS = refs
+    return refs
+
+
+def _same_form_refs(lang: str, key: str, current_ref: str | None, limit: int = 8) -> list[str]:
+    current = (current_ref or "").strip()
+    if lang != "grc":
+        return []
+    candidates = [ref for ref in _greek_form_refs().get(key, []) if ref != current]
+    current_match = re.match(r"^(.+?)\s+(\d+):(\d+)$", current)
+    if current_match:
+        current_book, current_chapter, _ = current_match.groups()
+
+        def sort_key(ref: str) -> tuple[int, int]:
+            match = re.match(r"^(.+?)\s+(\d+):(\d+)$", ref)
+            if not match:
+                return 3, 0
+            book, chapter, verse = match.groups()
+            if book == current_book and chapter == current_chapter:
+                return 0, abs(int(verse) - int(current_match.group(3)))
+            if book == current_book:
+                return 1, abs(int(chapter) - int(current_chapter))
+            return 2, 0
+
+        candidates = sorted(candidates, key=sort_key)
+    return candidates[:limit]
+
+
+def analyze_text(lang: str, text: str, current_ref: str | None = None) -> list[dict]:
     if lang == "he":
         regex, key_fn, lexicon, fallback = (
             _HEBREW_WORD_RE, _hebrew_key, _HEBREW_LEXICON, _hebrew_fallback)
@@ -236,7 +317,7 @@ def analyze_text(lang: str, text: str, transliteration: str | None = None) -> li
             continue
         data = dict(lexicon.get(key) or fallback(surface))
         data["surface"] = surface
-        data.setdefault("transliteration", "")
+        data.setdefault("root", data.get("lemma") or key)
+        data["same_form_refs"] = _same_form_refs(lang, key, current_ref)
         items.append(data)
-    _apply_transliteration(items, transliteration)
     return items

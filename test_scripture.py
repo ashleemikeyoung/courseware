@@ -31,11 +31,13 @@ def test_terminal_renderer_keeps_transliteration_below_original():
 
 
 def test_morphology_analyzes_seed_lexicon_words():
-    items = morphology.analyze_text("grc", "Λόγος", transliteration="logos")
+    items = morphology.analyze_text("grc", "Λόγος", current_ref="John 1:1")
 
     assert items[0]["lemma"] == "λόγος"
+    assert items[0]["root"] == "λεγ"
     assert items[0]["part_of_speech"] == "noun"
-    assert items[0]["transliteration"] == "logos"
+    assert "transliteration" not in items[0]
+    assert "same_form_refs" in items[0]
 
 
 def test_enrich_scripture_morphology_adds_missing_lines():
@@ -51,3 +53,11 @@ def test_enrich_scripture_morphology_adds_missing_lines():
     assert "TRANS: en archē ēn ho logos" in enriched
     assert "MORPH:" in enriched
     assert '"lemma":"λόγος"' in enriched
+    assert '"root":"λεγ"' in enriched
+    assert '"transliteration"' not in enriched
+
+
+def test_morphology_includes_other_same_form_refs():
+    items = morphology.analyze_text("grc", "Λόγος", current_ref="John 1:1")
+
+    assert "John 1:14" in items[0]["same_form_refs"]

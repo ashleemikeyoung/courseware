@@ -548,7 +548,7 @@ def _render_scripture_block(ref: str, translation: str, lang: str,
             translit = ""
         if translit:
             lines.append(f"TRANS: {translit}")
-        morph = morphology.analyze_text(lang, orig_text, transliteration=translit)
+        morph = morphology.analyze_text(lang, orig_text, current_ref=ref)
         if morph:
             lines.append(
                 "MORPH: " + json.dumps(morph, ensure_ascii=False, separators=(",", ":"))
@@ -655,7 +655,7 @@ def enrich_scripture_morphology(text: str) -> str:
             elif lang == "grc":
                 trans = transliterate_greek(orig)
         if orig and not morph:
-            items = morphology.analyze_text(lang, orig, transliteration=trans)
+            items = morphology.analyze_text(lang, orig, current_ref=current["ref"])
             if items:
                 morph = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
         out.append(current["start"])
@@ -692,6 +692,7 @@ def enrich_scripture_morphology(text: str) -> str:
             block = {
                 "start": raw,
                 "end": "",
+                "ref": start_match.group(1),
                 "lang": start_match.group(3),
                 "body": [],
                 "orig": "",

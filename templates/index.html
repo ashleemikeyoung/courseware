@@ -1586,11 +1586,14 @@ function scriptureMorphItems(s){
 function morphTooltip(item){
   const lines = [];
   if (item.lemma) lines.push(`Lemma: ${item.lemma}`);
-  if (item.transliteration) lines.push(`Translit: ${item.transliteration}`);
+  if (item.root) lines.push(`Root: ${item.root}`);
   if (item.part_of_speech) lines.push(`Part of speech: ${item.part_of_speech}`);
   if (item.parsing) lines.push(`Parsing: ${item.parsing}`);
   if (item.definition) lines.push(`Definition: ${item.definition}`);
   if (item.grammar) lines.push(`Grammar: ${item.grammar}`);
+  if (Array.isArray(item.same_form_refs) && item.same_form_refs.length) {
+    lines.push(`Same form: ${item.same_form_refs.join(", ")}`);
+  }
   return lines.join("\n");
 }
 
