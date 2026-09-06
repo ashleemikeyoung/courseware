@@ -1870,7 +1870,7 @@ function morphPanelHtml(item, frozen){
       `<button type="button" class="morph-ref" data-ref="${escAttr(ref)}">${esc(ref)}</button>`
     ).join("") + `</div>`;
   }
-  html += `<div class="morph-hint">${frozen ? "Frozen" : "Press F to freeze"} · Esc closes</div>`;
+  html += `<div class="morph-hint">${frozen ? "Frozen · F unfreezes" : "Press F to freeze"} · Esc closes</div>`;
   return html;
 }
 
@@ -1926,14 +1926,18 @@ document.addEventListener("focusout", e => {
 });
 document.addEventListener("keydown", e => {
   const typing = e.target.closest("input, textarea, select") || e.target.isContentEditable;
-  if (typing) return;
-  if ((e.key || "").toLowerCase() === "f" && STATE.morph.anchor) {
+  const key = e.key || "";
+  const morphOpen = !!(STATE.morph.anchor && STATE.morph.panel
+    && STATE.morph.panel.classList.contains("open"));
+  if (typing && !(morphOpen && key.toLowerCase() === "f")) return;
+  if (key.toLowerCase() === "f" && morphOpen && !e.metaKey && !e.ctrlKey && !e.altKey) {
     e.preventDefault();
+    e.stopPropagation();
     showMorphPanel(STATE.morph.anchor, !STATE.morph.frozen);
-  } else if (e.key === "Escape") {
+  } else if (key === "Escape") {
     hideMorphPanel(true);
   }
-});
+}, true);
 
 /* Shared by the document galley and the chat galley: clicking any [Cn] marker
    inside containerEl slides its source into marginEl.glosses. One definition
