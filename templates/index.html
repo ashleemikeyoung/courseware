@@ -805,11 +805,6 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
       <input type="checkbox" id="externalSearchAskToggle">
       <span>Search the web too</span>
     </label>
-    <label class="toggle">
-      <input type="checkbox" id="contextToggle">
-      <span>Show source context</span>
-    </label>
-    <select id="askModel" title="Model"></select>
     <select id="askConversationSelect" title="Saved conversations"></select>
     <button class="btn ghost small" id="btnMoveConversation" title="Move to a different project" style="display:none">Move to project</button>
     <button class="btn ghost small" id="btnNewChat">New conversation</button>
@@ -987,6 +982,18 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     </div>
 
     <div>
+      <div class="slab" style="margin-bottom:18px">
+        <p class="eyebrow" style="margin-bottom:12px">Ask preferences</p>
+        <div class="field" style="margin-bottom:12px">
+          <label for="askModel">Response model</label>
+          <select id="askModel" title="Model"></select>
+        </div>
+        <label class="toggle" style="margin-bottom:4px">
+          <input type="checkbox" id="contextToggle">
+          <span>Show source context</span>
+        </label>
+      </div>
+
       <div class="slab" style="margin-bottom:18px">
         <p class="eyebrow" style="margin-bottom:12px">Add or edit</p>
         <div class="field"><label for="critType">Type</label>
