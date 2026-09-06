@@ -342,6 +342,12 @@ def _tr_chapter_verse_count(book: str, chapter: int) -> int:
 # named), rather than a hard error.
 # ---------------------------------------------------------------------------
 BIBLE_COMMAND_RE = re.compile(r"^\s*/bible\b\s*(.*)$", re.IGNORECASE | re.DOTALL)
+SCRIPTURE_MODE_EXIT_RE = re.compile(
+    r"^\s*(?:/bible\s+(?:off|exit|stop|done)|/exit\s+bible|"
+    r"/scripture\s+(?:off|exit|stop|done)|exit\s+bible\s+mode|"
+    r"leave\s+bible\s+mode|stop\s+bible\s+mode)\s*$",
+    re.IGNORECASE,
+)
 
 
 def _is_bible_command(question: str) -> bool:
@@ -351,6 +357,47 @@ def _is_bible_command(question: str) -> bool:
 def _bible_command_query(question: str) -> str:
     m = BIBLE_COMMAND_RE.match(question or "")
     return (m.group(1) if m else "").strip()
+
+
+def is_scripture_mode_exit(question: str) -> bool:
+    return bool(SCRIPTURE_MODE_EXIT_RE.match(question or ""))
+
+
+def scripture_mode_active(messages: list) -> bool:
+    active = False
+    for message in messages or []:
+        if message.get("role") != "user":
+            continue
+        content = message.get("content") or ""
+        if is_scripture_mode_exit(content):
+            active = False
+        elif _is_bible_command(content):
+            active = True
+    return active
+
+
+def scripture_mode_exit_response() -> dict:
+    return {
+        "text": "Bible mode is off. I’ll treat the next request normally.",
+        "evidence": {}, "grounded": False, "passages_offered": 0,
+        "metrics": {"route": "bible_command", "found": False, "scripture_mode": False},
+    }
+
+
+def scripture_mode_entry_response() -> dict:
+    return {
+        "text": (
+            "Bible mode is on. Send references like `Genesis 1:1` or "
+            "`John 3:16` without typing `/bible` each time. Use `/bible off` "
+            "or `/exit bible` to leave Bible mode."
+        ),
+        "evidence": {}, "grounded": False, "passages_offered": 0,
+        "metrics": {"route": "bible_command", "found": False, "scripture_mode": True},
+    }
+
+
+def scripture_mode_question(question: str) -> str:
+    return question if _is_bible_command(question) else f"/bible {question or ''}".strip()
 
 
 # ---------------------------------------------------------------------------
@@ -885,15 +932,10 @@ def _answer_bible_command(question: str) -> dict:
     if not _is_bible_command(question):
         return None
     query = _bible_command_query(question)
+    if query.lower() in {"off", "exit", "stop", "done"}:
+        return scripture_mode_exit_response()
     if not query:
-        return {
-            "text": (
-                "Give me a reference after /bible, for example "
-                "`/bible Genesis 1:1` or `/bible John 3:16`."
-            ),
-            "evidence": {}, "grounded": False, "passages_offered": 0,
-            "metrics": {"route": "bible_command", "found": False},
-        }
+        return scripture_mode_entry_response()
 
     translation = _configured_bible_translation()
     blocks = []
@@ -1010,7 +1052,10 @@ def _answer_bible_command(question: str) -> dict:
     return {
         "text": "\n\n".join(blocks),
         "evidence": {}, "grounded": True, "passages_offered": len(blocks),
-        "metrics": {"route": "bible_command", "found": True, "count": len(blocks)},
+        "metrics": {
+            "route": "bible_command", "found": True, "count": len(blocks),
+            "scripture_mode": True,
+        },
     }
 
 
@@ -1153,6 +1198,10 @@ __all__ = [
     "enrich_scripture_morphology",
     "has_scripture_evidence",
     "render_scripture_for_terminal",
+    "is_scripture_mode_exit",
+    "scripture_mode_active",
+    "scripture_mode_exit_response",
+    "scripture_mode_question",
     "scripture_evidence",
     "transliterate_greek",
     "transliterate_hebrew",

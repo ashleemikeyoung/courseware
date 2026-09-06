@@ -44,7 +44,8 @@ import redactor
 import summarize
 from scripture import (
     answer_bible_command, enrich_scripture_morphology, has_scripture_evidence,
-    render_scripture_for_terminal, scripture_evidence,
+    is_scripture_mode_exit, render_scripture_for_terminal, scripture_evidence,
+    scripture_mode_active, scripture_mode_exit_response, scripture_mode_question,
 )
 
 # writer.py's import above already inserts memory/ onto sys.path (see its
@@ -3457,11 +3458,21 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             coder_action, last_user, plan, project=scope,
             improvements=["routed_explicit_coder_request_to_local_code_writer"])
 
-    bible_action = answer_bible_command(last_user)
+    in_scripture_mode = scripture_mode_active(messages[:-1])
+    if is_scripture_mode_exit(last_user):
+        return _quality_finish(
+            scripture_mode_exit_response(), last_user, plan, project=scope,
+            improvements=["exited_scripture_mode"])
+
+    bible_action = answer_bible_command(
+        scripture_mode_question(last_user) if in_scripture_mode else last_user)
     if bible_action:
         return _quality_finish(
             bible_action, last_user, plan, project=scope,
-            improvements=["answered_explicit_bible_command"])
+            improvements=[
+                "answered_in_scripture_mode" if in_scripture_mode
+                else "answered_explicit_bible_command"
+            ])
 
     if ground and last_user.strip():
         redaction = _answer_redaction_request(last_user, project=scope)

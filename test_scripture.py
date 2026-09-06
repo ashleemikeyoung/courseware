@@ -61,3 +61,26 @@ def test_morphology_includes_other_same_form_refs():
     items = morphology.analyze_text("grc", "Λόγος", current_ref="John 1:1")
 
     assert "John 1:14" in items[0]["same_form_refs"]
+
+
+def test_scripture_mode_tracks_user_history():
+    messages = [
+        {"role": "user", "content": "/bible Genesis 1:1"},
+        {"role": "assistant", "content": "..."},
+    ]
+    assert scripture.scripture_mode_active(messages)
+
+    messages.append({"role": "user", "content": "/bible off"})
+    assert not scripture.scripture_mode_active(messages)
+
+
+def test_bible_command_without_query_enters_mode():
+    result = scripture.answer_bible_command("/bible")
+
+    assert result["metrics"]["scripture_mode"] is True
+    assert "Bible mode is on" in result["text"]
+
+
+def test_scripture_mode_question_prefixes_plain_reference():
+    assert scripture.scripture_mode_question("John 3:16") == "/bible John 3:16"
+    assert scripture.scripture_mode_question("/bible John 3:16") == "/bible John 3:16"
