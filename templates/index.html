@@ -547,6 +547,10 @@ textarea{resize:vertical;min-height:74px}
   display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;padding-top:8px;
   border-top:1px solid rgba(255,255,255,.18);
 }
+.morph-popover .morph-action-label{
+  flex:0 0 100%;margin-top:2px;color:rgba(255,255,255,.72);
+  font-size:11px;text-transform:uppercase;
+}
 .morph-popover .morph-ref{
   border:1px solid rgba(255,255,255,.24);background:rgba(255,255,255,.08);
   color:var(--paper);border-radius:4px;padding:2px 6px;
@@ -1702,6 +1706,9 @@ function morphTooltip(item){
   if (Array.isArray(item.same_form_refs) && item.same_form_refs.length) {
     lines.push(`Same form: ${item.same_form_refs.join(", ")}`);
   }
+  if (Array.isArray(item.same_root_refs) && item.same_root_refs.length) {
+    lines.push(`Same root: ${item.same_root_refs.join(", ")}`);
+  }
   return lines.join("\n");
 }
 
@@ -1864,11 +1871,23 @@ function morphPanelHtml(item, frozen){
   let html = rows.map(([label, value]) =>
     `<div class="morph-line"><strong>${esc(label)}:</strong> ${esc(value)}</div>`
   ).join("");
-  const refs = Array.isArray(item.same_form_refs) ? item.same_form_refs : [];
-  if (refs.length) {
-    html += `<div class="morph-actions">` + refs.map(ref =>
-      `<button type="button" class="morph-ref" data-ref="${escAttr(ref)}">${esc(ref)}</button>`
-    ).join("") + `</div>`;
+  const formRefs = Array.isArray(item.same_form_refs) ? item.same_form_refs : [];
+  const rootRefs = Array.isArray(item.same_root_refs) ? item.same_root_refs : [];
+  if (formRefs.length || rootRefs.length) {
+    html += `<div class="morph-actions">`;
+    if (formRefs.length) {
+      html += `<div class="morph-action-label">Same form</div>`;
+      html += formRefs.map(ref =>
+        `<button type="button" class="morph-ref" data-ref="${escAttr(ref)}">${esc(ref)}</button>`
+      ).join("");
+    }
+    if (rootRefs.length) {
+      html += `<div class="morph-action-label">Same root</div>`;
+      html += rootRefs.map(ref =>
+        `<button type="button" class="morph-ref" data-ref="${escAttr(ref)}">${esc(ref)}</button>`
+      ).join("");
+    }
+    html += `</div>`;
   }
   html += `<div class="morph-hint">${frozen ? "Frozen · F unfreezes" : "Press F to freeze"} · Esc closes</div>`;
   return html;

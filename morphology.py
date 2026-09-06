@@ -73,6 +73,14 @@ _HEBREW_LEXICON = {
         "grammar": "The prefix ה marks definiteness.",
         "definition": "earth, land",
     },
+    "קבץ": {
+        "lemma": "קבץ",
+        "root": "קבץ",
+        "part_of_speech": "verb",
+        "parsing": "qal verb root; exact inflection depends on the surface form",
+        "grammar": "A gathering/assembling verb used for collecting people or things.",
+        "definition": "to gather, collect, assemble",
+    },
 }
 
 _GREEK_LEXICON = {
@@ -184,6 +192,7 @@ _GREEK_LEXICON = {
 
 _GREEK_FORM_REFS = None
 _HEBREW_FORM_REFS = None
+_HEBREW_ROOT_REFS = None
 
 
 def _without_marks(text: str) -> str:
@@ -230,6 +239,16 @@ def _hebrew_fallback(word: str) -> dict:
     if key[:1] in prefix_names and len(key) > 2:
         prefixes.append(prefix_names[key[0]])
     number = "plural" if key.endswith(("ים", "ות")) else ""
+    root_hint = _hebrew_root_hint(key)
+    if root_hint:
+        return {
+            "lemma": root_hint,
+            "root": root_hint,
+            "part_of_speech": "verb",
+            "parsing": ", ".join(prefixes + ["verb form; exact inflection not fully resolved"]),
+            "grammar": "Rule-based Hebrew root hint for qavats/qabats.",
+            "definition": "to gather, collect, assemble",
+        }
     return {
         "lemma": key,
         "root": _display_root(_strip_hebrew_prefixes(key), key),
@@ -274,6 +293,10 @@ def _hebrew_cache_path() -> Path:
     return Path(__file__).resolve().parent / "data" / "hebrew_bible.tsv"
 
 
+def _hebrew_root_refs_path() -> Path:
+    return Path(__file__).resolve().parent / "data" / "hebrew_root_refs.tsv"
+
+
 def _verse_form_refs(path: Path, word_re: re.Pattern, key_fn) -> dict[str, list[str]]:
     refs: dict[str, list[str]] = {}
     if not path.exists():
@@ -295,6 +318,30 @@ def _verse_form_refs(path: Path, word_re: re.Pattern, key_fn) -> dict[str, list[
     return refs
 
 
+def _hebrew_root_refs() -> dict[str, list[str]]:
+    global _HEBREW_ROOT_REFS
+    if _HEBREW_ROOT_REFS is not None:
+        return _HEBREW_ROOT_REFS
+    refs: dict[str, list[str]] = {}
+    path = _hebrew_root_refs_path()
+    if not path.exists():
+        _HEBREW_ROOT_REFS = refs
+        return refs
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            parts = line.split("\t", 3)
+            if len(parts) != 4:
+                continue
+            root, _transliteration, _definition, refs_text = parts
+            key = _hebrew_key(root)
+            if key:
+                refs[key] = [ref.strip() for ref in refs_text.split(",") if ref.strip()]
+    except Exception:
+        refs = {}
+    _HEBREW_ROOT_REFS = refs
+    return refs
+
+
 def _hebrew_form_refs() -> dict[str, list[str]]:
     global _HEBREW_FORM_REFS
     if _HEBREW_FORM_REFS is not None:
@@ -312,32 +359,49 @@ def _greek_form_refs() -> dict[str, list[str]]:
     return _GREEK_FORM_REFS
 
 
-def _same_form_refs(lang: str, key: str, current_ref: str | None, limit: int = 8) -> list[str]:
+def _sort_refs_near_current(refs: list[str], current_ref: str | None) -> list[str]:
     current = (current_ref or "").strip()
+    candidates = [ref for ref in refs if ref != current]
+    current_match = re.match(r"^(.+?)\s+(\d+):(\d+)$", current)
+    if not current_match:
+        return candidates
+    current_book, current_chapter, _ = current_match.groups()
+
+    def sort_key(ref: str) -> tuple[int, int]:
+        match = re.match(r"^(.+?)\s+(\d+):(\d+)$", ref)
+        if not match:
+            return 3, 0
+        book, chapter, verse = match.groups()
+        if book == current_book and chapter == current_chapter:
+            return 0, abs(int(verse) - int(current_match.group(3)))
+        if book == current_book:
+            return 1, abs(int(chapter) - int(current_chapter))
+        return 2, 0
+
+    return sorted(candidates, key=sort_key)
+
+
+def _same_form_refs(lang: str, key: str, current_ref: str | None, limit: int = 8) -> list[str]:
     if lang == "he":
         form_refs = _hebrew_form_refs()
     elif lang == "grc":
         form_refs = _greek_form_refs()
     else:
         return []
-    candidates = [ref for ref in form_refs.get(key, []) if ref != current]
-    current_match = re.match(r"^(.+?)\s+(\d+):(\d+)$", current)
-    if current_match:
-        current_book, current_chapter, _ = current_match.groups()
+    return _sort_refs_near_current(form_refs.get(key, []), current_ref)[:limit]
 
-        def sort_key(ref: str) -> tuple[int, int]:
-            match = re.match(r"^(.+?)\s+(\d+):(\d+)$", ref)
-            if not match:
-                return 3, 0
-            book, chapter, verse = match.groups()
-            if book == current_book and chapter == current_chapter:
-                return 0, abs(int(verse) - int(current_match.group(3)))
-            if book == current_book:
-                return 1, abs(int(chapter) - int(current_chapter))
-            return 2, 0
 
-        candidates = sorted(candidates, key=sort_key)
-    return candidates[:limit]
+def _same_root_refs(lang: str, root: str, current_ref: str | None, limit: int = 12) -> list[str]:
+    if lang != "he":
+        return []
+    refs = _hebrew_root_refs().get(_hebrew_key(root), [])
+    return _sort_refs_near_current(refs, current_ref)[:limit]
+
+
+def _hebrew_root_hint(key: str) -> str:
+    if "קבצ" in key or "קבץ" in key:
+        return "קבץ"
+    return ""
 
 
 def analyze_text(lang: str, text: str, current_ref: str | None = None) -> list[dict]:
@@ -360,5 +424,6 @@ def analyze_text(lang: str, text: str, current_ref: str | None = None) -> list[d
         data["surface"] = surface
         data.setdefault("root", data.get("lemma") or key)
         data["same_form_refs"] = _same_form_refs(lang, key, current_ref)
+        data["same_root_refs"] = _same_root_refs(lang, data.get("root", ""), current_ref)
         items.append(data)
     return items

@@ -100,6 +100,24 @@ def test_hebrew_morphology_splits_maqaf_forms_for_same_form_refs():
     assert "Genesis 1:1" in items[0]["same_form_refs"]
 
 
+def test_hebrew_qavats_root_refs_are_complete():
+    refs = morphology._hebrew_root_refs()["קבץ"]
+
+    assert len(refs) == 121
+    assert refs[0] == "Genesis 41:35"
+    assert refs[-1] == "Zechariah 10:10"
+
+
+def test_hebrew_qavats_forms_get_same_root_refs():
+    items = morphology.analyze_text("he", "קִבְצוּ", current_ref="1 Samuel 7:5")
+
+    assert items[0]["lemma"] == "קבץ"
+    assert items[0]["root"] == "קבץ"
+    assert items[0]["part_of_speech"] == "verb"
+    assert "Genesis 41:35" in items[0]["same_root_refs"]
+    assert "1 Samuel 7:5" not in items[0]["same_root_refs"]
+
+
 def test_scripture_mode_tracks_user_history():
     messages = [
         {"role": "user", "content": "/bible Genesis 1:1"},
