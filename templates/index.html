@@ -805,8 +805,6 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
       <input type="checkbox" id="externalSearchAskToggle">
       <span>Search the web too</span>
     </label>
-    <select id="askConversationSelect" title="Saved conversations"></select>
-    <button class="btn ghost small" id="btnMoveConversation" title="Move to a different project" style="display:none">Move to project</button>
     <button class="btn ghost small" id="btnNewChat">New conversation</button>
     <button class="btn ghost small" id="btnClearChat">Clear conversation</button>
   </div>
@@ -824,7 +822,6 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
   <div class="composer">
     <textarea id="askInput" rows="1"
       placeholder="Ask about your documents, or anything else. Shift+Enter for a new line."></textarea>
-    <select id="askHistory" title="Previous prompts"></select>
     <button class="btn" id="btnAsk">Send</button>
   </div>
   </div></div>
@@ -2230,9 +2227,11 @@ async function loadAskConversation(){
 
 async function loadAskConversationList(){
   const sel = $("#askConversationSelect");
-  if (!sel || !STATE.project) return;
-  sel.innerHTML = "";
-  sel.appendChild(el("option", "", "Current conversation"));
+  if (!STATE.project) return;
+  if (sel) {
+    sel.innerHTML = "";
+    sel.appendChild(el("option", "", "Current conversation"));
+  }
   try {
     const saved = await (await fetch(qp("/api/ask/conversations"))).json();
     STATE.chat.conversations = Array.isArray(saved.conversations)
@@ -2240,14 +2239,16 @@ async function loadAskConversationList(){
   } catch(e){
     STATE.chat.conversations = [];
   }
-  STATE.chat.conversations.forEach(c => {
-    const title = c.title || "Untitled conversation";
-    const date = (c.archived_at || "").slice(0, 10);
-    const option = el("option", "", date ? `${title} (${date})` : title);
-    option.value = String(c.id);
-    sel.appendChild(option);
-  });
-  sel.value = "";
+  if (sel) {
+    STATE.chat.conversations.forEach(c => {
+      const title = c.title || "Untitled conversation";
+      const date = (c.archived_at || "").slice(0, 10);
+      const option = el("option", "", date ? `${title} (${date})` : title);
+      option.value = String(c.id);
+      sel.appendChild(option);
+    });
+    sel.value = "";
+  }
   loadSidebarChats();
 }
 
@@ -2742,17 +2743,6 @@ $("#askInput").addEventListener("keydown", e => {
   }
 });
 $("#btnAsk").onclick = sendAsk;
-$("#askHistory").onchange = e => {
-  const idx = Number(e.target.value);
-  if (!Number.isInteger(idx) || !STATE.chat.history[idx]) return;
-  const input = $("#askInput");
-  input.value = STATE.chat.history[idx];
-  STATE.chat.histPos = idx;
-  autoResize(input);
-  input.focus();
-  input.selectionStart = input.selectionEnd = input.value.length;
-  e.target.value = "";
-};
 $("#btnClearChat").onclick = () => {
   if (STATE.chat.messages.length && !confirm("Delete this conversation from the current slot? Use New conversation to save it first.")) return;
   clearAskState();
@@ -2762,39 +2752,6 @@ $("#btnClearChat").onclick = () => {
 $("#btnNewChat").onclick = async () => {
   if (STATE.chat.busy) return;
   await newAskConversation();
-};
-$("#askConversationSelect").onchange = async e => {
-  const id = e.target.value;
-  $("#btnMoveConversation").style.display = id ? "" : "none";
-  if (!id) return;
-  if (STATE.chat.messages.length && !confirm("Load this saved conversation into the current chat?")) {
-    e.target.value = "";
-    $("#btnMoveConversation").style.display = "none";
-    return;
-  }
-  await restoreAskConversation(id);
-};
-$("#btnMoveConversation").onclick = async () => {
-  const id = $("#askConversationSelect").value;
-  if (!id) return;
-  const names = (STATE.projects || []).map(p => p.name).filter(n => n !== STATE.project);
-  if (!names.length) return toast("No other projects to move it to");
-  const target = prompt(`Move this conversation to which project?\n\n${names.join(", ")}`);
-  if (!target) return;
-  if (!names.includes(target)) return toast("Not a recognized project name");
-  try {
-    const r = await (await fetch(`/api/ask/conversations/${id}/move`, {
-      method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({project: target}),
-    })).json();
-    if (r.error) return toast(r.error);
-    toast(`Moved to ${target}`);
-    $("#askConversationSelect").value = "";
-    $("#btnMoveConversation").style.display = "none";
-    await loadAskConversationList();
-  } catch(e){
-    toast("Could not move that conversation");
-  }
 };
 $("#contextToggle").onchange = e => {
   STATE.showContext = e.target.checked;
