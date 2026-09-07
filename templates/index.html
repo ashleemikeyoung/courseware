@@ -480,13 +480,23 @@ textarea{resize:vertical;min-height:74px}
 .chatmsg .bubble.bibliography hr{
   border:0;border-top:1px solid var(--rule);margin:1.35em 0;
 }
-.chatmsg .bubble.pending::after{
-  content:"";display:inline-block;width:.5em;height:1em;margin-left:2px;
-  background:var(--ink-faint);vertical-align:text-bottom;
-  animation:blink 1s step-end infinite;
+.chatmsg .bubble.pending{white-space:normal}
+.run-progress{
+  display:grid;gap:8px;max-width:360px;color:var(--ink-faint);
+  font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;
 }
-@keyframes blink{50%{opacity:0}}
-@media (prefers-reduced-motion:reduce){.chatmsg .bubble.pending::after{animation:none}}
+.run-progress .track{
+  height:4px;overflow:hidden;border-radius:999px;background:var(--rule);
+}
+.run-progress .bar{
+  width:38%;height:100%;border-radius:inherit;background:var(--blue);
+  animation:progress-sweep 1.15s ease-in-out infinite;
+}
+@keyframes progress-sweep{
+  0%{transform:translateX(-110%)}
+  100%{transform:translateX(270%)}
+}
+@media (prefers-reduced-motion:reduce){.run-progress .bar{animation:none;width:100%}}
 .chatmsg .sources{margin-top:.6em}
 .chatmsg .sources.hidden{display:none}
 .active-requirements{
@@ -2565,9 +2575,13 @@ function chatBubble(m, index){
   const bubble = el("div", "bubble" + (m.pending ? " pending" : ""));
   bubble.classList.toggle("bibliography",
     m.role === "assistant" && isAnnotatedBibliography(m.content || ""));
-  bubble.innerHTML = m.role === "user"
-    ? esc(m.content).replace(/\n/g, "<br>")
-    : mdToHtml(m.content || "", {showCitations: STATE.showContext});
+  if (m.role === "user") {
+    bubble.innerHTML = esc(m.content).replace(/\n/g, "<br>");
+  } else if (m.pending && !(m.content || "").trim()) {
+    bubble.innerHTML = runningIndicatorHtml();
+  } else {
+    bubble.innerHTML = mdToHtml(m.content || "", {showCitations: STATE.showContext});
+  }
   if (m.role === "assistant" && m.showAttachments && m.attachments && m.attachments.length)
     bubble.appendChild(renderMailAttachments(m.attachments));
   box.appendChild(bubble);
@@ -2576,6 +2590,11 @@ function chatBubble(m, index){
   if (m.role === "assistant" && !m.pending && m.turn_id)
     box.appendChild(feedbackControls(m, index));
   return box;
+}
+
+function runningIndicatorHtml(){
+  return '<div class="run-progress" role="status" aria-live="polite">' +
+    '<span>Working</span><div class="track"><div class="bar"></div></div></div>';
 }
 
 /* Thumbs for training data, not just a reaction emoji. A click writes
