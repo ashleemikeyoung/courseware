@@ -118,6 +118,22 @@ def test_hebrew_qavats_forms_get_same_root_refs():
     assert "1 Samuel 7:5" not in items[0]["same_root_refs"]
 
 
+def test_hebrew_fallback_classifies_common_old_testament_forms():
+    items = morphology.analyze_text(
+        "he",
+        "וַיֹּאמֶר יְהוָה אֶל־אַבְרָם לְךָ מֵאַרְצְךָ",
+        current_ref="Genesis 12:1",
+    )
+
+    by_surface = {item["surface"]: item for item in items}
+    assert by_surface["וַיֹּאמֶר"]["part_of_speech"] == "verb"
+    assert by_surface["יְהוָה"]["part_of_speech"] == "proper noun"
+    assert by_surface["אֶל"]["part_of_speech"] == "preposition"
+    assert by_surface["אַבְרָם"]["part_of_speech"] == "proper noun"
+    assert by_surface["לְךָ"]["part_of_speech"] == "preposition/pronoun"
+    assert by_surface["מֵאַרְצְךָ"]["part_of_speech"] == "noun"
+
+
 def test_scripture_mode_tracks_user_history():
     messages = [
         {"role": "user", "content": "/bible Genesis 1:1"},

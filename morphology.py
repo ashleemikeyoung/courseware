@@ -17,6 +17,54 @@ _HEBREW_WORD_RE = re.compile(r"[\u05d0-\u05ea][\u0591-\u05bd\u05bf-\u05c7\u05d0-
 _GREEK_WORD_RE = re.compile(r"[\u0370-\u03ff\u1f00-\u1fff]+")
 
 _HEBREW_LEXICON = {
+    "יהוה": {
+        "lemma": "יהוה",
+        "root": "יהוה",
+        "part_of_speech": "proper noun",
+        "parsing": "divine name",
+        "grammar": "A proper name for Israel's God.",
+        "definition": "the LORD, Yahweh",
+    },
+    "אל": {
+        "lemma": "אל",
+        "root": "אל",
+        "part_of_speech": "preposition",
+        "parsing": "preposition",
+        "grammar": "Marks direction, relation, or address.",
+        "definition": "to, toward, unto",
+    },
+    "על": {
+        "lemma": "על",
+        "root": "על",
+        "part_of_speech": "preposition",
+        "parsing": "preposition",
+        "grammar": "Marks position, relation, or basis.",
+        "definition": "on, upon, over, concerning",
+    },
+    "מן": {
+        "lemma": "מן",
+        "root": "מן",
+        "part_of_speech": "preposition",
+        "parsing": "preposition",
+        "grammar": "Marks source, separation, or comparison.",
+        "definition": "from, out of, than",
+    },
+    "לא": {
+        "lemma": "לא",
+        "root": "לא",
+        "part_of_speech": "particle",
+        "parsing": "negative particle",
+        "grammar": "Negates a word, clause, or sentence.",
+        "definition": "not, no",
+    },
+    "אשר": {
+        "lemma": "אשר",
+        "root": "אשר",
+        "part_of_speech": "relative particle",
+        "parsing": "relative particle",
+        "grammar": "Introduces a relative clause.",
+        "definition": "who, which, that",
+    },
     "בראשית": {
         "lemma": "ראשית",
         "root": "ראשׁ",
@@ -212,50 +260,135 @@ def _display_root(value: str, fallback: str) -> str:
     return value or fallback
 
 
+_HEBREW_PREFIX_NAMES = {
+    "ו": "conjunction prefix",
+    "ב": "preposition prefix",
+    "ל": "preposition prefix",
+    "כ": "comparison prefix",
+    "מ": "preposition prefix",
+    "ה": "definite article",
+}
+
+_HEBREW_PROPER_NAMES = {
+    "אברם", "אברהם", "יצחק", "יעקב", "ישראל", "משה", "אהרן", "דוד",
+    "שלמה", "ירמיה", "ירמיהו", "יהודה", "צדקיה", "יהויקים",
+}
+
+_HEBREW_STANDALONE = {
+    "אל": ("preposition", "preposition", "to, toward, unto"),
+    "על": ("preposition", "preposition", "on, upon, over, concerning"),
+    "עם": ("preposition", "preposition", "with, people"),
+    "עד": ("preposition", "preposition", "until, as far as"),
+    "בין": ("preposition", "preposition", "between, among"),
+    "תחת": ("preposition", "preposition", "under, instead of"),
+    "לפני": ("preposition", "compound preposition", "before, in front of"),
+    "אחרי": ("preposition", "compound preposition", "after, behind"),
+    "כי": ("conjunction", "subordinating conjunction", "because, that, for"),
+    "אם": ("conjunction", "conditional particle", "if"),
+    "גם": ("particle", "additive particle", "also, even"),
+    "אך": ("particle", "restrictive particle", "surely, only"),
+    "רק": ("particle", "restrictive particle", "only"),
+    "הנה": ("particle", "presentative particle", "behold"),
+    "אני": ("pronoun", "independent personal pronoun", "I"),
+    "אנכי": ("pronoun", "independent personal pronoun", "I"),
+    "אתה": ("pronoun", "independent personal pronoun", "you"),
+    "אתם": ("pronoun", "independent personal pronoun", "you"),
+    "הוא": ("pronoun", "independent personal pronoun", "he, it"),
+    "היא": ("pronoun", "independent personal pronoun", "she, it"),
+    "הם": ("pronoun", "independent personal pronoun", "they"),
+    "מה": ("interrogative", "interrogative pronoun", "what"),
+    "מי": ("interrogative", "interrogative pronoun", "who"),
+}
+
+
+def _strip_hebrew_suffixes(key: str) -> str:
+    for suffix in ("יכם", "יכן", "יהם", "יהן", "נו", "כם", "כן", "ם", "ן", "ך", "ו", "י", "ה"):
+        if len(key) - len(suffix) >= 3 and key.endswith(suffix):
+            return key[:-len(suffix)]
+    return key
+
+
+def _prefixed_parsing(prefixes: list[str], parsing: str) -> str:
+    parts = prefixes + ([parsing] if parsing else [])
+    return ", ".join(dict.fromkeys(part for part in parts if part)) or "not parsed"
+
+
+def _hebrew_classification(key: str, prefixes: list[str]) -> tuple[str, str, str, str]:
+    bare = _strip_hebrew_prefixes(key)
+    bare = _strip_hebrew_suffixes(bare)
+    root_hint = _hebrew_root_hint(key)
+    if root_hint:
+        return (
+            "verb",
+            _prefixed_parsing(prefixes, "verb form; exact inflection not fully resolved"),
+            root_hint,
+            "to gather, collect, assemble",
+        )
+    if key in _HEBREW_STANDALONE:
+        pos, parsing, definition = _HEBREW_STANDALONE[key]
+        return pos, _prefixed_parsing(prefixes, parsing), key, definition
+    if key in _HEBREW_PROPER_NAMES or bare in _HEBREW_PROPER_NAMES:
+        return "proper noun", _prefixed_parsing(prefixes, "proper name"), bare, ""
+    if key.startswith("וי") and len(key) >= 4:
+        return "verb", _prefixed_parsing(prefixes, "wayyiqtol/narrative verb form"), bare, ""
+    if key.endswith(("תי", "תם", "תן", "נו")) and len(key) >= 4:
+        return "verb", _prefixed_parsing(prefixes, "perfect/suffix verb form"), bare, ""
+    if key.endswith(("ים", "ות")):
+        return "noun/adjective", _prefixed_parsing(prefixes, "plural form"), bare, ""
+    if key.endswith(("ך", "כם", "כן", "ם", "ן", "ו", "י")) and len(key) >= 4:
+        return "noun", _prefixed_parsing(prefixes, "form with pronominal suffix"), bare, ""
+    if key[:1] in {"א", "י", "ת", "נ"} and len(key) >= 4:
+        return "verb", _prefixed_parsing(prefixes, "imperfect/prefix verb form"), bare, ""
+    if key.endswith(("ה", "ת")) and len(key) >= 4:
+        return "noun/adjective", _prefixed_parsing(prefixes, "likely feminine singular form"), bare, ""
+    if prefixes:
+        return "noun/adjective", _prefixed_parsing(prefixes, "nominal form with prefix"), bare, ""
+    return "unclassified", "not parsed", bare or key, ""
+
+
 def _hebrew_fallback(word: str) -> dict:
     key = _hebrew_key(word)
+    if key == "לך":
+        if "ֶ" in word:
+            return {
+                "lemma": "הלך",
+                "root": "הלך",
+                "part_of_speech": "verb",
+                "parsing": "imperative verb form",
+                "grammar": "Pointing distinguishes this from the similar-looking preposition + pronoun.",
+                "definition": "go, walk",
+            }
+        if "ְ" in word and "ָ" in word:
+            return {
+                "lemma": "ל",
+                "root": "ל",
+                "part_of_speech": "preposition/pronoun",
+                "parsing": "preposition with 2nd masculine singular pronominal suffix",
+                "grammar": "The prefix ל marks direction or relation; the suffix points to 'you/yourself'.",
+                "definition": "to you, for yourself",
+            }
     prefixes = []
-    prefix_names = {
-        "ו": "conjunction prefix",
-        "ב": "preposition prefix",
-        "ל": "preposition prefix",
-        "כ": "comparison prefix",
-        "מ": "preposition prefix",
-        "ה": "definite article",
-    }
-    while key and key[:1] in prefix_names and len(key) > 2:
-        prefixes.append(prefix_names[key[0]])
-        stripped = key[1:]
+    stripped_key = key
+    while stripped_key and stripped_key[:1] in _HEBREW_PREFIX_NAMES and len(stripped_key) > 2:
+        prefixes.append(_HEBREW_PREFIX_NAMES[stripped_key[0]])
+        stripped = stripped_key[1:]
         if stripped in _HEBREW_LEXICON:
             base = dict(_HEBREW_LEXICON[stripped])
-            base["parsing"] = ", ".join(prefixes + [base.get("parsing", "")]).strip(", ")
+            base["parsing"] = _prefixed_parsing(prefixes, base.get("parsing", ""))
             if prefixes:
                 prefix_text = "; ".join(prefixes)
                 grammar = base.get("grammar", "")
                 base["grammar"] = f"{prefix_text}. {grammar}".strip()
             return base
-        key = stripped
-    key = _hebrew_key(word)
-    if key[:1] in prefix_names and len(key) > 2:
-        prefixes.append(prefix_names[key[0]])
-    number = "plural" if key.endswith(("ים", "ות")) else ""
-    root_hint = _hebrew_root_hint(key)
-    if root_hint:
-        return {
-            "lemma": root_hint,
-            "root": root_hint,
-            "part_of_speech": "verb",
-            "parsing": ", ".join(prefixes + ["verb form; exact inflection not fully resolved"]),
-            "grammar": "Rule-based Hebrew root hint for qavats/qabats.",
-            "definition": "to gather, collect, assemble",
-        }
+        stripped_key = stripped
+    pos, parsing, root, definition = _hebrew_classification(key, prefixes)
     return {
-        "lemma": key,
-        "root": _display_root(_strip_hebrew_prefixes(key), key),
-        "part_of_speech": "unknown",
-        "parsing": ", ".join(prefixes + ([number] if number else [])) or "not parsed",
+        "lemma": root or key,
+        "root": _display_root(root, key),
+        "part_of_speech": pos,
+        "parsing": parsing,
         "grammar": "Rule-based Hebrew hint; add a morphology dataset for full parsing.",
-        "definition": "",
+        "definition": definition,
     }
 
 
