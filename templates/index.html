@@ -409,6 +409,20 @@ textarea{resize:vertical;min-height:74px}
 .toggle{display:inline-flex;align-items:center;gap:8px;cursor:pointer;
   font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--ink-soft)}
 .toggle input{accent-color:var(--blue);width:14px;height:14px;cursor:pointer}
+.toggle[data-hint]{position:relative}
+.toggle[data-hint]::after{
+  content:attr(data-hint);position:absolute;left:0;top:calc(100% + 8px);
+  z-index:30;width:max-content;max-width:min(320px,78vw);
+  background:var(--ink);color:var(--paper);border:1px solid var(--ink);
+  border-radius:4px;padding:8px 10px;box-shadow:0 10px 24px rgba(0,0,0,.16);
+  font-family:var(--mono);font-size:12px;line-height:1.45;letter-spacing:0;
+  text-transform:none;white-space:normal;opacity:0;visibility:hidden;
+  transform:translateY(-2px);transition:opacity .08s ease,transform .08s ease,visibility 0s linear .08s;
+  pointer-events:none;
+}
+.toggle[data-hint]:hover::after,.toggle[data-hint]:focus-within::after{
+  opacity:1;visibility:visible;transform:translateY(0);transition-delay:.08s, .08s, 0s;
+}
 #askModel{
   background:var(--paper-2);border:1px solid var(--rule);border-radius:2px;
   padding:6px 10px;font-family:var(--mono);font-size:11px;color:var(--ink);
@@ -792,11 +806,11 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
   <p class="lede" id="askLede">Data-driven insights, your data, your insights.</p>
 
   <div class="askbar">
-    <label class="toggle" title="Use passages from the current project's indexed documents. Turn this off for a plain conversation.">
+    <label class="toggle" data-hint="Use passages from the current project's indexed documents. Turn this off for a plain conversation.">
       <input type="checkbox" id="groundToggle" checked>
       <span>Ground in documents</span>
     </label>
-    <label class="toggle" title="Allow a web search when local documents do not cover the question. This works independently of document grounding.">
+    <label class="toggle" data-hint="Allow a web search when local documents do not cover the question. This works independently of document grounding.">
       <input type="checkbox" id="externalSearchAskToggle">
       <span>Search the web too</span>
     </label>
