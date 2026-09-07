@@ -792,11 +792,11 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
   <p class="lede" id="askLede">Data-driven insights, your data, your insights.</p>
 
   <div class="askbar">
-    <label class="toggle" title="Pulls passages from this project's documents for this question.">
+    <label class="toggle" title="Use passages from the current project's indexed documents. Turn this off for a plain conversation.">
       <input type="checkbox" id="groundToggle" checked>
       <span>Ground in documents</span>
     </label>
-    <label class="toggle" title="A separate switch: lets El Roi search the web when local documents don't cover the question. Independent of grounding, on purpose.">
+    <label class="toggle" title="Allow a web search when local documents do not cover the question. This works independently of document grounding.">
       <input type="checkbox" id="externalSearchAskToggle">
       <span>Search the web too</span>
     </label>
@@ -2536,9 +2536,6 @@ function renderChat(){
   const col = $("#chatColumn");
   if (!STATE.chat.messages.length){
     col.innerHTML = "";
-    col.appendChild(el("div", "empty",
-      "Ask about your documents, or anything else. Grounding pulls from the " +
-      "current project; turn it off for a plain conversation."));
     return;
   }
   col.innerHTML = "";
