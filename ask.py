@@ -47,6 +47,10 @@ from scripture import (
     is_scripture_mode_exit, render_scripture_for_terminal, scripture_evidence,
     scripture_mode_active, scripture_mode_exit_response, scripture_mode_question,
 )
+from photo import (
+    answer_photo_command, is_photo_mode_exit, photo_mode_active,
+    photo_mode_exit_response, photo_mode_question,
+)
 
 # writer.py's import above already inserts memory/ onto sys.path (see its
 # own docstring for why), so this is safe here without repeating that setup.
@@ -3474,6 +3478,23 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 else "answered_explicit_bible_command"
             ])
 
+    in_photo_mode = photo_mode_active(messages[:-1])
+    if is_photo_mode_exit(last_user):
+        return _quality_finish(
+            photo_mode_exit_response(), last_user, plan, project=scope,
+            improvements=["exited_photo_mode"])
+
+    photo_action = answer_photo_command(
+        photo_mode_question(last_user) if in_photo_mode else last_user,
+        project=scope)
+    if photo_action:
+        return _quality_finish(
+            photo_action, last_user, plan, project=scope,
+            improvements=[
+                "answered_in_photo_mode" if in_photo_mode
+                else "answered_explicit_photo_command"
+            ])
+
     if ground and last_user.strip():
         redaction = _answer_redaction_request(last_user, project=scope)
         if redaction:
@@ -3769,7 +3790,13 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
                 "Talmudic text for a reference that was not provided as "
                 "source material this turn, and never invent a word, "
                 "transliteration, or verse not present in the material "
-                "given."
+                "given. When source material discusses Hebrew cantillation "
+                "or accent marks, treat them as Masoretic accent/phrasing "
+                "marks. Do not describe tiphcha/tifcha/tipcha as a waw, "
+                "conjunction, particle, or word; it is an accent mark. If "
+                "accent evidence is present, answer from that evidence and "
+                "say when the question asks beyond what the evidence "
+                "establishes."
             )
         if has_scripture_evidence(evidence):
             system += (

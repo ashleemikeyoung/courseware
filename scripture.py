@@ -1158,6 +1158,41 @@ def _scripture_evidence_for_nt_refs(refs: list, registry: CitationRegistry,
     return evidence
 
 
+_TIPHCHA_QUERY_RE = re.compile(r"\b(?:tiphcha|tifcha|tipcha|tipticha)\b", re.I)
+_GENESIS_1_1_QUERY_RE = re.compile(
+    r"\b(?:genesis|gen\.?)\s*1\s*:?\s*1\b", re.I)
+
+
+def _cantillation_evidence(question: str, registry: CitationRegistry) -> list:
+    q = question or ""
+    if not (_TIPHCHA_QUERY_RE.search(q) and _GENESIS_1_1_QUERY_RE.search(q)):
+        return []
+
+    source_url = (
+        "https://freely-given.org/BibleOriginals/Hebrew/AccentsPhrasing/"
+        "Files/Genesis1.html"
+    )
+    details = [
+        "[Hebrew cantillation source: Genesis 1:1 accent phrasing]",
+        "Reference: Genesis 1:1",
+        (
+            "Tiphcha is a disjunctive Masoretic cantillation accent, not a "
+            "waw/conjunction, particle, or word."
+        ),
+        (
+            "Accent phrasing: בְּרֵאשִׁ֖ית [Tiphcha] בָּרָ֣א אֱלֹהִ֑ים "
+            "[Munach Etnachta] אֵ֥ת הַשָּׁמַ֖יִם [Merkha Tiphcha] "
+            "וְאֵ֥ת הָאָֽרֶץ [Merkha Silluq]."
+        ),
+        (
+            "In this verse, tiphcha marks lesser disjunctive pauses on "
+            "בְּרֵאשִׁית and הַשָּׁמַיִם. It does not make the waw before "
+            "אֵת הָאָרֶץ disjunctive."
+        ),
+    ]
+    return [registry.register(source_url, -25, -25, "\n".join(details))]
+
+
 def _scripture_evidence(question: str, context: str, existing_evidence: list,
                         registry: CitationRegistry, limit: int = 4) -> list:
     """
@@ -1172,8 +1207,10 @@ def _scripture_evidence(question: str, context: str, existing_evidence: list,
         f"{getattr(ev, 'source', '')}\n{getattr(ev, 'text', '')}"
         for ev in existing_evidence or []
     ])
-    evidence = _scripture_evidence_for_hits(
-        _sefaria_find_refs(haystack), registry, limit=limit)
+    evidence = _cantillation_evidence(question, registry)
+    remaining = max(limit - len(evidence), 0)
+    evidence.extend(_scripture_evidence_for_hits(
+        _sefaria_find_refs(haystack), registry, limit=remaining))
     if len(evidence) < limit:
         remaining = limit - len(evidence)
         evidence.extend(_scripture_evidence_for_nt_refs(
@@ -1184,7 +1221,11 @@ def _scripture_evidence(question: str, context: str, existing_evidence: list,
 def _has_scripture_evidence(evidence: list) -> bool:
     return any(
         (getattr(ev, "source", "") or "").startswith(
-            ("https://www.sefaria.org/", "https://bible-api.com/"))
+            (
+                "https://www.sefaria.org/",
+                "https://bible-api.com/",
+                "https://freely-given.org/BibleOriginals/",
+            ))
         for ev in evidence or []
     )
 

@@ -1,5 +1,6 @@
 import scripture
 import morphology
+from writer import CitationRegistry
 
 
 def test_scripture_block_includes_transliteration():
@@ -155,3 +156,16 @@ def test_bible_command_without_query_enters_mode():
 def test_scripture_mode_question_prefixes_plain_reference():
     assert scripture.scripture_mode_question("John 3:16") == "/bible John 3:16"
     assert scripture.scripture_mode_question("/bible John 3:16") == "/bible John 3:16"
+
+
+def test_genesis_tiphcha_question_gets_cantillation_evidence():
+    registry = CitationRegistry()
+
+    evidence = scripture._cantillation_evidence(
+        "How does the disjunctive tiphcha apply genesis 1:1?", registry)
+
+    assert evidence
+    assert evidence[0].source.startswith(
+        "https://freely-given.org/BibleOriginals/")
+    assert "not a waw/conjunction" in evidence[0].text
+    assert "בְּרֵאשִׁ֖ית [Tiphcha]" in evidence[0].text

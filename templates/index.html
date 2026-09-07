@@ -826,6 +826,8 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     </label>
     <button class="btn ghost small" id="btnNewChat">New conversation</button>
     <button class="btn ghost small" id="btnClearChat">Clear conversation</button>
+    <button class="btn ghost small" id="btnPhotoUpload">Upload photos</button>
+    <input id="photoUploadInput" type="file" accept="image/*,.arw,.cr2,.cr3,.dng,.nef,.orf,.rw2" multiple hidden>
   </div>
 
   <div class="galley" id="chatGalley">
@@ -2696,6 +2698,7 @@ const PROVENANCE_LABELS = {
   app_command_guard: "app command, not a search",
   coder_request: "code writer",
   redaction_request: "redaction tool",
+  photo_command: "photo mode",
 };
 function provenanceLabel(route, grounded){
   if (!grounded) return "answered from the model's own knowledge -- no documents, no web search";
@@ -2773,6 +2776,8 @@ $("#askInput").addEventListener("keydown", e => {
   }
 });
 $("#btnAsk").onclick = sendAsk;
+$("#btnPhotoUpload").onclick = () => $("#photoUploadInput").click();
+$("#photoUploadInput").onchange = uploadPhotos;
 $("#btnClearChat").onclick = () => {
   if (STATE.chat.messages.length && !confirm("Delete this conversation from the current slot? Use New conversation to save it first.")) return;
   clearAskState();
@@ -2859,6 +2864,39 @@ async function sendAsk(){
     toast(typeof err === "string" ? err : "That didn't go through");
   } finally {
     STATE.chat.busy = false; $("#btnAsk").disabled = false;
+  }
+}
+
+async function uploadPhotos(){
+  const input = $("#photoUploadInput");
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
+  if (!STATE.project) {
+    input.value = "";
+    return toast("Pick a project first");
+  }
+  const form = new FormData();
+  form.append("project", STATE.project);
+  files.forEach(file => form.append("photos", file));
+  $("#btnPhotoUpload").disabled = true;
+  try {
+    const r = await fetch("/api/photo/upload", {method: "POST", body: form});
+    const data = await r.json();
+    if (data.error) return toast(data.error);
+    const skipped = (data.skipped || []).length
+      ? ` ${data.skipped.length} unsupported file(s) were skipped.`
+      : "";
+    STATE.chat.messages.push({
+      role: "assistant",
+      content: `Saved ${data.saved.length} photo(s) to \`${data.folder}\`.${skipped}\n\nRun \`${data.ingest_command}\` to index them for photo mode.`
+    });
+    renderChat();
+    saveAskConversation();
+  } catch(e){
+    toast("Could not upload photos");
+  } finally {
+    input.value = "";
+    $("#btnPhotoUpload").disabled = false;
   }
 }
 

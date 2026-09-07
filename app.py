@@ -37,6 +37,7 @@ import writer
 import quality
 import bench
 import ask
+import photo
 import summarize
 import projects
 import updater
@@ -580,6 +581,43 @@ def rescan():
     return jsonify({"job": start_job(work)})
 
 
+@app.post("/api/photo/upload")
+def api_photo_upload():
+    project = (request.form.get("project") or projects.UNFILED).strip()
+    if project == projects.ALL:
+        project = "Photos"
+    project = projects.safe(project)
+    folder = projects.DOCUMENTS_ROOT / project / "Uploaded Photos"
+    folder.mkdir(parents=True, exist_ok=True)
+
+    files = request.files.getlist("photos")
+    if not files:
+        return jsonify({"error": "choose at least one photo"}), 400
+
+    saved, skipped = [], []
+    for item in files:
+        filename = _safe_upload_name(item.filename)
+        suffix = Path(filename).suffix.lower()
+        if suffix not in photo.PHOTO_EXTENSIONS:
+            skipped.append(item.filename or filename)
+            continue
+        dest = _unique_upload_path(folder, filename)
+        item.save(dest)
+        saved.append(str(dest.relative_to(projects.DOCUMENTS_ROOT)))
+
+    if not saved:
+        return jsonify({
+            "error": "no supported photo files were selected",
+            "skipped": skipped,
+        }), 400
+    return jsonify({
+        "saved": saved,
+        "skipped": skipped,
+        "folder": str(folder),
+        "ingest_command": "/photo ingest Uploaded Photos",
+    })
+
+
 @app.get("/api/mail/config")
 def api_mail_config():
     if not MAIL_CONFIG_PATH.exists():
@@ -693,6 +731,27 @@ TUNING_SETTING_KEYS = {
 }
 BIBLE_TRANSLATIONS = {"kjv", "web", "asv", "ylt", "bbe", "darby"}
 SCRIPTURE_FONT_SIZES = {"small", "medium", "large"}
+
+
+def _safe_upload_name(name: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._ -]+", "_", Path(name or "photo").name)
+    cleaned = cleaned.strip(" .") or "photo"
+    stem = Path(cleaned).stem.strip(" .") or "photo"
+    suffix = Path(cleaned).suffix.lower()
+    return f"{stem}{suffix}"
+
+
+def _unique_upload_path(folder: Path, filename: str) -> Path:
+    path = folder / filename
+    if not path.exists():
+        return path
+    stem = path.stem
+    suffix = path.suffix
+    for i in range(2, 1000):
+        candidate = folder / f"{stem}-{i}{suffix}"
+        if not candidate.exists():
+            return candidate
+    return folder / f"{stem}-{uuid.uuid4().hex[:8]}{suffix}"
 
 
 def _memory_required():
