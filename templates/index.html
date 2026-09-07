@@ -619,6 +619,7 @@ textarea{resize:vertical;min-height:74px}
   flex:1;min-height:44px;max-height:14rem;resize:none;font-size:15px;line-height:1.5;
 }
 .composer .btn{flex:0 0 auto;padding:11px 22px}
+.composer .btn.attach{padding:11px 14px}
 .composer select{flex:0 1 12rem;margin-bottom:0}
 table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}
 th{text-align:left;font-weight:500;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
@@ -826,8 +827,6 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     </label>
     <button class="btn ghost small" id="btnNewChat">New conversation</button>
     <button class="btn ghost small" id="btnClearChat">Clear conversation</button>
-    <button class="btn ghost small" id="btnPhotoUpload">Upload photos</button>
-    <input id="photoUploadInput" type="file" accept="image/*,.arw,.cr2,.cr3,.dng,.nef,.orf,.rw2" multiple hidden>
   </div>
 
   <div class="galley" id="chatGalley">
@@ -841,6 +840,8 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
   <div class="log" id="asklog" style="display:none"></div>
 
   <div class="composer">
+    <button class="btn ghost attach" id="btnAttachFiles" title="Attach files" aria-label="Attach files">Attach</button>
+    <input id="attachmentInput" type="file" accept="image/*,.arw,.bmp,.cr2,.cr3,.dng,.docx,.gif,.jpeg,.jpg,.md,.nef,.orf,.pdf,.png,.pptx,.raf,.rw2,.tiff,.txt,.xlsx" multiple hidden>
     <textarea id="askInput" rows="1"
       placeholder="Ask about your documents, or anything else. Shift+Enter for a new line."></textarea>
     <button class="btn" id="btnAsk">Send</button>
@@ -2776,8 +2777,8 @@ $("#askInput").addEventListener("keydown", e => {
   }
 });
 $("#btnAsk").onclick = sendAsk;
-$("#btnPhotoUpload").onclick = () => $("#photoUploadInput").click();
-$("#photoUploadInput").onchange = uploadPhotos;
+$("#btnAttachFiles").onclick = () => $("#attachmentInput").click();
+$("#attachmentInput").onchange = uploadAttachments;
 $("#btnClearChat").onclick = () => {
   if (STATE.chat.messages.length && !confirm("Delete this conversation from the current slot? Use New conversation to save it first.")) return;
   clearAskState();
@@ -2867,8 +2868,8 @@ async function sendAsk(){
   }
 }
 
-async function uploadPhotos(){
-  const input = $("#photoUploadInput");
+async function uploadAttachments(){
+  const input = $("#attachmentInput");
   const files = Array.from(input.files || []);
   if (!files.length) return;
   if (!STATE.project) {
@@ -2877,8 +2878,8 @@ async function uploadPhotos(){
   }
   const form = new FormData();
   form.append("project", STATE.project);
-  files.forEach(file => form.append("photos", file));
-  $("#btnPhotoUpload").disabled = true;
+  files.forEach(file => form.append("files", file));
+  $("#btnAttachFiles").disabled = true;
   try {
     const r = await fetch("/api/photo/upload", {method: "POST", body: form});
     const data = await r.json();
@@ -2888,15 +2889,15 @@ async function uploadPhotos(){
       : "";
     STATE.chat.messages.push({
       role: "assistant",
-      content: `Saved ${data.saved.length} photo(s) to \`${data.folder}\`.${skipped}\n\nRun \`${data.ingest_command}\` to index them for photo mode.`
+      content: `Attached ${data.saved.length} file(s) under \`${data.folder}\`.${skipped}\n\nRun \`${data.ingest_command}\` for photo analysis, or rescan documents for general document search.`
     });
     renderChat();
     saveAskConversation();
   } catch(e){
-    toast("Could not upload photos");
+    toast("Could not attach files");
   } finally {
     input.value = "";
-    $("#btnPhotoUpload").disabled = false;
+    $("#btnAttachFiles").disabled = false;
   }
 }
 

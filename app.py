@@ -587,33 +587,33 @@ def api_photo_upload():
     if project == projects.ALL:
         project = "Photos"
     project = projects.safe(project)
-    folder = projects.DOCUMENTS_ROOT / project / "Uploaded Photos"
-    folder.mkdir(parents=True, exist_ok=True)
-
-    files = request.files.getlist("photos")
+    files = request.files.getlist("files") or request.files.getlist("photos")
     if not files:
-        return jsonify({"error": "choose at least one photo"}), 400
+        return jsonify({"error": "choose at least one file"}), 400
 
     saved, skipped = [], []
     for item in files:
         filename = _safe_upload_name(item.filename)
         suffix = Path(filename).suffix.lower()
-        if suffix not in photo.PHOTO_EXTENSIONS:
+        if suffix not in projects.supported_extensions() | photo.PHOTO_EXTENSIONS:
             skipped.append(item.filename or filename)
             continue
+        folder_name = "Uploaded Photos" if suffix in photo.PHOTO_EXTENSIONS else "Attachments"
+        folder = projects.DOCUMENTS_ROOT / project / folder_name
+        folder.mkdir(parents=True, exist_ok=True)
         dest = _unique_upload_path(folder, filename)
         item.save(dest)
         saved.append(str(dest.relative_to(projects.DOCUMENTS_ROOT)))
 
     if not saved:
         return jsonify({
-            "error": "no supported photo files were selected",
+            "error": "no supported files were selected",
             "skipped": skipped,
         }), 400
     return jsonify({
         "saved": saved,
         "skipped": skipped,
-        "folder": str(folder),
+        "folder": str(projects.DOCUMENTS_ROOT / project),
         "ingest_command": "/photo ingest Uploaded Photos",
     })
 
@@ -807,7 +807,7 @@ def api_tuning():
                 "rag_topic_min_domain_hits", "5"),
             "rag_supported_extensions": get_setting(
                 "rag_supported_extensions",
-                ".arw,.bmp,.cr2,.cr3,.dng,.docx,.gif,.jpeg,.jpg,.md,.nef,.orf,.pdf,.png,.pptx,.rw2,.tiff,.txt,.xlsx",
+                ".arw,.bmp,.cr2,.cr3,.dng,.docx,.gif,.jpeg,.jpg,.md,.nef,.orf,.pdf,.png,.pptx,.raf,.rw2,.tiff,.txt,.xlsx",
             ),
             "rag_ignored_dirs": get_setting(
                 "rag_ignored_dirs",

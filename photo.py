@@ -15,7 +15,7 @@ import projects
 
 PHOTO_EXTENSIONS = {
     ".arw", ".bmp", ".cr2", ".cr3", ".dng", ".gif", ".jpeg", ".jpg",
-    ".nef", ".orf", ".png", ".rw2", ".tiff",
+    ".nef", ".orf", ".png", ".raf", ".rw2", ".tiff",
 }
 
 PHOTO_COMMAND_RE = re.compile(r"^\s*/photo\b\s*(.*)$", re.IGNORECASE | re.DOTALL)
@@ -113,6 +113,7 @@ def _indexed_photos(project: str = None, limit: int = 12) -> list[dict]:
             "filename": meta.get("filename") or Path(source).name,
             "project": meta.get("project") or projects.UNFILED,
             "description": " ".join((doc or "").split())[:220],
+            "text": doc or "",
             "chunks": meta.get("chunk_count") or 1,
         })
         if len(rows) >= limit:
@@ -137,6 +138,151 @@ def _list_indexed_photos(project: str = None) -> str:
     return "\n".join(lines)
 
 
+def _tokens(text: str) -> set[str]:
+    return {
+        token.lower()
+        for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]{1,}", text or "")
+        if token.lower() not in {
+            "photo", "image", "edit", "adjust", "analyze", "the", "and",
+            "for", "with", "that", "this", "please",
+        }
+    }
+
+
+def _matching_photos(query: str, project: str = None, limit: int = 3) -> list[dict]:
+    photos = _indexed_photos(project=project, limit=200)
+    terms = _tokens(query)
+    if not terms:
+        return photos[:limit]
+
+    scored = []
+    for item in photos:
+        haystack = " ".join([
+            item.get("source", ""),
+            item.get("filename", ""),
+            item.get("description", ""),
+            item.get("text", ""),
+        ]).lower()
+        score = sum(1 for term in terms if term in haystack)
+        if score:
+            scored.append((score, item))
+    scored.sort(key=lambda pair: (-pair[0], pair[1]["source"]))
+    return [item for _, item in scored[:limit]]
+
+
+def _infer_subject(text: str) -> str:
+    lower = (text or "").lower()
+    subjects = [
+        ("person or portrait subject", ("person", "portrait", "face", "man", "woman", "child", "people")),
+        ("animal subject", ("animal", "bird", "dog", "cat", "horse")),
+        ("building or architectural subject", ("building", "architecture", "house", "church", "room", "interior")),
+        ("landscape subject", ("landscape", "mountain", "sky", "sunset", "water", "tree", "forest", "beach")),
+        ("product or object subject", ("product", "object", "bottle", "phone", "watch", "food", "flower")),
+        ("document/text subject", ("text", "page", "document", "sign", "poster", "label")),
+    ]
+    for label, terms in subjects:
+        if any(term in lower for term in terms):
+            return label
+    return "primary visual subject"
+
+
+def _composition_notes(text: str) -> list[str]:
+    lower = (text or "").lower()
+    notes = [
+        "Check the strongest subject point and crop so it lands near a third-line intersection.",
+        "Preserve enough negative space in the direction the subject faces or moves.",
+    ]
+    if any(term in lower for term in ("horizon", "sky", "landscape", "water")):
+        notes.append("Level the horizon and avoid splitting the frame exactly in half unless symmetry is intentional.")
+    if any(term in lower for term in ("face", "portrait", "person", "people")):
+        notes.append("Place the eyes near the upper third and remove excess headroom.")
+    if any(term in lower for term in ("center", "centered", "symmetrical", "symmetry")):
+        notes.append("Keep centered framing only if symmetry is the point; otherwise test a rule-of-thirds crop.")
+    return notes
+
+
+def _lighting_notes(text: str) -> list[str]:
+    lower = (text or "").lower()
+    notes = []
+    if any(term in lower for term in ("dark", "shadow", "underexposed", "dim")):
+        notes.append("Lift exposure and shadows gently while keeping blacks anchored.")
+    else:
+        notes.append("Balance exposure first, then use contrast rather than global brightness for shape.")
+    if any(term in lower for term in ("bright", "highlight", "sun", "sky", "white", "overexposed")):
+        notes.append("Pull highlights down before raising overall exposure.")
+    notes.append("Use local dodging on the subject and subtle burning around frame edges.")
+    return notes
+
+
+def _separation_notes(text: str) -> list[str]:
+    lower = (text or "").lower()
+    notes = [
+        "Create a subject mask, then add a small exposure/texture lift to the subject.",
+        "Create an inverse background mask and slightly reduce clarity, saturation, and exposure.",
+    ]
+    if any(term in lower for term in ("busy", "crowd", "clutter", "background", "distracting")):
+        notes.append("Reduce background distractions before increasing subject contrast.")
+    if any(term in lower for term in ("face", "portrait", "person", "people")):
+        notes.append("Protect skin tones; avoid sharpening pores or pushing orange saturation.")
+    return notes
+
+
+def _recipe_for_photo(item: dict, request: str = "") -> str:
+    text = " ".join([item.get("description", ""), item.get("text", "")])
+    subject = _infer_subject(text)
+    lighting_notes = _lighting_notes(text)
+    lines = [
+        f"Photo: `{item.get('source')}`",
+        f"Likely subject: {subject}",
+        "",
+        "Composition",
+    ]
+    lines.extend(f"- {note}" for note in _composition_notes(text))
+    lines.extend(["", "Lighting"])
+    lines.extend(f"- {note}" for note in lighting_notes)
+    lines.extend(["", "Subject Separation"])
+    lines.extend(f"- {note}" for note in _separation_notes(text))
+    lines.extend([
+        "",
+        "Suggested Edit Recipe",
+        "- Crop/straighten: test rule-of-thirds crop; keep the subject's important edge intact.",
+        "- Global tone: exposure +0.10 to +0.35, highlights -10 to -35, shadows +10 to +30, contrast +5 to +15.",
+        "- Subject mask: exposure +0.10 to +0.25, texture +5 to +12, clarity +3 to +8.",
+        "- Background mask: exposure -0.10 to -0.30, saturation -5 to -15, clarity -5 to -15.",
+        "- Finish: check edges at 100%, then compare before/after for natural separation.",
+    ])
+    if request:
+        lines.extend(["", f"User goal: {request}"])
+    return "\n".join(lines)
+
+
+def _answer_photo_analyze(query: str, project: str = None) -> dict:
+    matches = _matching_photos(query, project=project, limit=3)
+    if not matches:
+        return {
+            "text": (
+                "I don’t see indexed photos to analyze yet. Upload photos, then "
+                "run `/photo ingest Uploaded Photos`; or put photos under the "
+                "project documents folder and run `/photo ingest`."
+            ),
+            "evidence": {},
+            "grounded": False,
+            "metrics": {"route": "photo_command", "photo_mode": True, "action": "analyze"},
+        }
+
+    text = "Photo analysis:\n\n" + "\n\n---\n\n".join(
+        _recipe_for_photo(item, request=query) for item in matches)
+    return {
+        "text": text,
+        "evidence": {},
+        "grounded": True,
+        "metrics": {
+            "route": "photo_command", "photo_mode": True,
+            "action": "analyze", "matches": len(matches),
+        },
+    }
+
+
 def _photo_help(project: str = None) -> str:
     root = _documents_root()
     default_folder = root / (project if project and project != projects.ALL else "Photos")
@@ -146,6 +292,7 @@ def _photo_help(project: str = None) -> str:
         "- `/photo ingest` to scan photos already under the documents root\n"
         "- `/photo ingest <folder-name>` to create or scan a specific folder there\n"
         "- `/photo list` to show indexed photos\n"
+        "- `/photo analyze <filename or description>` to review subject, framing, lighting, and separation\n"
         "- `/photo edit <filename or description>: <instructions>` to draft an edit plan\n"
         "- `/photo off` or `/exit photo` to leave photo mode\n\n"
         f"Default photo folder: `{default_folder}`"
@@ -153,23 +300,25 @@ def _photo_help(project: str = None) -> str:
 
 
 def _answer_photo_edit(query: str, project: str = None) -> dict:
-    photos = _indexed_photos(project=project, limit=6)
-    examples = "\n".join(f"- `{p['source']}`" for p in photos)
-    text = (
-        "I can help prepare an El Roi photo edit plan from indexed photo "
-        "descriptions and RAW metadata. This first pass produces a reviewable "
-        "recipe rather than altering the original file.\n\n"
-        f"Requested edit: {query.strip() or '(no edit instructions provided)'}"
-    )
-    if examples:
-        text += "\n\nRecently indexed photo candidates:\n" + examples
+    matches = _matching_photos(query, project=project, limit=3)
+    if matches:
+        text = "Photo edit recipe:\n\n" + "\n\n---\n\n".join(
+            _recipe_for_photo(item, request=query) for item in matches)
     else:
-        text += "\n\nNo indexed photo candidates are visible yet. Run `/photo ingest` first."
+        text = (
+            "I can draft the edit recipe, but I don’t see a matching indexed "
+            "photo yet. Run `/photo list` to see what El Roi can see, or "
+            "`/photo ingest` after adding photos.\n\n"
+            f"Requested edit: {query.strip() or '(no edit instructions provided)'}"
+        )
     return {
         "text": text,
         "evidence": {},
-        "grounded": False,
-        "metrics": {"route": "photo_command", "photo_mode": True, "action": "edit"},
+        "grounded": bool(matches),
+        "metrics": {
+            "route": "photo_command", "photo_mode": True,
+            "action": "edit", "matches": len(matches),
+        },
     }
 
 
@@ -224,6 +373,15 @@ def _answer_photo_command(question: str, project: str = None) -> dict:
             "grounded": True,
             "metrics": {"route": "photo_command", "photo_mode": True, "action": "ingest"},
         }
+
+    if lower.startswith(("analyze", "review", "critique", "compose", "composition")):
+        cleaned = re.sub(
+            r"^(?:analyze|review|critique|compose|composition)\b\s*:?",
+            "",
+            query,
+            flags=re.I,
+        )
+        return _answer_photo_analyze(cleaned.strip(), project=project)
 
     if lower.startswith(("edit", "adjust", "retouch", "grade", "crop", "develop")):
         cleaned = re.sub(

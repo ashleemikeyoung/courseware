@@ -136,7 +136,7 @@ DEFAULT_SUPPORTED_EXTENSIONS = set(filter(None, [
     ".xlsx" if XLSX_AVAILABLE else None,
     ".pptx" if PPTX_AVAILABLE else None,
     ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".bmp",
-    ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2",
+    ".cr2", ".cr3", ".nef", ".arw", ".orf", ".raf", ".rw2",
     ".dng" if RAW_AVAILABLE else None,
 ]))
 DEFAULT_IGNORED_DIRS = {
@@ -625,7 +625,7 @@ def load_file(file: Path) -> str:
         print(f"  Using vision model for {file.name}...")
         return describe_image_with_vision(file)
 
-    elif suffix in [".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".dng"]:
+    elif suffix in [".cr2", ".cr3", ".nef", ".arw", ".orf", ".raf", ".rw2", ".dng"]:
         return extract_raw_metadata(file)
 
     return ""
