@@ -1223,7 +1223,7 @@ function show(tab){
 /* --- job streaming ------------------------------------------------------ */
 function runJob(url, body, logEl, onEvent){
   return new Promise((resolve, reject) => {
-    logEl.style.display = "block"; logEl.innerHTML = "";
+    logEl.style.display = "none"; logEl.innerHTML = "";
     fetch(url, {method:"POST", headers:{"Content-Type":"application/json"},
                 body: JSON.stringify(withProject(body))})
       .then(r => r.json()).then(j => {
@@ -1232,7 +1232,11 @@ function runJob(url, body, logEl, onEvent){
         src.onmessage = m => {
           const ev = JSON.parse(m.data);
           onEvent(ev, logEl);
-          if (ev.type === "done"){ src.close(); resolve(ev); }
+          if (ev.type === "done"){
+            src.close();
+            if (!logEl.children.length) logEl.style.display = "none";
+            resolve(ev);
+          }
           if (ev.type === "error"){ src.close();
             logLine(logEl, ev.message, "err"); reject(ev.message); }
         };
@@ -1241,6 +1245,7 @@ function runJob(url, body, logEl, onEvent){
   });
 }
 function logLine(box, text, cls){
+  box.style.display = "block";
   box.querySelectorAll(".now").forEach(n => n.classList.remove("now"));
   const d = el("div", "now " + (cls || ""), text);
   box.appendChild(d); box.scrollTop = box.scrollHeight;
