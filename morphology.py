@@ -256,6 +256,32 @@ def _greek_key(word: str) -> str:
     return "".join(ch for ch in _without_marks(word) if "\u0370" <= ch <= "\u03ff")
 
 
+# Vowel points, the shin/sin dots and qamats qatan -- but not cantillation
+# marks or meteg. Keeping the pointing is what separates words that share a
+# consonantal skeleton.
+_HEBREW_POINT_MARKS = frozenset(
+    [chr(cp) for cp in range(0x05b0, 0x05bd)]
+    + [chr(0x05c1), chr(0x05c2), chr(0x05c7)]
+)
+
+
+def _hebrew_pointed_key(word: str) -> str:
+    """
+    Letters plus vowel points, with cantillation and meteg dropped.
+
+    _hebrew_key() strips the pointing too, which collapses distinct words
+    onto a single consonantal skeleton: "he created" and "field" reduce to
+    the same three letters. The dataset is indexed under both spellings, so
+    a pointed match can win before the ambiguous consonantal key is tried.
+    """
+    decomposed = unicodedata.normalize("NFD", word or "")
+    return "".join(
+        ch for ch in decomposed
+        if ("\u05d0" <= ch <= "\u05ea") or ch in _HEBREW_POINT_MARKS
+    )
+
+
+
 def _display_root(value: str, fallback: str) -> str:
     return value or fallback
 
@@ -392,24 +418,41 @@ def _hebrew_fallback(word: str) -> dict:
     }
 
 
+# Endings that lean one way strongly enough to be worth mentioning. The
+# earlier version of this table keyed off single vowels, which is how a
+# pronoun ending in omega came back parsed as a verb.
+_GREEK_ENDING_HINTS = (
+    (("ουσιν", "ουσι", "ομεν", "ετε", "οντο", "σαν"), "verb"),
+    (("ματος", "ματι", "ματα", "σεως", "τητος"), "noun"),
+    (("ως",), "adverb"),
+)
+
+
 def _greek_fallback(word: str) -> dict:
+    """
+    Last resort for a Greek form the dataset does not cover.
+
+    Deliberately cautious. Endings alone do not identify a Greek word, so
+    anything inferred here is labelled as inferred, and a form with no
+    confident hint is reported as unknown rather than handed a
+    plausible-looking wrong answer.
+    """
     key = _greek_key(word)
-    if key.endswith(("ει", "ουσι", "ω", "ομεν")):
-        pos, parsing = "verb", "finite verb form, exact parsing not available"
-    elif key.endswith(("ος", "ον", "ου", "ω")):
-        pos, parsing = "noun/adjective", "case/number/gender not fully resolved"
-    elif key.endswith(("η", "ας", "ης")):
-        pos, parsing = "noun/adjective", "likely feminine form; exact parsing not available"
-    else:
-        pos, parsing = "unknown", "not parsed"
+    pos, parsing = "unknown", "no dataset entry for this form"
+    for endings, guess in _GREEK_ENDING_HINTS:
+        if key.endswith(endings):
+            pos = guess
+            parsing = "inferred from the ending, not parsed"
+            break
     return {
         "lemma": key,
         "root": key,
         "part_of_speech": pos,
         "parsing": parsing,
-        "grammar": "Rule-based Greek hint; add a morphology dataset for full parsing.",
+        "grammar": "This form is not in the morphology dataset, so anything shown here is inferred rather than parsed.",
         "definition": "",
     }
+
 
 
 def _strip_hebrew_prefixes(key: str) -> str:
@@ -537,6 +580,233 @@ def _hebrew_root_hint(key: str) -> str:
     return ""
 
 
+_DATASETS: dict[str, dict] = {}
+
+_DATASET_FILES = {
+    "grc": "greek_morphology.tsv",
+    "he": "hebrew_morphology.tsv",
+}
+
+
+def _dataset_path(lang: str) -> Path:
+    return Path(__file__).resolve().parent / "data" / _DATASET_FILES[lang]
+
+
+def _grammar_note(lang: str, pos: str, parsing: str) -> str:
+    """
+    One plain-language sentence about why the parsing matters.
+
+    Generated here rather than stored per row: the same handful of notes
+    would otherwise repeat across tens of thousands of lines of TSV.
+    """
+    parsing = parsing or ""
+    if lang == "grc":
+        if pos == "verb":
+            if "participle" in parsing:
+                return ("A participle: a verbal adjective, so it carries tense and "
+                        "voice as well as case, number and gender.")
+            if "infinitive" in parsing:
+                return ("An infinitive: a verbal noun, so it has tense and voice but "
+                        "no person or number.")
+            if "imperative" in parsing:
+                return "An imperative: a direct command."
+            if "subjunctive" in parsing:
+                return ("A subjunctive: contingent or purposed action rather than "
+                        "plain assertion.")
+            if "optative" in parsing:
+                return "An optative: a wish or a remote possibility."
+            return "A finite verb making a direct assertion."
+        if "nominative" in parsing:
+            return "Nominative case, so normally the subject or a predicate complement."
+        if "genitive" in parsing:
+            return "Genitive case, marking source, possession or description."
+        if "dative" in parsing:
+            return "Dative case, marking the indirect object, means, or location."
+        if "accusative" in parsing:
+            return ("Accusative case, normally the direct object or the object of a "
+                    "preposition.")
+        if "vocative" in parsing:
+            return "Vocative case, used for direct address."
+        return ""
+    if lang == "he":
+        if pos == "verb":
+            if "sequential imperfect" in parsing:
+                return ("A wayyiqtol: the narrative form that carries a Hebrew story "
+                        "forward.")
+            if "imperative" in parsing:
+                return "An imperative: a direct command."
+            if "participle" in parsing:
+                return ("A participle: a verbal adjective, describing someone as doing "
+                        "the action.")
+            if "infinitive construct" in parsing:
+                return ("An infinitive construct: the verbal noun, often following a "
+                        "preposition.")
+            if "infinitive absolute" in parsing:
+                return ("An infinitive absolute: usually intensifying or emphasizing "
+                        "the main verb.")
+            if "perfect" in parsing:
+                return "Perfect aspect: the action is viewed whole, usually completed."
+            if "imperfect" in parsing:
+                return ("Imperfect aspect: the action is viewed as ongoing, habitual, "
+                        "or still to come.")
+        if "construct" in parsing:
+            return ("Construct state: bound to the word after it, normally read as "
+                    "'X of Y'.")
+        if "pronominal suffix" in parsing:
+            return "Carries a pronominal suffix, supplying the possessive or object pronoun."
+        if "prefix" in parsing:
+            return ("One written word built from several morphemes: prefixes attach "
+                    "directly to the stem.")
+    return ""
+
+
+def _alternate_labels(raw: str) -> list[str]:
+    """Turn the packed alternates column into readable lines for the hover card."""
+    labels = []
+    for chunk in (raw or "").split(";"):
+        parts = chunk.split("|")
+        if len(parts) < 3:
+            continue
+        lemma, pos, parsing = parts[0].strip(), parts[1].strip(), parts[2].strip()
+        detail = parsing or pos
+        head = lemma or pos
+        if not head and not detail:
+            continue
+        labels.append(f"{head} ({detail})" if head and detail else (head or detail))
+    return labels
+
+
+def _load_dataset(lang: str) -> dict[str, tuple]:
+    """
+    Read a generated morphology table once, then serve it from memory.
+
+    The tables come from tools/build_lexicon_data.py, which folds MorphGNT
+    (Greek) and the Open Scriptures Hebrew Bible (Hebrew) together with
+    Strong's and Dodson glosses. A missing or unreadable file is not an
+    error: the seed lexicon and the rule-based hints above still answer,
+    exactly as they did before these datasets existed.
+
+    Rows are held as plain tuples of shared strings rather than as ready-made
+    dicts. The Hebrew table alone is nearly 93,000 forms, and one dict per
+    row cost about 90 MB resident in a process that stays up for days; most
+    of those rows repeat the same few hundred parsings and glosses, so
+    pooling the strings and building a dict only on lookup gets the same
+    answers for a fraction of the memory.
+    """
+    cached = _DATASETS.get(lang)
+    if cached is not None:
+        return cached
+    entries: dict[str, tuple] = {}
+    path = _dataset_path(lang) if lang in _DATASET_FILES else None
+    if path is not None and path.exists():
+        pool: dict[str, str] = {}
+
+        def shared(value: str) -> str:
+            return pool.setdefault(value, value)
+
+        try:
+            with path.open(encoding="utf-8") as handle:
+                next(handle, None)  # column header
+                for line in handle:
+                    fields = line.rstrip("\n").split("\t")
+                    if len(fields) < 6 or not fields[0]:
+                        continue
+                    entries[fields[0]] = (
+                        shared(fields[1]),                                # lemma
+                        shared(fields[2]),                                # part of speech
+                        shared(fields[3]),                                # parsing
+                        shared(fields[4]),                                # definition
+                        shared(fields[5]),                                # Strong's
+                        shared(fields[6] if len(fields) > 6 else ""),     # alternates
+                    )
+        except Exception:
+            entries = {}
+    _DATASETS[lang] = entries
+    return entries
+
+
+def _entry_dict(lang: str, row: tuple) -> dict:
+    lemma, pos, parsing, definition, strongs, alternates = row
+    entry = {
+        "lemma": lemma,
+        "root": lemma,
+        "part_of_speech": pos,
+        "parsing": parsing,
+        "definition": definition,
+        "grammar": _grammar_note(lang, pos, parsing),
+    }
+    if strongs:
+        entry["strongs"] = strongs
+    labels = _alternate_labels(alternates)
+    if labels:
+        entry["alternates"] = labels
+    return entry
+
+
+# The Greek dataset is built from the SBLGNT, but this app quotes the
+# Textus Receptus, and the two differ in three predictable ways. Elision
+# drops a final vowel before another vowel and often aspirates what is left
+# (kata -> kat' -> kath'); movable consonants attach to some words; and the
+# TR spells a handful of words its own way. Every rule below only ever
+# resolves to a form the dataset already contains, so a genuinely unknown
+# word still falls through to the honest "no dataset entry" answer.
+_GREEK_DEASPIRATE = str.maketrans({"φ": "π", "θ": "τ", "χ": "κ"})
+_GREEK_MOVABLE = ("ν", "κ", "χ", "ς")
+_GREEK_RESTORED_VOWELS = ("α", "ι", "ο", "ε", "υ", "η")
+_GREEK_TR_SPELLINGS = (
+    ("μωσ", "μωυσ"),
+    ("ληψ", "λημψ"),
+    ("ληφθ", "λημφθ"),
+    ("κραββατ", "κραβαττ"),
+    ("τεσσαρα", "τεσσερα"),
+    ("εκχυν", "εκχυνν"),
+)
+
+
+def _greek_variant_keys(key: str):
+    bases = [key]
+    unaspirated = key.translate(_GREEK_DEASPIRATE)
+    if unaspirated != key:
+        bases.append(unaspirated)
+    for base in list(bases):
+        if len(base) > 2 and base.endswith(_GREEK_MOVABLE):
+            bases.append(base[:-1])
+    for base in bases:
+        if base != key:
+            yield base
+        for vowel in _GREEK_RESTORED_VOWELS:
+            yield base + vowel
+    for written, standard in _GREEK_TR_SPELLINGS:
+        if written in key:
+            yield key.replace(written, standard)
+
+
+def _dataset_entry(lang: str, surface: str, key: str) -> dict | None:
+    entries = _load_dataset(lang)
+    if not entries:
+        return None
+    if lang == "he":
+        # Pointed spelling first: it disambiguates forms that share a
+        # consonantal skeleton. Unpointed text falls through to the key.
+        pointed = _hebrew_pointed_key(surface)
+        if pointed and pointed in entries:
+            return _entry_dict(lang, entries[pointed])
+    found = entries.get(key)
+    if found:
+        return _entry_dict(lang, found)
+    if lang == "grc":
+        for variant in _greek_variant_keys(key):
+            found = entries.get(variant)
+            if found:
+                entry = _entry_dict(lang, found)
+                note = ("Matched to this lemma through a spelling variant: the "
+                        "printed form is elided or spelled differently here.")
+                entry["grammar"] = (f"{entry['grammar']} {note}".strip()
+                                    if entry.get("grammar") else note)
+                return entry
+    return None
+
+
 def analyze_text(lang: str, text: str, current_ref: str | None = None) -> list[dict]:
     if lang == "he":
         regex, key_fn, lexicon, fallback = (
@@ -553,7 +823,14 @@ def analyze_text(lang: str, text: str, current_ref: str | None = None) -> list[d
         key = key_fn(surface)
         if not key:
             continue
-        data = dict(lexicon.get(key) or fallback(surface))
+        data = _dataset_entry(lang, surface, key)
+        if data is None:
+            data = dict(lexicon.get(key) or fallback(surface))
+        elif key in lexicon:
+            # The seed entries are hand-written for this app and carry
+            # grammar notes the generated tables have no equivalent for, so
+            # they stay on top of the dataset's parsing rather than under it.
+            data.update({k: v for k, v in lexicon[key].items() if v})
         data["surface"] = surface
         data.setdefault("root", data.get("lemma") or key)
         data["same_form_refs"] = _same_form_refs(lang, key, current_ref)
