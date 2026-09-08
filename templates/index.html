@@ -2624,6 +2624,11 @@ function setHomeView(view){
 }
 
 async function openProjectDetail(projectName){
+  if (projectName === "__all__") {
+    STATE.home.view = "chat";
+    renderChat();
+    return;
+  }
   STATE.home.view = "project-detail";
   STATE.home.detailProject = projectName;
   if (projectName && projectName !== STATE.project){
@@ -2867,8 +2872,9 @@ function renderProjectsWorkspace(){
   page.appendChild(head);
 
   const q = (STATE.home.projectQuery || "").trim().toLowerCase();
-  const rows = (STATE.projects || []).filter(p => !q ||
-    String(p.label || p.name || "").toLowerCase().includes(q));
+  const rows = (STATE.projects || [])
+    .filter(p => p.name !== "__all__")
+    .filter(p => !q || String(p.label || p.name || "").toLowerCase().includes(q));
   const grid = el("div", "projects-grid");
   if (!rows.length) {
     grid.appendChild(el("div", "empty", "No projects match that search."));
