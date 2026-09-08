@@ -1070,6 +1070,13 @@ def summarize_result(result: dict) -> str:
     return "\n".join(lines)
 
 
+def _lesson_response(text: str, found: bool = True, **extra) -> dict:
+    metrics = {"route": "lesson_command", "lesson_mode": True, "found": found}
+    metrics.update(extra)
+    return {"text": text, "evidence": {}, "grounded": found,
+            "passages_offered": 0, "metrics": metrics}
+
+
 def answer_lesson_command(question: str, project: str = None,
                           on_progress=None) -> dict:
     """
@@ -1077,37 +1084,69 @@ def answer_lesson_command(question: str, project: str = None,
     answer_photo_command(): returns None when this is not a lesson command, so
     the caller falls through to normal answering.
 
-    `project` is accepted and deliberately ignored for the build. A lesson
-    always goes into its own project named for the subject -- see cmd_lesson()
-    in orchestrator.py for the reasoning. The parameter stays in the signature
-    because every other answer_*_command() takes it and callers pass it
-    positionally by habit.
+    Three things can arrive here. A bare command turns the mode on. A
+    navigation word (next, quiz, sources, related, syllabus) acts on whichever
+    lesson is currently open. Anything else is a new subject.
+
+    A subject goes to tutor.plan() first, which finds its home MIT course and
+    builds a teaching arc. Only when MIT has nothing on it does this fall back
+    to build_lesson()'s wider ladder -- the tiers still exist and still
+    descend, they are just no longer the first thing tried, because a subject
+    MIT teaches should be taught the way MIT teaches it rather than delivered
+    as a pile of indexed PDFs.
+
+    tutor is imported inside the function because tutor imports this module at
+    its top; deferring one direction is what keeps the pair from cycling.
+
+    `project` is accepted and ignored for the build. A lesson always goes into
+    its own project named for the subject -- see cmd_lesson() in
+    orchestrator.py for the reasoning. The parameter stays in the signature
+    because every other answer_*_command() takes one.
     """
     if not is_lesson_command(question):
         return None
     if is_lesson_mode_exit(question):
         return lesson_mode_exit_response()
 
-    subject = lesson_command_query(question)
-    if not subject:
+    body = lesson_command_query(question)
+    if not body:
         return lesson_mode_entry_response()
 
-    try:
-        result = build_lesson(subject, on_progress=on_progress)
-    except Exception as e:
-        return {
-            "text": f"Lesson failed for '{subject}': {type(e).__name__}: {e}",
-            "evidence": {}, "grounded": False, "passages_offered": 0,
-            "metrics": {"route": "lesson_command", "lesson_mode": True,
-                        "found": False},
-        }
+    import tutor
 
-    return {
-        "text": summarize_result(result),
-        "evidence": {}, "grounded": bool(result["indexed"]),
-        "passages_offered": 0,
-        "metrics": {"route": "lesson_command", "lesson_mode": True,
-                    "found": bool(result["indexed"]),
-                    "project": result["project"],
-                    "indexed": result["indexed"]},
-    }
+    word = tutor.navigation_word(body)
+    if word:
+        syllabus = tutor.current_syllabus()
+        if not syllabus:
+            return _lesson_response(
+                "No lesson is open yet. Send a subject and I will find the "
+                "course that teaches it.", found=False)
+        text, syllabus = tutor.handle(syllabus, word)
+        return _lesson_response(text or tutor.render_syllabus(syllabus),
+                                project=syllabus.get("project", ""))
+
+    try:
+        syllabus = tutor.plan(body, on_progress=on_progress)
+    except Exception as e:
+        return _lesson_response(
+            f"Could not plan a lesson on '{body}': {type(e).__name__}: {e}",
+            found=False)
+
+    if syllabus.get("course") and syllabus.get("lectures"):
+        tutor.set_current(syllabus["project"])
+        return _lesson_response(
+            tutor.render_syllabus(syllabus) + "\n\n---\n\n" + tutor.teach(syllabus),
+            project=syllabus["project"],
+            course=syllabus["course"]["number"],
+            lectures=len(syllabus["lectures"]))
+
+    try:
+        result = build_lesson(body, on_progress=on_progress)
+    except Exception as e:
+        return _lesson_response(
+            f"Lesson failed for '{body}': {type(e).__name__}: {e}", found=False)
+
+    return _lesson_response(
+        "MIT does not appear to cover this one, so I went down the wider "
+        "ladder instead.\n\n" + summarize_result(result),
+        found=bool(result["indexed"]), project=result["project"])

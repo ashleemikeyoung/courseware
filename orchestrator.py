@@ -999,47 +999,81 @@ def cmd_summarize(term: str):
 
 def cmd_lesson(arg: str):
     """
-    /lesson <subject> — build a corpus on a subject from open courseware,
-    index it, and scope the session to it.
+    /lesson — the terminal side of lesson mode.
 
-    Same shared pipeline as MCP's lesson tool and test_lesson.py --live (see
-    lesson.py's module docstring), so "how does a subject get learned" has one
-    answer no matter which door you came in through.
+    Three inputs land here. Nothing turns the mode on. A navigation word acts
+    on whichever lesson is open. Anything else is a new subject, which goes to
+    tutor.plan() to find its home MIT course and build a teaching arc, and only
+    falls through to lesson.build_lesson()'s wider ladder when MIT has nothing
+    on it.
 
-    Two deliberate choices here. The lesson always builds into its own project
-    named after the subject, never into whatever scope happens to be active --
-    running /lesson while scoped to a dissertation folder should not quietly
-    drop a dozen MIT lecture PDFs into it. And on success the scope then moves
-    to that new project, because the reason anyone asks for a lesson is that
-    they are about to ask questions about it, and leaving the scope where it
-    was means the first of those questions gets answered from the wrong corpus.
-    The move goes through cmd_project() so the session reset and recent-turn
-    clearing happen exactly as they do for a manual /project.
+    The lesson always builds into its own project named for the subject, never
+    into whatever scope is active -- running this while scoped to a
+    dissertation folder should not quietly drop a dozen MIT PDFs into it. On
+    success the scope then moves to that project, because the questions that
+    follow a lesson are about the lesson. The move goes through cmd_project()
+    so the session reset and recent-turn clearing happen exactly as they do
+    for a manual /project.
 
-    A bare /lesson turns the mode on instead of printing usage, matching
-    /bible and /photo. A /lesson with a subject builds it and turns the mode
-    on too, which is what BIBLE_COMMAND_RE already does for "/bible John 3:16".
+    tutor is imported inside the function so the terminal's startup path is
+    unchanged, and because lesson.py defers the same import in the other
+    direction to keep the pair from cycling.
     """
     global _lesson_mode
 
-    subject = (arg or "").strip()
-    if not subject:
+    text = (arg or "").strip()
+    if not text:
         _lesson_mode = True
         print("\nLesson mode is on. Type a subject on its own, no prefix needed.")
-        print("  MIT OpenCourseWare first, then peer courseware, open textbooks,")
-        print("  and arXiv/DOAJ when MIT is thin. Each subject becomes its own")
-        print("  indexed project and the scope moves to it when it finishes.")
-        print("  A few minutes per subject: real documents get fetched first.")
-        print("\n  /lesson off or /exit lesson to leave. Slash commands still work.\n")
+        print("  I find the MIT course that owns it, work out which lectures")
+        print("  cover it and which you need first, then teach them in order.")
+        print("\n  While a lesson is open:")
+        print("    next      teach the next lecture in the arc")
+        print("    quiz      MIT's own problem sets and exams, plus recall questions")
+        print("    sources   the OCW pages behind the current lecture")
+        print("    related   the rest of the course, and courses that overlap")
+        print("    syllabus  the whole plan, with your place marked")
+        print("    back / repeat")
+        print("\n  Slash commands still work. /lesson off or /exit lesson to leave.\n")
         return
 
     _lesson_mode = True
 
-    print(f"\nBuilding a lesson on '{subject}'. This fetches and extracts real")
-    print("documents and then drafts from them, so give it a few minutes.\n")
+    import tutor
+
+    word = tutor.navigation_word(text)
+    if word:
+        syllabus = tutor.current_syllabus()
+        if not syllabus:
+            print("\n  No lesson is open yet. Type a subject to start one.\n")
+            return
+        rendered, syllabus = tutor.handle(syllabus, word)
+        print("\n" + (rendered or tutor.render_syllabus(syllabus)) + "\n")
+        return
+
+    print(f"\nPlanning a lesson on '{text}'. Real documents get fetched and")
+    print("extracted before anything is taught, so give it a few minutes.\n")
 
     try:
-        result = build_lesson(subject, on_progress=lambda m: print(f"  {m}", flush=True))
+        syllabus = tutor.plan(text, on_progress=lambda m: print(f"  {m}", flush=True))
+    except KeyboardInterrupt:
+        print("\n  Interrupted. Anything already indexed stays indexed.\n")
+        return
+    except Exception as e:
+        print(f"\n  Planning failed: {type(e).__name__}: {e}\n")
+        return
+
+    if syllabus.get("course") and syllabus.get("lectures"):
+        tutor.set_current(syllabus["project"])
+        print("\n" + tutor.render_syllabus(syllabus))
+        print("\n" + tutor.teach(syllabus) + "\n")
+        cmd_lesson_scope(syllabus["project"])
+        return
+
+    print("\n  MIT does not appear to cover this one. Going down the wider")
+    print("  ladder instead: peer courseware, open textbooks, then arXiv and DOAJ.\n")
+    try:
+        result = build_lesson(text, on_progress=lambda m: print(f"  {m}", flush=True))
     except KeyboardInterrupt:
         print("\n  Interrupted. Anything already indexed stays indexed.\n")
         return
@@ -1058,15 +1092,13 @@ def cmd_lesson(arg: str):
         print(f"  Explainer: {result['explainer']}")
         print("             (generated, deliberately not indexed -- check it "
               "against the manifest)")
-    else:
-        print("  Explainer: not written. The corpus is still indexed.")
     print(f"  Total chunks in database: {collection.count()}")
 
     if result["indexed"]:
         cmd_lesson_scope(result["project"])
     else:
         print("\n  Nothing was indexed. Run 'python test_lesson.py --probe "
-              f"\"{subject}\"' to see which sources responded.\n")
+              f"\"{text}\"' to see which sources responded.\n")
 
 
 def cmd_lesson_off():
@@ -1119,7 +1151,8 @@ Commands:
   /clear           — wipe the database completely
   /summarize <term> — search the index and summarize every matching
                       document straight off disk, not from retrieved chunks
-  /lesson           — enter lesson mode: type subjects on their own after this
+  /lesson           — enter lesson mode: type subjects on their own after this,
+                      then next / quiz / sources / related / syllabus / back
   /lesson <subject> — learn a subject from open courseware: fetch, index,
                       draft an explainer, then scope the session to it
   /lesson off       — leave lesson mode (also /exit lesson)
