@@ -1253,6 +1253,7 @@ def api_ask():
         result = ask.ask(
             messages, model, project=proj, ground=ground, turn_id=turn_id,
             on_token=lambda t: emit({"type": "token", "text": t}),
+            on_stage=lambda stage: emit({"type": "stage", "stage": stage}),
             external_policy="pull",
         )
         evidence_attachments = _attachments_for_evidence(

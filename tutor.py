@@ -48,6 +48,7 @@ Session state lives on disk:
 
 import json
 import re
+import urllib.parse
 from datetime import date
 from pathlib import Path
 
@@ -149,6 +150,153 @@ def normalize_subject(subject: str) -> str:
     text = re.sub(r"^(?:i\s+want\s+to\s+learn|help\s+me\s+learn)\s+(?:about\s+)?",
                   "", text, flags=re.I)
     return text.strip() or (subject or "").strip()
+
+
+# ---------------------------------------------------------------------------
+# Video
+#
+# MIT Learn exposes youtube_id and an ISO-8601 duration as real fields on
+# video resources, so cross-referencing a lecture to its recording needs no
+# scraping and no guessing -- and the duration arrives exact, which is what
+# makes crediting a watch possible rather than approximate.
+# ---------------------------------------------------------------------------
+
+DURATION_RE = re.compile(
+    r"P(?:\d+D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", re.IGNORECASE)
+
+
+def duration_seconds(value: str) -> int:
+    match = DURATION_RE.match(value or "")
+    if not match:
+        return 0
+    hours, minutes, seconds = (int(g or 0) for g in match.groups())
+    return hours * 3600 + minutes * 60 + seconds
+
+
+def format_hms(seconds: int) -> str:
+    seconds = int(seconds or 0)
+    if seconds >= 3600:
+        return f"{seconds // 3600}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}"
+    return f"{seconds // 60}:{seconds % 60:02d}"
+
+
+YT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+
+
+def topic_videos(subject: str, limit: int = 12) -> list:
+    url = (f"{lesson.MIT_API}/learning_resources_search/?platform=ocw"
+           f"&resource_type=video&limit={limit}"
+           f"&q={urllib.parse.quote_plus(subject)}")
+    try:
+        payload = lesson._fetch_json(url)
+    except Exception:
+        return []
+
+    out = []
+    for item in payload.get("results") or []:
+        video_id = item.get("youtube_id") or item.get("readable_id") or ""
+        page = item.get("url") or ""
+        if not YT_ID_RE.match(video_id or ""):
+            continue
+        out.append({
+            "youtube_id": video_id,
+            "title": item.get("title") or "",
+            "url": page,
+            "course": course_of(page),
+            "seconds": duration_seconds(item.get("duration") or ""),
+        })
+    return out
+
+
+TITLE_STOP = {
+    "the", "and", "for", "with", "lecture", "lec", "slides", "slide", "notes",
+    "note", "part", "introduction", "intro", "review", "chap", "chapter",
+}
+
+
+def _title_tokens(title: str) -> set:
+    return {w for w in re.findall(r"[a-z]{3,}", (title or "").lower())} - TITLE_STOP
+
+
+def attach_videos(lectures: list, videos: list) -> list:
+    """
+    Pair each lecture with its recording, when there is one.
+
+    Scored rather than matched exactly, because MIT's video titles and slide
+    titles are written by different people at different times: 14.13's slides
+    say "Risk Preferences" and its video says "Lecture 7: Risk Preferences I".
+    Same course is worth two points, each shared significant word one more,
+    and nothing under three points is accepted. That threshold is the
+    difference between "the recording of this lecture" and "a video from this
+    course", and pairing the wrong one is worse than pairing none: a watch
+    credit against the wrong recording is a false record of what someone
+    studied.
+    """
+    for lecture in lectures:
+        slug = course_of(lecture["url"])
+        tokens = _title_tokens(lecture["title"])
+        best, best_score = None, 0
+        for video in videos:
+            score = 2 if (video["course"] and video["course"] == slug) else 0
+            score += len(tokens & _title_tokens(video["title"]))
+            if score > best_score:
+                best, best_score = video, score
+        if best and best_score >= 3:
+            lecture["video"] = dict(best)
+    return lectures
+
+
+# ---------------------------------------------------------------------------
+# Synthesis
+#
+# What a person asking about a subject actually wants first is the subject,
+# not a reading list. So the synthesis is written across every indexed
+# document that deals with the topic -- including the ones from other courses
+# -- and it is what leads. The placement (which course, which lectures) comes
+# after it, and the lecture-by-lecture walk happens only if they ask for it.
+# ---------------------------------------------------------------------------
+
+SYNTHESIS_SYSTEM = """You are writing the opening account of a subject for
+someone who just asked to learn it, drawing across several course documents
+that all deal with it.
+
+- Synthesize. Do not summarize each document in turn; write one coherent
+  treatment that draws on all of them.
+- Use only what the excerpts support. Never add from memory. Where they
+  disagree or one goes further, say so.
+- State every definition and theorem in full. Do not describe a result you
+  could state.
+- Preserve mathematics in LaTeX: \\( \\) inline, \\[ \\] display. Never rewrite a
+  formula into keyboard characters.
+- Structure it as the subject demands, with short headed sections.
+- Attribute where it matters: name the document a definition or theorem comes
+  from, in the sentence, not as a footnote.
+- End with "Still open:" naming anything a reader would need that these
+  excerpts do not cover. If nothing, omit the section.
+- No preamble. Start with the subject."""
+
+
+def synthesize(subject: str, rows: list, budget: int = 90000) -> str:
+    import rag
+
+    indexed = [r for r in rows if r.get("status") == "indexed" and r.get("file")]
+    if not indexed:
+        return ""
+
+    share = max(3000, budget // len(indexed))
+    excerpts = []
+    for row in indexed:
+        try:
+            text = rag.read_indexed_source_text(row["file"]) or ""
+        except Exception:
+            continue
+        if text.strip():
+            excerpts.append(f"--- {row['title']} ({row['url']}) ---\n{text[:share]}")
+    if not excerpts:
+        return ""
+
+    return lesson._ask(f"Subject: {subject}\n\n" + "\n\n".join(excerpts),
+                       SYNTHESIS_SYSTEM, num_predict=5000) or ""
 
 
 # ---------------------------------------------------------------------------
@@ -385,27 +533,71 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
         f"({sum(1 for a in arc if a['role'] == 'prerequisite')} as prerequisites)")
 
     tier = lesson.TIER_BY_KEY["mit"]
+    videos = topic_videos(subject)
+    if videos:
+        say(f"  {len(videos)} recorded lectures found")
+    arc = attach_videos(arc, videos)
+
     planned = []
     for i, lec in enumerate(arc, 1):
-        say(f"  fetching {i}/{len(arc)}: {lec['title']}")
+        say(f"  reading {i}/{len(arc)}: {lec['title']}")
         row = lesson._ingest_one(lec, tier, subject, project)
-        planned.append({
+        entry = {
             "n": i,
             "title": lec["title"],
             "url": lec["url"],
-            "youtube_url": lec.get("youtube_url", ""),
-            "description": lec.get("description", ""),
             "role": lec["role"],
             "seq": lec["seq"],
             "file": row.get("file", ""),
             "status": row["status"],
+        }
+        if lec.get("video"):
+            entry["video"] = lec["video"]
+        planned.append(entry)
+
+    # Material on this topic from OTHER courses. The synthesis is supposed to
+    # draw on everything that deals with the subject, and confining it to one
+    # course would throw away exactly what makes a synthesis worth reading --
+    # 14.03 states expected utility with worked numbers, 14.123 states it with
+    # numbered theorems, and the useful account gives both.
+    elsewhere = []
+    for hit in hits:
+        if course_of(hit["url"]) == slug or len(elsewhere) >= 4:
+            continue
+        if classify(hit["title"], hit["url"]) not in {"lecture", "reading"}:
+            continue
+        elsewhere.append(hit)
+
+    cross_rows = []
+    for hit in elsewhere:
+        say(f"  also reading: {hit['title']} ({hit['course']})")
+        row = lesson._ingest_one(hit, tier, subject, project)
+        cross_rows.append(row)
+
+    say("Writing the synthesis across everything that covers this...")
+    synthesis = synthesize(subject, planned + cross_rows)
+
+    also_covered = []
+    seen_courses = set()
+    for row in cross_rows:
+        if row["status"] != "indexed":
+            continue
+        other = course_of(row["url"])
+        if not other or other in seen_courses:
+            continue
+        seen_courses.add(other)
+        also_covered.append({
+            "number": course_number(other),
+            "title": row.get("course", ""),
+            "url": f"https://ocw.mit.edu/courses/{other}/",
+            "item": row["title"],
         })
 
     other_courses = {}
     for hit in hits:
-        other_slug = course_of(hit["url"])
-        if other_slug and other_slug != slug:
-            other_courses.setdefault(other_slug, hit["course"])
+        other = course_of(hit["url"])
+        if other and other != slug:
+            other_courses.setdefault(other, hit["course"])
 
     remaining = [lec["title"] for lec in lectures
                  if lec["url"] not in {a["url"] for a in arc}]
@@ -416,15 +608,18 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
         "course": {"slug": slug, "number": number,
                    "title": hits[0]["course"],
                    "url": f"https://ocw.mit.edu/courses/{slug}/"},
+        "synthesis": synthesis,
         "lectures": planned,
+        "also_covered": also_covered,
         "assignments": [{"title": a["title"], "url": a["url"]} for a in assignments],
         "exams": [{"title": e["title"], "url": e["url"]} for e in exams],
         "related": {
-            "courses": [{"number": course_number(s), "title": t,
-                         "url": f"https://ocw.mit.edu/courses/{s}/"}
-                        for s, t in list(other_courses.items())[:6]],
+            "courses": [{"number": course_number(s2), "title": t,
+                         "url": f"https://ocw.mit.edu/courses/{s2}/"}
+                        for s2, t in list(other_courses.items())[:6]],
             "same_course": remaining[:8],
         },
+        "watched": {},
         "position": 0,
         "built": date.today().isoformat(),
     }
@@ -460,38 +655,92 @@ def load(project: str) -> dict:
 # Rendering
 # ---------------------------------------------------------------------------
 
-def render_syllabus(syl: dict) -> str:
+def render_placement(syl: dict) -> str:
+    """
+    Where the subject is taught: the course, and only the lectures that cover
+    it.
+
+    Deliberately not the course syllabus. Listing all twelve lectures of
+    14.121 when four of them cover expected utility is padding dressed as
+    thoroughness -- the reader has to do the filtering that this module was
+    supposed to do. What earns its place is the course, the specific lectures
+    with their numbers, whether each is core or a prerequisite, whether a
+    recording exists and how long it runs, and which other courses cover the
+    same ground.
+    """
+    if not syl.get("course"):
+        return ""
+
+    course = syl["course"]
+    lines = ["## Where this is taught", "",
+             f"**{course['number']} {course['title']}**  ·  {course['url']}", ""]
+
+    for lec in syl.get("lectures", []):
+        mark = ">" if lec["n"] == syl.get("position", 0) + 1 else " "
+        role = ("prerequisite" if lec["role"] == "prerequisite"
+                else f"lecture {lec['seq']}")
+        line = f"{mark} {lec['title']}  ({role})"
+        if lec["status"] != "indexed":
+            line += f"  [{lec['status']}]"
+        lines.append(line)
+
+        video = lec.get("video")
+        if video:
+            watched = (syl.get("watched") or {}).get(video["youtube_id"]) or {}
+            credit = "  ✓ watched" if watched.get("complete") else ""
+            lines.append(f"      video {format_hms(video['seconds'])}"
+                         f"  ·  {video['url']}{credit}")
+
+    also = syl.get("also_covered") or []
+    if also:
+        lines += ["", "Also covered in:"]
+        for item in also:
+            lines.append(f"  {item['number']}  {item['item']}")
+            lines.append(f"      {item['url']}")
+
+    return "\n".join(lines)
+
+
+def render_answer(syl: dict) -> str:
+    """
+    The subject first, then where it is taught, then what to do next.
+
+    This ordering is the whole point of the module. Someone who asks to learn
+    expected utility wants expected utility, not a course catalogue with their
+    answer somewhere inside it. The synthesis is written once at plan() time
+    and stored, so re-reading it costs nothing and says the same thing twice
+    running.
+    """
     if not syl.get("course"):
         return (f"No MIT course was found covering '{syl.get('subject')}'. "
                 "Run a plain /lesson on it to search the wider ladder.")
 
-    course = syl["course"]
-    lines = [
-        f"# {syl['subject']}",
-        "",
-        f"Home course: **{course['number']} {course['title']}**",
-        course["url"],
-        "",
-        "## The arc",
-        "",
-    ]
-    for lec in syl["lectures"]:
-        mark = ">" if lec["n"] == syl.get("position", 0) + 1 else " "
-        role = "prerequisite" if lec["role"] == "prerequisite" else "core"
-        flag = "" if lec["status"] == "indexed" else f"  [{lec['status']}]"
-        lines.append(f"{mark} {lec['n']:>2}. {lec['title']}  ({role}){flag}")
+    parts = [f"# {syl['subject']}", ""]
 
-    if syl.get("assignments"):
-        lines += ["", "## Assigned by MIT", ""]
-        for a in syl["assignments"]:
-            lines.append(f"  - {a['title']}  {a['url']}")
-    if syl.get("exams"):
-        lines += ["", "## Exams", ""]
-        for e in syl["exams"]:
-            lines.append(f"  - {e['title']}  {e['url']}")
+    synthesis = (syl.get("synthesis") or "").strip()
+    if synthesis:
+        parts += [synthesis, "", "---", ""]
+    else:
+        parts += ["*The local model did not produce a synthesis. The sources "
+                  "below are indexed and readable.*", "", "---", ""]
 
-    lines += ["", "next · quiz · sources · related · syllabus · /lesson off", ""]
-    return "\n".join(lines)
+    placement = render_placement(syl)
+    if placement:
+        parts += [placement, ""]
+
+    videos = [lec for lec in syl.get("lectures", []) if lec.get("video")]
+    nav = ["next — walk the lectures one at a time",
+           "quiz — MIT's own problem sets and exams, plus recall questions",
+           "sources · related · syllabus"]
+    if videos:
+        nav.insert(0, "watch — play the recorded lecture here and take the credit")
+    parts += ["", " · ".join(w.split(" — ")[0] for w in nav), ""]
+    return "\n".join(parts)
+
+
+# Kept under its old name because three surfaces and the tests call it. What
+# changed is what it renders: the placement, not a course listing.
+render_syllabus = render_placement
 
 
 TEACH_SYSTEM = """You are teaching one lecture from a graduate course, from its
@@ -674,6 +923,8 @@ NAV = {
     "sources": "sources", "source": "sources", "cite": "sources",
     "related": "related", "next steps": "related", "what next": "related",
     "syllabus": "syllabus", "plan": "syllabus", "outline": "syllabus",
+    "answer": "answer", "summary": "answer", "overview": "answer",
+    "recap": "answer", "watch": "watch", "video": "watch",
     "back": "back", "previous": "back", "prev": "back",
     "repeat": "repeat", "again": "repeat",
 }
@@ -717,8 +968,43 @@ def handle(syl: dict, word: str) -> tuple:
     if word == "related":
         return related(syl), syl
     if word == "syllabus":
-        return render_syllabus(syl), syl
+        return render_placement(syl), syl
+    if word == "answer":
+        return render_answer(syl), syl
+    if word == "watch":
+        return render_watch(syl), syl
     return ("", syl)
+
+
+def render_watch(syl: dict) -> str:
+    """
+    The recording for the current lecture, and its credit state.
+
+    In the web app this is what the player opens on. In the terminal there is
+    no player, so it prints the link and the credit state and nothing more:
+    a link someone clicked is not evidence they watched anything, and
+    recording it as a completion would make the credit worthless.
+    """
+    lectures = syl.get("lectures") or []
+    if not lectures:
+        return "No lectures planned yet."
+    lec = lectures[max(0, min(syl.get("position", 0), len(lectures) - 1))]
+    video = lec.get("video")
+    if not video:
+        return (f"No recording is published for {lec['title']}.\n"
+                "MIT posts video for some courses and not others. The notes "
+                "are indexed either way.")
+
+    watched = (syl.get("watched") or {}).get(video["youtube_id"]) or {}
+    lines = [f"## {video['title']}", "",
+             f"{format_hms(video['seconds'])}  ·  {video['url']}",
+             f"youtube:{video['youtube_id']}"]
+    if watched.get("complete"):
+        lines += ["", f"Watched — credited {watched.get('credited_on', '')}."]
+    elif watched.get("seconds"):
+        pct = int(100 * watched["seconds"] / max(1, video["seconds"]))
+        lines += ["", f"{pct}% watched so far."]
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

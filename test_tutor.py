@@ -55,10 +55,20 @@ SYLLABUS = {
         {"n": 1, "title": "Choice, Preference, and Utility", "url": "u1",
          "role": "prerequisite", "seq": 1, "file": "", "status": "skipped: fixture"},
         {"n": 2, "title": "Expected Utility Theory", "url": "u2",
-         "role": "core", "seq": 8, "file": "", "status": "skipped: fixture"},
+         "role": "core", "seq": 8, "file": "", "status": "skipped: fixture",
+         "video": {"youtube_id": "pwFsPEPPUGU", "title": "Lecture 8: Expected Utility",
+                   "url": "https://ocw.mit.edu/courses/14-121-x/resources/lec8/",
+                   "course": "14-121-x", "seconds": 4614}},
         {"n": 3, "title": "Attitudes Towards Risk", "url": "u3",
          "role": "core", "seq": 9, "file": "", "status": "skipped: fixture"},
     ],
+    "synthesis": "Expected utility is the probability-weighted sum of "
+                 "\\(u(c)\\) over outcomes. The vNM theorem gives it from "
+                 "three axioms.",
+    "also_covered": [{"number": "14.03", "title": "Micro and Public Policy",
+                      "url": "https://ocw.mit.edu/courses/14-03-x/",
+                      "item": "Lecture Note 16"}],
+    "watched": {},
     "assignments": [{"title": "Problem set 1", "url": "pa1"}],
     "exams": [{"title": "Final Exam 2005", "url": "ex1"}],
     "related": {"courses": [{"number": "14.123", "title": "Micro III", "url": "c3"}],
@@ -139,6 +149,53 @@ def main():
         [a["seq"] for a in arc if a["role"] == "prerequisite"], [2])
     lesson._ask = ORIGINAL_ASK
 
+    print("Video metadata")
+    chk("ISO-8601 duration parsed", tutor.duration_seconds("PT1H16M54S"), 4614)
+    chk("minutes-only duration parsed", tutor.duration_seconds("PT47M30S"), 2850)
+    chk("junk duration is zero, not a crash", tutor.duration_seconds("later"), 0)
+    chk("hours formatted", tutor.format_hms(4614), "1:16:54")
+    chk("minutes formatted", tutor.format_hms(2850), "47:30")
+
+    print("Video matching")
+    lectures = [{"title": "Risk Preferences",
+                 "url": "https://ocw.mit.edu/courses/14-13-x/resources/lec7/"}]
+    videos = [
+        {"youtube_id": "aaaaaaaaaaa", "title": "Lecture 7: Risk Preferences I",
+         "url": "https://ocw.mit.edu/courses/14-13-x/resources/v1/",
+         "course": "14-13-x", "seconds": 4614},
+        {"youtube_id": "bbbbbbbbbbb", "title": "Mid-Term Review",
+         "url": "https://ocw.mit.edu/courses/14-13-x/resources/v2/",
+         "course": "14-13-x", "seconds": 2813},
+    ]
+    matched = tutor.attach_videos([dict(l) for l in lectures], videos)
+    chk("the matching recording wins over another from the same course",
+        matched[0]["video"]["youtube_id"], "aaaaaaaaaaa")
+    weak = tutor.attach_videos(
+        [{"title": "Stochastic Dominance",
+          "url": "https://ocw.mit.edu/courses/99-999-x/resources/x/"}], videos)
+    chk("a weak match is left unpaired rather than guessed",
+        "video" in weak[0], False)
+
+    print("Leading with the answer")
+    answer = tutor.render_answer(SYLLABUS)
+    chk("the synthesis comes before the placement",
+        answer.index("probability-weighted") < answer.index("Where this is taught"),
+        True)
+    chk("the subject is the heading",
+        answer.startswith("# expected utility"), True)
+    chk("the recording is offered when one exists", "watch" in answer, True)
+
+    print("Placement is the relevant lectures, not the course")
+    placement = tutor.render_placement(SYLLABUS)
+    chk("names the home course", "14.121" in placement, True)
+    chk("names a covering lecture", "Expected Utility Theory" in placement, True)
+    chk("marks the current position", "> " in placement, True)
+    chk("distinguishes prerequisites", "prerequisite" in placement, True)
+    chk("shows the recording's runtime", "1:16:54" in placement, True)
+    chk("cross-references the other course", "14.03" in placement, True)
+    chk("does not list lectures outside the arc",
+        "Consumer Theory" in placement, False)
+
     print("Navigation words")
     chk("next", tutor.navigation_word("next"), "next")
     chk("case and padding ignored", tutor.navigation_word("  Quiz Me "), "quiz")
@@ -146,6 +203,8 @@ def main():
         tutor.navigation_word("next generation sequencing"), "")
     chk("anything unrecognised is a subject",
         tutor.navigation_word("stochastic dominance"), "")
+    chk("summary maps to the answer", tutor.navigation_word("summary"), "answer")
+    chk("watch maps to the recording", tutor.navigation_word("watch"), "watch")
 
     print("Syllabus persistence and the pointer")
     tutor.save(dict(SYLLABUS))
@@ -166,15 +225,28 @@ def main():
     tutor.set_current("expected-utility")
 
     reply = lesson.answer_lesson_command("/lesson syllabus")
-    chk("syllabus names the course", "14.121" in reply["text"], True)
-    chk("syllabus marks the current position", "> " in reply["text"], True)
-    chk("syllabus distinguishes prerequisites", "prerequisite" in reply["text"], True)
+    chk("syllabus word returns the placement, not a course listing",
+        "14.121" in reply["text"] and "Consumer Theory" not in reply["text"], True)
+
+    reply = lesson.answer_lesson_command("/lesson summary")
+    chk("summary word returns the synthesis first",
+        reply["text"].index("probability-weighted")
+        < reply["text"].index("Where this is taught"), True)
+
+    reply = lesson.answer_lesson_command("/lesson watch")
+    chk("watch on a lecture with no recording says so rather than guessing",
+        "No recording is published" in reply["text"], True)
 
     reply = lesson.answer_lesson_command("/lesson next")
     chk("next advances the position on disk",
         tutor.load("expected-utility")["position"], 1)
     chk("next names the lecture it moved to",
         "Expected Utility Theory" in reply["text"], True)
+
+    reply = lesson.answer_lesson_command("/lesson watch")
+    chk("watch names the recording once the position has one",
+        "pwFsPEPPUGU" in reply["text"], True)
+    chk("watch states the runtime", "1:16:54" in reply["text"], True)
 
     reply = lesson.answer_lesson_command("/lesson quiz")
     chk("quiz surfaces MIT's real assignment", "Problem set 1" in reply["text"], True)

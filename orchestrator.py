@@ -1065,8 +1065,7 @@ def cmd_lesson(arg: str):
 
     if syllabus.get("course") and syllabus.get("lectures"):
         tutor.set_current(syllabus["project"])
-        print("\n" + tutor.render_syllabus(syllabus))
-        print("\n" + tutor.teach(syllabus) + "\n")
+        print("\n" + tutor.render_answer(syllabus) + "\n")
         cmd_lesson_scope(syllabus["project"])
         return
 

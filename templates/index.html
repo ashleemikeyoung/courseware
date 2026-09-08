@@ -522,7 +522,22 @@ textarea{resize:vertical;min-height:74px}
    WORKING. Same mark as the wordmark, so the wait reads as the app thinking
    rather than as a generic spinner bolted on. The stem end is the pivot, so
    it sways from where it would be attached. */
-.run-leaf{display:flex;align-items:center;min-height:1.6em}
+.run-leaf{display:flex;align-items:baseline;gap:.55em;min-height:1.6em;
+  font-size:.86em;line-height:1.6}
+/* The leaf keeps its own alignment: baseline works for the text beside it,
+   but the SVG has no baseline worth aligning to. */
+.run-leaf svg{align-self:center;flex:none}
+/* The stage is the long, changing part, so it gets the room and truncates.
+   The elapsed clock never truncates -- a half-written duration is worse than
+   no duration, and it is only ever a few characters wide. */
+.run-leaf .run-stage{
+  color:var(--muted);min-width:0;flex:1 1 auto;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.run-leaf .run-elapsed{
+  color:var(--muted);opacity:.7;flex:none;
+  font-variant-numeric:tabular-nums;
+}
 .run-leaf svg{
   height:22px;width:auto;fill:var(--blue);color:var(--blue);
   transform-origin:14% 92%;
@@ -3210,7 +3225,7 @@ function chatBubble(m, index){
   if (m.role === "user") {
     bubble.innerHTML = esc(m.content).replace(/\n/g, "<br>");
   } else if (m.pending && !(m.content || "").trim()) {
-    bubble.innerHTML = runningIndicatorHtml();
+    bubble.innerHTML = runningIndicatorHtml(m.stage, m.startedAt);
   } else {
     bubble.innerHTML = mdToHtml(m.content || "", {showCitations: STATE.showContext});
   }
@@ -3226,11 +3241,44 @@ function chatBubble(m, index){
 
 const LEAF_PATH = "M361.00 557.91 C212.51 518.64 77.16 407.49 23.20 280.50 C7.86 244.41 1.06 215.37 1.02 185.80 C0.92 113.11 39.36 51.52 105.84 17.88 C137.89 1.66 174.63 -3.52 212.00 2.92 C245.53 8.70 278.96 24.36 308.53 48.15 C329.83 65.29 356.13 95.72 376.41 126.70 C440.35 224.38 467.83 352.98 452.97 485.03 C449.99 511.58 448.96 516.43 446.25 516.82 C444.65 517.05 442.90 515.91 440.13 512.82 C434.69 506.75 314.30 361.94 293.54 336.50 C284.12 324.95 271.71 309.20 265.97 301.50 C254.86 286.60 242.65 273.03 241.45 274.23 C239.73 275.93 248.46 295.27 260.56 316.62 C270.72 334.54 278.93 351.24 363.68 526.32 C372.01 543.53 377.99 557.07 377.81 558.32 C377.36 561.49 374.24 561.41 361.00 557.91 Z";
 
-function runningIndicatorHtml(){
-  return '<div class="run-leaf" role="status" aria-live="polite">' +
+/* Leaf, what it is working on, and how long it has been at it -- one line.
+   The stage text comes from the job stream (see the "stage" events app.py
+   emits); the clock is computed client-side from startedAt, because a
+   server-sent time would only be as fresh as the last event and long silent
+   stretches are exactly when someone wants to see the number moving. */
+function runningIndicatorHtml(stage, startedAt){
+  const started = startedAt || Date.now();
+  return '<div class="run-leaf" role="status" aria-live="polite" ' +
+      'data-started="' + started + '">' +
     '<svg viewBox="0 0 457 562" aria-hidden="true" focusable="false">' +
     '<path fill="currentColor" d="' + LEAF_PATH + '"/></svg>' +
+    '<span class="run-stage">' + esc(stage || "thinking") + '</span>' +
+    '<span class="run-elapsed">' + elapsedLabel(started) + '</span>' +
     '<span class="sr-only">Working</span></div>';
+}
+
+function elapsedLabel(started){
+  const total = Math.max(0, Math.round((Date.now() - started) / 1000));
+  const mins = Math.floor(total / 60), secs = total % 60;
+  return mins ? mins + "m " + String(secs).padStart(2, "0") + "s" : total + "s";
+}
+
+/* One interval for the whole page rather than one per bubble: there is only
+   ever a handful of these, and a timer per message is a leak waiting for the
+   first time a render drops a node without clearing it. */
+setInterval(() => {
+  document.querySelectorAll(".run-leaf[data-started]").forEach(leaf => {
+    const clock = leaf.querySelector(".run-elapsed");
+    if (clock) clock.textContent = elapsedLabel(Number(leaf.dataset.started));
+  });
+}, 1000);
+
+/* Update the stage in place. Re-rendering the whole chat on every stage event
+   would rebuild the composer and cost the caret its position mid-thought. */
+function setRunStage(text){
+  const leaves = document.querySelectorAll(".run-leaf .run-stage");
+  const target = leaves[leaves.length - 1];
+  if (target) target.textContent = text;
 }
 
 /* Thumbs for training data, not just a reaction emoji. A click writes
@@ -3690,7 +3738,8 @@ async function sendAsk(){
   rememberAskPrompt(text);
   STATE.chat.messages.push({role: "user", content: text});
   input.value = ""; autoResize(input);
-  const pending = {role: "assistant", content: "", pending: true};
+  const pending = {role: "assistant", content: "", pending: true,
+                   startedAt: Date.now(), stage: "thinking"};
   STATE.chat.messages.push(pending);
   STATE.chat.busy = true; setSendState();
   renderChat();
@@ -3709,6 +3758,10 @@ async function sendAsk(){
       {messages: history, ground, model, turn_id: turnId},
       $("#asklog"),
       (e) => {
+        if (e.type === "stage"){
+          pending.stage = e.stage || "";
+          setRunStage(pending.stage);
+        }
         if (e.type === "token"){
           pending.content += e.text;
           appendToLastBubble(pending.content);

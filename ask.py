@@ -3429,7 +3429,8 @@ def _answer_app_command_guard(question: str) -> dict:
 def ask(messages: list, model: str = None, project: str = None, ground: bool = True,
         turn_id: str = None, on_token=None, echo: bool = False,
         num_ctx: int = 8192, num_predict: int = 1200,
-        temperature: float = 0.6, external_policy: str = None) -> dict:
+        temperature: float = 0.6, external_policy: str = None,
+        on_stage=None) -> dict:
     """
     messages: full conversation so far, ending in a user turn. Each item is
       {"role": "user"|"assistant", "content": str}. The caller (the web layer)
@@ -3513,9 +3514,14 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
     # the network and writes to the index, so it is by far the most expensive
     # thing a bare line of text can trigger; scripture and photo get first
     # refusal on anything they recognise.
+    # on_stage is threaded here and nowhere else on purpose. A lesson is the
+    # one thing this engine does that runs for minutes -- fetching documents,
+    # extracting them, then generating -- so it is the one thing where the
+    # caller genuinely cannot tell a slow answer from a hung one. Everything
+    # else finishes fast enough that a progress channel would be noise.
     lesson_action = answer_lesson_command(
         lesson_mode_question(last_user) if in_lesson_mode else last_user,
-        project=scope)
+        project=scope, on_progress=on_stage)
     if lesson_action:
         return _quality_finish(
             lesson_action, last_user, plan, project=scope,

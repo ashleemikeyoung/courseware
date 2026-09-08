@@ -1145,7 +1145,7 @@ def answer_lesson_command(question: str, project: str = None,
     if syllabus.get("course") and syllabus.get("lectures"):
         tutor.set_current(syllabus["project"])
         return _lesson_response(
-            tutor.render_syllabus(syllabus) + "\n\n---\n\n" + tutor.teach(syllabus),
+            tutor.render_answer(syllabus),
             project=syllabus["project"],
             course=syllabus["course"]["number"],
             lectures=len(syllabus["lectures"]))
