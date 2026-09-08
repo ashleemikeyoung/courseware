@@ -169,6 +169,16 @@ button,input,textarea,select{font:inherit;color:inherit}
 [data-theme="pink"]  .mark:nth-of-type(3),
 [data-theme="grass"] .mark:nth-of-type(4),
 [data-theme="ocean"] .mark:nth-of-type(5){display:block}
+/* Text wordmark: "el" set small, ROI riding above it as a superscript. Live
+   text rather than art, so it takes each theme's ink and blue for free. */
+.brand .wordmark{
+  font-family:var(--serif);font-size:16px;line-height:1;color:var(--ink);
+  letter-spacing:.01em;display:inline-block;
+}
+.brand .wordmark .roi{
+  font-size:.72em;vertical-align:super;color:var(--blue);
+  letter-spacing:.07em;margin-left:.10em;
+}
 /* The wordmark carries the brand, so this only has to name the tool. Set on
    the baseline of the logo rather than centred, so the two align optically.
    Caveat at a slightly larger size than the mono default used to be --
@@ -868,11 +878,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 
 <div class="rail">
   <div class="brand">
-    <img class="mark" src="/static/logo-light.png" alt="El Roi">
-    <img class="mark" src="/static/logo-dark.png" alt="" aria-hidden="true">
-    <img class="mark" src="/static/logo-pink.png" alt="" aria-hidden="true">
-    <img class="mark" src="/static/logo-grass.png" alt="" aria-hidden="true">
-    <img class="mark" src="/static/logo-ocean.png" alt="" aria-hidden="true">
+    <span class="wordmark">el<span class="roi">ROI</span></span>
   </div>
   <div class="projpick">
     <select id="projSel" title="Project"></select>
