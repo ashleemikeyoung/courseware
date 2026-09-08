@@ -620,6 +620,8 @@ textarea{resize:vertical;min-height:74px}
 .photo-slider span{font-size:12px;color:var(--ink-soft)}
 .photo-slider output{font-family:var(--mono);font-size:11px;color:var(--ink-faint);text-align:right}
 .photo-slider input{width:100%}
+.photo-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.photo-actions .btn{padding:7px 12px;font-size:12px}
 .photo-delta{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)}
 #chatGalley.context-hidden{grid-template-columns:minmax(0,1fr)}
 #chatGalley.context-hidden #chatMargin{display:none}
@@ -2761,10 +2763,11 @@ function photoAdjustmentControls(attachments, wrap){
 
   const panel = el("div", "photo-adjustments");
   panel.appendChild(el("div", "title", "Preview adjustments"));
-  const values = {
+  const zeroValues = () => ({
     brightness: 0, contrast: 0, warmth: 0, saturation: 0,
     background: 0, blur: 0, crop: 0,
-  };
+  });
+  const values = zeroValues();
   const rows = [
     ["brightness", "Brightness", -50, 50],
     ["contrast", "Contrast", -50, 70],
@@ -2775,38 +2778,94 @@ function photoAdjustmentControls(attachments, wrap){
     ["crop", "Crop", 0, 30],
   ];
   const delta = el("div", "photo-delta", "");
-  let timer = null;
+  const inputs = {};
+  const initialUrl = modified.url;
+  const copyValues = src => Object.assign(zeroValues(), src || {});
+  const sameValues = (a, b) => rows.every(([key]) => Number(a[key] || 0) === Number(b[key] || 0));
+  let lastCommitted = {values: copyValues(values), url: initialUrl, delta: ""};
+  const undoStack = [];
 
-  const refresh = () => {
-    clearTimeout(timer);
-    timer = setTimeout(async () => {
-      delta.textContent = "Updating preview...";
-      try {
-        const r = await fetch("/api/photo/adjust", {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({
-            source: modified.source,
-            project: modified.project || STATE.project,
-            adjustments: values,
-          }),
-        });
-        const data = await r.json();
-        if (data.error) {
-          delta.textContent = data.error;
-          return;
-        }
-        const img = wrap.querySelector('.mail-attachment[data-role="modified"] img');
-        if (img && data.attachment && data.attachment.url)
-          img.src = data.attachment.url + "&t=" + Date.now().toString(36);
-        const link = wrap.querySelector('.mail-attachment[data-role="modified"]');
-        if (link && data.attachment && data.attachment.url)
-          link.href = data.attachment.url;
-        delta.textContent = `Change strength: ${(data.delta || 0).toFixed(1)}/255`;
-      } catch(e){
-        delta.textContent = "Could not update preview";
+  const previewImage = () => wrap.querySelector('.mail-attachment[data-role="modified"] img');
+  const previewLink = () => wrap.querySelector('.mail-attachment[data-role="modified"]');
+  const setPreviewUrl = url => {
+    if (!url) return;
+    const img = previewImage();
+    if (img) {
+      img.src = url + (url.includes("?") ? "&" : "?") + "t=" + Date.now().toString(36);
+      img.style.filter = "";
+      img.style.transform = "";
+    }
+    const link = previewLink();
+    if (link) link.href = url;
+  };
+  const setControls = next => {
+    Object.assign(values, copyValues(next));
+    Object.entries(inputs).forEach(([key, input]) => {
+      input.value = String(values[key] || 0);
+      if (input.nextElementSibling) input.nextElementSibling.textContent = input.value;
+    });
+  };
+  const applyLocalPreview = () => {
+    const img = previewImage();
+    if (!img) return;
+    const brightness = 1 + ((values.brightness || 0) - (values.background || 0) * 0.18) / 100;
+    const contrast = 1 + (values.contrast || 0) / 100;
+    const saturation = 1 + (values.saturation || 0) / 100;
+    const warmth = values.warmth || 0;
+    const blur = Math.max(0, Math.min(2.5, (values.blur || 0) / 12));
+    const scale = 1 + (values.crop || 0) / 130;
+    img.style.transition = "filter .06s linear, transform .06s linear";
+    img.style.transformOrigin = "50% 50%";
+    img.style.transform = `scale(${scale.toFixed(3)})`;
+    img.style.filter = [
+      `brightness(${Math.max(.25, brightness).toFixed(3)})`,
+      `contrast(${Math.max(.25, contrast).toFixed(3)})`,
+      `saturate(${Math.max(.1, saturation).toFixed(3)})`,
+      `sepia(${Math.max(0, warmth) / 180})`,
+      `hue-rotate(${Math.min(0, warmth) / 4}deg)`,
+      blur ? `blur(${blur.toFixed(2)}px)` : "",
+    ].filter(Boolean).join(" ");
+  };
+
+  const renderPreview = async (pushUndo=true) => {
+    if (sameValues(values, lastCommitted.values)) {
+      delta.textContent = "Already up to date";
+      return;
+    }
+    if (pushUndo) undoStack.push({
+      values: copyValues(lastCommitted.values),
+      url: lastCommitted.url,
+      delta: lastCommitted.delta,
+    });
+    delta.textContent = "Rendering preview...";
+    try {
+      const r = await fetch("/api/photo/adjust", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          source: modified.source,
+          project: modified.project || STATE.project,
+          adjustments: values,
+        }),
+      });
+      const data = await r.json();
+      if (data.error) {
+        delta.textContent = data.error;
+        applyLocalPreview();
+        return;
       }
-    }, 220);
+      const url = data.attachment && data.attachment.url;
+      setPreviewUrl(url);
+      lastCommitted = {
+        values: copyValues(values),
+        url: url || lastCommitted.url,
+        delta: `Change strength: ${(data.delta || 0).toFixed(1)}/255`,
+      };
+      delta.textContent = lastCommitted.delta;
+    } catch(e){
+      delta.textContent = "Could not update preview";
+      applyLocalPreview();
+    }
   };
 
   rows.forEach(([key, label, min, max]) => {
@@ -2819,11 +2878,47 @@ function photoAdjustmentControls(attachments, wrap){
     input.oninput = () => {
       values[key] = Number(input.value);
       out.textContent = input.value;
-      refresh();
+      applyLocalPreview();
+      delta.textContent = "Live preview. Release or update to render.";
     };
+    input.onchange = () => renderPreview(true);
+    inputs[key] = input;
     row.append(input, out);
     panel.appendChild(row);
   });
+  const actions = el("div", "photo-actions");
+  const updateBtn = el("button", "btn", "Update preview");
+  updateBtn.type = "button";
+  updateBtn.onclick = () => renderPreview(true);
+  const undoBtn = el("button", "btn ghost", "Undo");
+  undoBtn.type = "button";
+  undoBtn.onclick = () => {
+    const previous = undoStack.pop();
+    if (!previous) {
+      delta.textContent = "Nothing to undo";
+      return;
+    }
+    setControls(previous.values);
+    setPreviewUrl(previous.url);
+    lastCommitted = {
+      values: copyValues(previous.values),
+      url: previous.url,
+      delta: previous.delta || "",
+    };
+    delta.textContent = "Undone";
+  };
+  const resetBtn = el("button", "btn ghost", "Reset sliders");
+  resetBtn.type = "button";
+  resetBtn.onclick = () => {
+    if (!sameValues(values, zeroValues()) || lastCommitted.url !== initialUrl)
+      undoStack.push({values: copyValues(lastCommitted.values), url: lastCommitted.url, delta: lastCommitted.delta});
+    setControls(zeroValues());
+    setPreviewUrl(initialUrl);
+    lastCommitted = {values: zeroValues(), url: initialUrl, delta: ""};
+    delta.textContent = "Reset to the starting preview";
+  };
+  actions.append(updateBtn, undoBtn, resetBtn);
+  panel.appendChild(actions);
   panel.appendChild(delta);
   return panel;
 }
