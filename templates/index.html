@@ -60,14 +60,16 @@
 }
 
 /* BALLET PINK — pale rose stock. The proofing red shifts toward carmine so it
-   still separates from the ground, and the blue warms toward violet so it sits
-   with the pink instead of fighting it. */
+   still separates from the ground, and the accent runs hot magenta: bright
+   enough to read as pink on pink, dark enough (5.5:1 on the paper) to hold up
+   at citation and label sizes, and far enough from the carmine that accents
+   and errors never blur together. */
 [data-theme="pink"]{
   --paper:#faeef0; --paper-2:#f4e2e6; --paper-3:#ecd4da;
   --ink:#2e1e24; --ink-soft:#6b4f58; --ink-faint:#7c5e67;
   --rule:#e0c3cb; --rule-soft:#ebd3d9;
   --red:#a8324f; --red-wash:#f6d9e0;
-  --blue:#5a4a8c; --blue-wash:#e5dff0;
+  --blue:#b3187f; --blue-wash:#fadcee;
   --green:#4a7256;
   --shadow:rgba(46,30,36,.08);
 }
@@ -175,6 +177,10 @@ button,input,textarea,select{font:inherit;color:inherit}
   font-family:var(--serif);font-size:24px;line-height:1;color:var(--ink);
   letter-spacing:.01em;display:inline-block;
   background:none;border:0;padding:0;cursor:pointer;transition:opacity .12s;
+}
+.brand .wordmark .tm{
+  font-size:.36em;vertical-align:.95em;margin-left:.14em;
+  letter-spacing:0;color:var(--ink-faint);
 }
 .brand .wordmark:hover{opacity:.72}
 .brand .wordmark:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
@@ -891,7 +897,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 
 <div class="rail">
   <div class="brand">
-    <button class="wordmark" id="btnHome" type="button" title="Home" aria-label="Home">El<span class="roi">Roi</span></button>
+    <button class="wordmark" id="btnHome" type="button" title="Home" aria-label="Home">El<span class="roi">Roi</span><span class="tm" aria-hidden="true">™</span></button>
   </div>
   <div class="projpick">
     <select id="projSel" title="Project"></select>
