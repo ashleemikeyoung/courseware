@@ -608,6 +608,19 @@ textarea{resize:vertical;min-height:74px}
   font-family:var(--sans);font-size:12px;color:var(--ink-soft);
 }
 .mail-attachment .cap span:first-child{font-weight:700;color:var(--ink)}
+.photo-adjustments{
+  border:1px solid var(--rule);border-radius:2px;padding:12px;margin-top:10px;
+  display:grid;gap:10px;background:var(--paper-2);
+}
+.photo-adjustments .title{
+  font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-faint);
+}
+.photo-slider{display:grid;grid-template-columns:8.5rem 1fr 3rem;gap:10px;align-items:center}
+.photo-slider span{font-size:12px;color:var(--ink-soft)}
+.photo-slider output{font-family:var(--mono);font-size:11px;color:var(--ink-faint);text-align:right}
+.photo-slider input{width:100%}
+.photo-delta{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)}
 #chatGalley.context-hidden{grid-template-columns:minmax(0,1fr)}
 #chatGalley.context-hidden #chatMargin{display:none}
 .composer{
@@ -2720,6 +2733,7 @@ function renderMailAttachments(attachments){
   const wrap = el("div", "mail-attachments");
   attachments.forEach(a => {
     const link = el("a", "mail-attachment");
+    link.dataset.role = a.role || "";
     link.href = a.url;
     link.target = "_blank";
     link.rel = "noopener";
@@ -2735,7 +2749,83 @@ function renderMailAttachments(attachments){
     link.appendChild(cap);
     wrap.appendChild(link);
   });
+  const controls = photoAdjustmentControls(attachments, wrap);
+  if (controls) wrap.appendChild(controls);
   return wrap;
+}
+
+function photoAdjustmentControls(attachments, wrap){
+  const original = (attachments || []).find(a => a.photo_preview && a.role === "original");
+  const modified = (attachments || []).find(a => a.photo_preview && a.role === "modified");
+  if (!original || !modified || !modified.source) return null;
+
+  const panel = el("div", "photo-adjustments");
+  panel.appendChild(el("div", "title", "Preview adjustments"));
+  const values = {
+    brightness: 0, contrast: 0, warmth: 0, saturation: 0,
+    background: 0, blur: 0, crop: 0,
+  };
+  const rows = [
+    ["brightness", "Brightness", -50, 50],
+    ["contrast", "Contrast", -50, 70],
+    ["warmth", "Warmth", -50, 50],
+    ["saturation", "Saturation", -50, 70],
+    ["background", "Background", 0, 70],
+    ["blur", "Blur", 0, 16],
+    ["crop", "Crop", 0, 30],
+  ];
+  const delta = el("div", "photo-delta", "");
+  let timer = null;
+
+  const refresh = () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      delta.textContent = "Updating preview...";
+      try {
+        const r = await fetch("/api/photo/adjust", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            source: modified.source,
+            project: modified.project || STATE.project,
+            adjustments: values,
+          }),
+        });
+        const data = await r.json();
+        if (data.error) {
+          delta.textContent = data.error;
+          return;
+        }
+        const img = wrap.querySelector('.mail-attachment[data-role="modified"] img');
+        if (img && data.attachment && data.attachment.url)
+          img.src = data.attachment.url + "&t=" + Date.now().toString(36);
+        const link = wrap.querySelector('.mail-attachment[data-role="modified"]');
+        if (link && data.attachment && data.attachment.url)
+          link.href = data.attachment.url;
+        delta.textContent = `Change strength: ${(data.delta || 0).toFixed(1)}/255`;
+      } catch(e){
+        delta.textContent = "Could not update preview";
+      }
+    }, 220);
+  };
+
+  rows.forEach(([key, label, min, max]) => {
+    const row = el("label", "photo-slider");
+    row.appendChild(el("span", "", label));
+    const input = document.createElement("input");
+    input.type = "range"; input.min = min; input.max = max; input.value = "0";
+    const out = document.createElement("output");
+    out.textContent = "0";
+    input.oninput = () => {
+      values[key] = Number(input.value);
+      out.textContent = input.value;
+      refresh();
+    };
+    row.append(input, out);
+    panel.appendChild(row);
+  });
+  panel.appendChild(delta);
+  return panel;
 }
 
 /* Streamed tokens update just the last bubble's text rather than calling

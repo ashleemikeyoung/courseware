@@ -643,6 +643,18 @@ def api_photo_file():
     return send_file(path)
 
 
+@app.post("/api/photo/adjust")
+def api_photo_adjust():
+    body = request.json or {}
+    source = str(body.get("source") or "")
+    project = projects.safe(body.get("project") or projects.UNFILED)
+    attachment, delta, error = photo.generate_adjusted_preview(
+        source, project=project, adjustments=body.get("adjustments") or {})
+    if error:
+        return jsonify({"error": error}), 400
+    return jsonify({"attachment": attachment, "delta": delta})
+
+
 @app.get("/api/mail/config")
 def api_mail_config():
     if not MAIL_CONFIG_PATH.exists():

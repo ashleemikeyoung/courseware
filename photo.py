@@ -370,6 +370,34 @@ def _add_subject_separation(image, instructions: str):
     return Image.composite(subject, background, mask)
 
 
+def _center_subject_mask(size: tuple[int, int]):
+    from PIL import Image, ImageDraw, ImageFilter
+
+    w, h = size
+    mask = Image.new("L", (w, h), 0)
+    draw = ImageDraw.Draw(mask)
+    pad_x, pad_y = int(w * 0.22), int(h * 0.12)
+    draw.ellipse((pad_x, pad_y, w - pad_x, h - pad_y), fill=255)
+    return mask.filter(ImageFilter.GaussianBlur(radius=max(12, min(w, h) // 14)))
+
+
+def _apply_background_adjustment(image, darken: float = 0.0, blur: float = 0.0):
+    from PIL import Image, ImageEnhance, ImageFilter
+
+    base = image.convert("RGB")
+    background = base
+    if darken:
+        background = ImageEnhance.Brightness(background).enhance(
+            max(0.35, 1 - max(0, darken) / 100))
+        background = ImageEnhance.Color(background).enhance(
+            max(0.35, 1 - max(0, darken) / 160))
+    if blur:
+        background = background.filter(ImageFilter.GaussianBlur(radius=max(0, blur) / 2))
+    subject = ImageEnhance.Sharpness(base).enhance(1.08)
+    mask = _center_subject_mask(base.size)
+    return Image.composite(subject, background, mask)
+
+
 def _preview_action_lines(instructions: str) -> list[str]:
     lower = (instructions or "").lower()
     actions = [
@@ -422,11 +450,81 @@ def _apply_preview_edits(image, instructions: str):
     return edited
 
 
+def _apply_slider_adjustments(image, adjustments: dict = None):
+    from PIL import ImageEnhance, ImageFilter
+
+    adjustments = adjustments or {}
+
+    def number(key: str, default: float = 0.0) -> float:
+        try:
+            return float(adjustments.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    brightness = number("brightness")
+    contrast = number("contrast")
+    warmth = number("warmth")
+    saturation = number("saturation")
+    background = number("background")
+    blur = max(0.0, number("blur"))
+    crop = max(0.0, min(30.0, number("crop")))
+
+    edited = image.convert("RGB")
+    if crop:
+        w, h = edited.size
+        inset_x = int(w * crop / 200)
+        inset_y = int(h * crop / 200)
+        edited = edited.crop((inset_x, inset_y, w - inset_x, h - inset_y))
+    edited = ImageEnhance.Brightness(edited).enhance(1 + brightness / 75)
+    edited = ImageEnhance.Contrast(edited).enhance(1 + contrast / 70)
+    edited = ImageEnhance.Color(edited).enhance(1 + saturation / 70)
+    if warmth:
+        edited = _warm_image(edited, amount=1 + warmth / 120)
+    if background or blur:
+        edited = _apply_background_adjustment(edited, darken=background, blur=blur)
+    return edited
+
+
 def _preview_delta(original, edited) -> float:
     from PIL import ImageChops, ImageStat
 
     diff = ImageChops.difference(original.resize(edited.size), edited)
     return max(ImageStat.Stat(diff).mean)
+
+
+def generate_adjusted_preview(source: str, project: str = None,
+                              adjustments: dict = None) -> tuple[dict, float, str]:
+    source = source or ""
+    path = _source_path(source)
+    root = _documents_root()
+    if not path.exists() or not path.is_relative_to(root):
+        return {}, 0.0, f"Source file is not available: {source}"
+
+    out_dir = _preview_root(project)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    token = uuid.uuid4().hex[:10]
+    edited = out_dir / f"modified-preview-{token}.jpg"
+
+    image = _fit_preview(_open_photo_preview(path))
+    edited_image = _apply_slider_adjustments(image, adjustments)
+    delta = _preview_delta(image, edited_image)
+    edited_image.save(edited, "JPEG", quality=92)
+
+    try:
+        edited_rel = str(edited.relative_to(projects.PROJECTS_ROOT))
+    except ValueError:
+        return {}, 0.0, "Preview output path is outside the project workspace."
+    return {
+        "filename": "modified-preview.jpg",
+        "content_type": "image/jpeg",
+        "size": edited.stat().st_size,
+        "image": True,
+        "url": f"/api/photo/file?kind=preview&path={quote_plus(edited_rel)}",
+        "photo_preview": True,
+        "role": "modified",
+        "source": source,
+        "project": projects.safe(project or projects.UNFILED),
+    }, delta, ""
 
 
 def _preview_pair(item: dict, instructions: str, project: str = None) -> tuple[list, str, float]:
@@ -460,6 +558,10 @@ def _preview_pair(item: dict, instructions: str, project: str = None) -> tuple[l
             "size": original.stat().st_size,
             "image": True,
             "url": f"/api/photo/file?kind=preview&path={quote_plus(original_rel)}",
+            "photo_preview": True,
+            "role": "original",
+            "source": source,
+            "project": projects.safe(project or item.get("project") or projects.UNFILED),
         },
         {
             "filename": "modified-preview.jpg",
@@ -467,6 +569,10 @@ def _preview_pair(item: dict, instructions: str, project: str = None) -> tuple[l
             "size": edited.stat().st_size,
             "image": True,
             "url": f"/api/photo/file?kind=preview&path={quote_plus(edited_rel)}",
+            "photo_preview": True,
+            "role": "modified",
+            "source": source,
+            "project": projects.safe(project or item.get("project") or projects.UNFILED),
         },
     ], "", delta
 

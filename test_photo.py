@@ -138,6 +138,41 @@ def test_photo_edit_generates_before_after_previews(tmp_path, monkeypatch):
     assert "Preview change strength:" in result["text"]
 
 
+def test_photo_adjust_endpoint_returns_modified_preview(tmp_path, monkeypatch):
+    from PIL import Image
+
+    docs = tmp_path / "documents"
+    projects_root = tmp_path / "projects"
+    source = docs / "GCU" / "Uploaded Photos" / "portrait.jpg"
+    source.parent.mkdir(parents=True)
+    Image.new("RGB", (80, 60), (80, 90, 120)).save(source)
+
+    monkeypatch.setattr(photo, "_documents_root", lambda: docs)
+    monkeypatch.setattr(photo.projects, "PROJECTS_ROOT", projects_root)
+    client = app.app.test_client()
+
+    response = client.post("/api/photo/adjust", json={
+        "project": "GCU",
+        "source": "GCU/Uploaded Photos/portrait.jpg",
+        "adjustments": {
+            "brightness": 25,
+            "contrast": 30,
+            "warmth": 20,
+            "saturation": 25,
+            "background": 30,
+            "blur": 8,
+            "crop": 10,
+        },
+    })
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["delta"] > 10
+    assert data["attachment"]["filename"] == "modified-preview.jpg"
+    assert data["attachment"]["url"].startswith("/api/photo/file?kind=preview")
+    assert list((projects_root / "GCU" / "photo-previews").glob("modified-preview-*.jpg"))
+
+
 def test_photo_ingest_relative_folder_resolves_inside_project():
     target, error = photo._resolve_ingest_target("Uploaded Photos", project="GCU")
 
