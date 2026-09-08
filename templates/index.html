@@ -96,6 +96,7 @@
 
 :root{
   --serif:Charter,"Bitstream Charter","Iowan Old Style",Georgia,serif;
+  --sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   --wordmark:"Caveat","Cormorant Garamond",cursive;
   --measure:34rem;
@@ -279,6 +280,7 @@ h2{font-size:1.2rem;font-weight:600;margin:0 0 4px}
   display:block;font-family:var(--serif);font-size:2.35rem;line-height:1.18;font-weight:600;
   letter-spacing:0;
 }
+.bakash-title .spark{color:var(--red);font-family:var(--mono);font-size:.78em;margin-right:.28em}
 .bakash-title .accent{
   color:var(--blue);font-family:inherit;font-variant-caps:small-caps;
 }
@@ -610,6 +612,51 @@ textarea{resize:vertical;min-height:74px}
 .mail-attachment .cap span:first-child{font-weight:700;color:var(--ink)}
 .galley.photo-workspace{grid-template-columns:minmax(0,1fr) 18rem;gap:1.6rem;justify-content:stretch}
 .galley.photo-workspace .column{max-width:none}
+.galley.project-workspace{display:block}
+.galley.project-workspace .column{max-width:none}
+.projects-page{width:min(68rem,100%);margin:0 auto;padding-top:34px}
+.projects-head{
+  display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:28px;
+}
+.projects-head h2{font-size:2rem;font-weight:500;margin:0}
+.projects-tools{display:flex;align-items:center;gap:10px}
+.project-search{
+  width:13rem;background:var(--paper);border:1px solid var(--rule);border-radius:8px;
+  padding:8px 10px;font-family:var(--sans);font-size:14px;
+}
+.projects-grid{display:grid;grid-template-columns:repeat(2,minmax(16rem,1fr));gap:18px}
+.project-card{
+  min-height:8.8rem;border:1px solid var(--rule);border-radius:8px;background:var(--paper);
+  padding:18px 20px;display:flex;flex-direction:column;justify-content:space-between;
+  cursor:pointer;box-shadow:0 1px 0 var(--shadow);
+}
+.project-card:hover{border-color:var(--ink-faint);background:var(--paper-2)}
+.project-card.active{border-color:var(--blue);box-shadow:0 0 0 1px var(--blue)}
+.project-card-title{font-family:var(--sans);font-weight:700;font-size:16px;color:var(--ink)}
+.project-card-meta{display:flex;justify-content:space-between;gap:12px;color:var(--ink-faint);font-size:13px}
+.project-card-meta span:last-child{font-family:var(--mono);font-size:11px}
+.project-detail{width:min(74rem,100%);margin:0 auto;padding-top:16px}
+.project-breadcrumb{font-family:var(--sans);font-size:14px;color:var(--ink-soft);margin-bottom:28px}
+.project-breadcrumb button{background:none;border:0;color:var(--ink);font:inherit;padding:0;cursor:pointer}
+.project-breadcrumb button:hover{text-decoration:underline}
+.project-detail-head{display:flex;justify-content:space-between;gap:18px;align-items:center;margin-bottom:24px}
+.project-detail-head h2{font-size:2rem;font-weight:600;margin:0}
+.project-prompt{
+  border:1px solid var(--rule);border-radius:8px;background:var(--paper);
+  padding:12px;margin-bottom:28px;box-shadow:0 10px 26px var(--shadow);
+}
+.project-prompt textarea{border:0;background:transparent;min-height:4.3rem;font-size:17px;padding:6px 8px}
+.project-prompt textarea:focus{background:transparent}
+.project-prompt-actions{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:6px}
+.recents-title{font-family:var(--sans);font-size:15px;color:var(--ink-faint);margin:0 0 12px}
+.recent-list{display:grid}
+.recent-row{
+  display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;width:100%;
+  background:none;border:0;border-bottom:1px solid var(--rule-soft);padding:13px 0;
+  cursor:pointer;text-align:left;color:var(--ink);font-family:var(--sans);font-size:16px;
+}
+.recent-row:hover .recent-title{text-decoration:underline}
+.recent-date{color:var(--ink-faint);font-size:14px;white-space:nowrap}
 .photo-stage{display:grid;gap:10px}
 .photo-stage-tools{display:flex;justify-content:flex-end;align-items:center;gap:12px}
 .photo-frames{display:grid;grid-template-columns:1fr;gap:12px;align-items:start}
@@ -661,6 +708,27 @@ textarea{resize:vertical;min-height:74px}
 .composer .btn{flex:0 0 auto;padding:11px 22px}
 .composer .btn.attach{padding:11px 14px}
 .composer select{flex:0 1 12rem;margin-bottom:0}
+body.ask-empty #p-ask .home-main .wrap{
+  min-height:calc(100vh - 64px);max-width:none;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;padding:28px 40px 92px;
+}
+body.ask-empty .bakash-title{text-align:center;margin:0 0 28px}
+body.ask-empty .bakash-title .word{font-size:3.45rem;font-weight:400}
+body.ask-empty #askLede{display:none}
+body.ask-empty .askbar{order:4;justify-content:center;margin:14px 0 0;opacity:.82}
+body.ask-empty #chatGalley{display:none}
+body.projects-view .bakash-title,body.projects-view #askLede,body.projects-view .askbar,
+body.projects-view .composer,body.project-detail-view .bakash-title,
+body.project-detail-view #askLede,body.project-detail-view .askbar,
+body.project-detail-view .composer{display:none}
+body.ask-empty .composer{
+  position:static;width:min(52rem, 100%);border:1px solid var(--rule);
+  border-radius:8px;padding:12px;background:var(--paper-2);box-shadow:0 16px 40px var(--shadow);
+}
+body.ask-empty .composer textarea{
+  min-height:3.4rem;max-height:10rem;background:transparent;border:0;font-size:17px;
+}
+body.ask-empty .composer textarea:focus{background:transparent}
 body.photo-mode-active .composer{
   border:1px dotted var(--blue);border-radius:8px;padding:12px;background:var(--paper-2);
 }
@@ -733,6 +801,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 @media(max-width:880px){
   .galley{grid-template-columns:1fr;gap:1.6rem}
   .galley.photo-workspace{grid-template-columns:1fr}
+  .projects-grid{grid-template-columns:1fr}
   .photo-frames.compare{grid-template-columns:1fr}
   .tunegrid{grid-template-columns:1fr}
   .margin{position:static;max-height:none}
@@ -751,11 +820,22 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
    this navigation. */
 .home-layout{display:flex;align-items:stretch;min-height:calc(100vh - 60px)}
 .home-sidebar{
-  width:15rem;flex:0 0 15rem;border-right:1px solid var(--rule);
-  padding:20px 14px;overflow-y:auto;
+  width:17rem;flex:0 0 17rem;border-right:1px solid var(--rule);
+  padding:16px 10px;overflow-y:auto;background:var(--paper-2);
 }
 .home-main{flex:1;min-width:0}
 .home-main .wrap{padding:34px 40px 90px}
+.sidebar-primary{display:grid;gap:3px;margin-bottom:24px}
+.sidebar-action{
+  display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;
+  padding:8px 10px;border-radius:6px;cursor:pointer;color:var(--ink);
+  font-family:var(--sans);font-size:14px;text-align:left;
+}
+.sidebar-action:hover,.sidebar-action.active{background:var(--paper-3)}
+.sidebar-icon{
+  width:18px;flex:0 0 18px;text-align:center;color:var(--ink-faint);
+  font-family:var(--mono);font-size:14px;line-height:1;
+}
 .sidebar-section{margin-bottom:22px}
 .sidebar-head{
   display:flex;align-items:center;justify-content:space-between;
@@ -768,10 +848,11 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 }
 .sidebar-add:hover{color:var(--ink);border-color:var(--ink-soft)}
 .sidebar-item{
-  padding:7px 8px;border-radius:2px;cursor:pointer;font-size:13px;
-  color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:6px;
+  cursor:pointer;font-size:13.5px;color:var(--ink);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;
 }
-.sidebar-item:hover{background:var(--paper-2);color:var(--ink)}
+.sidebar-item:hover{background:var(--paper-3);color:var(--ink)}
 .sidebar-item.active{background:var(--blue-wash);color:var(--blue);font-weight:600}
 .sidebar-chat{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .sidebar-chat-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
@@ -843,12 +924,19 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 <!-- ASK -->
 <section class="panel on" id="p-ask"><div class="home-layout">
   <aside class="home-sidebar" id="homeSidebar">
-    <div class="sidebar-section">
-      <div class="sidebar-head">
-        <span>Projects</span>
-        <button class="sidebar-add" id="btnNewProjSidebar" title="New project">+</button>
-      </div>
-      <div id="sidebarProjects"></div>
+    <div class="sidebar-primary">
+      <button class="sidebar-action" id="btnSidebarNewChat" type="button">
+        <span class="sidebar-icon" aria-hidden="true">+</span><span>New</span>
+      </button>
+      <button class="sidebar-action" id="btnSidebarProjects" type="button">
+        <span class="sidebar-icon" aria-hidden="true">□</span><span>Projects</span>
+      </button>
+      <button class="sidebar-action" id="btnSidebarPhotos" type="button">
+        <span class="sidebar-icon" aria-hidden="true">◇</span><span>Photos</span>
+      </button>
+      <button class="sidebar-action" id="btnSidebarSettings" type="button">
+        <span class="sidebar-icon" aria-hidden="true">⚙</span><span>Customize</span>
+      </button>
     </div>
     <div class="sidebar-section">
       <div class="sidebar-head">
@@ -860,7 +948,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
   </aside>
   <div class="home-main"><div class="wrap">
   <h1 class="bakash-title">
-    <span class="word">El <span class="accent">ROI</span></span>
+    <span class="word"><span class="spark" aria-hidden="true">*</span><span id="askWelcome">El <span class="accent">ROI</span></span></span>
   </h1>
   <p class="lede" id="askLede">Data-driven insights, your data, your insights.</p>
 
@@ -2235,6 +2323,7 @@ STATE.chat = {
   loadedProject: null, conversations: []
 };
 STATE.photo = { compare:false };
+STATE.home = { view:"chat", projectQuery:"", detailProject:null };
 
 function loadAskHistory(){
   try {
@@ -2250,6 +2339,20 @@ function saveAskHistory(){
       "ask_prompt_history",
       JSON.stringify(STATE.chat.history.slice(0, 50)));
   } catch(e){}
+}
+
+function updateAskWelcome(){
+  const target = $("#askWelcome");
+  if (!target) return;
+  if (STATE.chat.messages.length){
+    target.innerHTML = 'El <span class="accent">ROI</span>';
+    return;
+  }
+  let name = "Ashlee";
+  try { name = window.localStorage.getItem("ask_user_name") || name; } catch(e){}
+  const hour = new Date().getHours();
+  const part = hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
+  target.textContent = `Good ${part}, ${name}`;
 }
 
 function rememberAskPrompt(text){
@@ -2339,8 +2442,9 @@ function renderSidebarProjects(){
   const wrap = $("#sidebarProjects"); if (!wrap) return;
   wrap.innerHTML = "";
   (STATE.projects || []).forEach(p => {
-    const row = el("div", "sidebar-item" + (p.name === STATE.project ? " active" : ""),
-      p.label || p.name);
+    const row = el("div", "sidebar-item" + (p.name === STATE.project ? " active" : ""));
+    row.appendChild(el("span", "sidebar-icon", "□"));
+    row.appendChild(el("span", "sidebar-chat-title", p.label || p.name));
     row.title = `${(p.chunks || 0).toLocaleString()} chunks`;
     row.onclick = () => {
       if (p.name === STATE.project) return;
@@ -2370,6 +2474,7 @@ function renderSidebarChats(conversations){
   }
   conversations.forEach(c => {
     const row = el("div", "sidebar-item sidebar-chat");
+    row.appendChild(el("span", "sidebar-icon", "○"));
     row.appendChild(el("span", "sidebar-chat-title", c.title || "Untitled conversation"));
     row.appendChild(el("span", "chat-tag", c.project || ""));
     row.title = (c.archived_at || "").slice(0, 16);
@@ -2425,6 +2530,7 @@ async function newAskConversation(){
   STATE.chat.messages = [];
   STATE.chat.turnSeq = 0;
   STATE.evidence = {};
+  STATE.home.view = "chat";
   $("#chatGlosses").innerHTML = "";
   await loadAskConversationList();
   renderChat();
@@ -2441,6 +2547,7 @@ async function restoreAskConversation(id){
     STATE.chat.messages = Array.isArray(saved.messages) ? saved.messages : [];
     STATE.chat.turnSeq = Number(saved.turn_seq || 0);
     STATE.evidence = {};
+    STATE.home.view = "chat";
     $("#chatGlosses").innerHTML = "";
     await hydrateFeedback();
     renderChat();
@@ -2508,6 +2615,40 @@ function focusAskInputSoon(){
       return;
     input.focus({preventScroll:true});
   }, 0);
+}
+
+function setHomeView(view){
+  STATE.home.view = view || "chat";
+  renderChat();
+  if (STATE.home.view === "chat") focusAskInputSoon();
+}
+
+async function openProjectDetail(projectName){
+  STATE.home.view = "project-detail";
+  STATE.home.detailProject = projectName;
+  if (projectName && projectName !== STATE.project){
+    $("#projSel").value = projectName;
+    await switchProject(projectName);
+  }
+  STATE.home.view = "project-detail";
+  STATE.home.detailProject = projectName || STATE.project;
+  await loadAskConversationList();
+  renderChat();
+}
+
+function updateSidebarActions(){
+  const photosActive = clientPhotoModeActive() && STATE.home.view !== "projects";
+  const projectsActive = STATE.home.view === "projects" || STATE.home.view === "project-detail";
+  const states = {
+    btnSidebarProjects: projectsActive,
+    btnSidebarPhotos: photosActive,
+    btnSidebarNewChat: false,
+    btnSidebarSettings: false,
+  };
+  Object.entries(states).forEach(([id, active]) => {
+    const btn = $("#" + id);
+    if (btn) btn.classList.toggle("active", !!active);
+  });
 }
 
 async function runAppCommand(command){
@@ -2654,11 +2795,27 @@ function renderChat(){
   const photo = latestPhotoMessage();
   const inPhotoMode = clientPhotoModeActive();
   document.body.classList.toggle("photo-mode-active", inPhotoMode);
+  document.body.classList.toggle("projects-view", STATE.home.view === "projects");
+  document.body.classList.toggle("project-detail-view", STATE.home.view === "project-detail");
+  document.body.classList.toggle("ask-empty", STATE.home.view === "chat" && !STATE.chat.messages.length);
+  updateAskWelcome();
+  updateSidebarActions();
+  if (STATE.home.view === "projects"){
+    renderProjectsWorkspace();
+    return;
+  }
+  if (STATE.home.view === "project-detail"){
+    renderProjectDetailWorkspace();
+    return;
+  }
   if (photo && inPhotoMode){
     renderPhotoWorkspace(photo.message);
     return;
   }
-  if (galley) galley.classList.remove("photo-workspace");
+  if (galley) {
+    galley.classList.remove("photo-workspace");
+    galley.classList.remove("project-workspace");
+  }
   const margin = $("#chatMargin");
   if (margin)
     margin.innerHTML = '<div class="hint" id="chatHint">Click any citation to read its source.</div><div id="chatGlosses"></div>';
@@ -2673,11 +2830,158 @@ function renderChat(){
   window.scrollTo(0, document.body.scrollHeight);
 }
 
+function renderProjectsWorkspace(){
+  const col = $("#chatColumn");
+  const margin = $("#chatMargin");
+  const galley = $("#chatGalley");
+  if (galley) {
+    galley.classList.remove("photo-workspace");
+    galley.classList.add("project-workspace");
+  }
+  col.innerHTML = "";
+  margin.innerHTML = "";
+
+  const page = el("div", "projects-page");
+  const head = el("div", "projects-head");
+  head.appendChild(el("h2", "", "Projects"));
+  const tools = el("div", "projects-tools");
+  const search = document.createElement("input");
+  search.type = "search";
+  search.className = "project-search";
+  search.placeholder = "Search projects";
+  search.value = STATE.home.projectQuery || "";
+  search.oninput = () => {
+    STATE.home.projectQuery = search.value;
+    renderProjectsWorkspace();
+    const fresh = $(".project-search");
+    if (fresh) {
+      fresh.focus({preventScroll:true});
+      fresh.selectionStart = fresh.selectionEnd = fresh.value.length;
+    }
+  };
+  const add = el("button", "btn", "New project");
+  add.type = "button";
+  add.onclick = () => $("#btnNewProj").click();
+  tools.append(search, add);
+  head.appendChild(tools);
+  page.appendChild(head);
+
+  const q = (STATE.home.projectQuery || "").trim().toLowerCase();
+  const rows = (STATE.projects || []).filter(p => !q ||
+    String(p.label || p.name || "").toLowerCase().includes(q));
+  const grid = el("div", "projects-grid");
+  if (!rows.length) {
+    grid.appendChild(el("div", "empty", "No projects match that search."));
+  } else {
+    rows.forEach(p => {
+      const card = el("button", "project-card" + (p.name === STATE.project ? " active" : ""));
+      card.type = "button";
+      card.appendChild(el("div", "project-card-title", p.label || p.name));
+      const meta = el("div", "project-card-meta");
+      meta.appendChild(el("span", "", p.name === STATE.project ? "Current project" : "Open project"));
+      meta.appendChild(el("span", "", `${(p.chunks || 0).toLocaleString()} chunks`));
+      card.appendChild(meta);
+      card.onclick = () => openProjectDetail(p.name);
+      grid.appendChild(card);
+    });
+  }
+  page.appendChild(grid);
+  col.appendChild(page);
+}
+
+function renderProjectDetailWorkspace(){
+  const col = $("#chatColumn");
+  const margin = $("#chatMargin");
+  const galley = $("#chatGalley");
+  if (galley) {
+    galley.classList.remove("photo-workspace");
+    galley.classList.add("project-workspace");
+  }
+  col.innerHTML = "";
+  margin.innerHTML = "";
+
+  const projectName = STATE.home.detailProject || STATE.project;
+  const project = (STATE.projects || []).find(p => p.name === projectName) || {};
+  const label = project.label || project.name || projectName || "Project";
+  const page = el("div", "project-detail");
+
+  const crumb = el("div", "project-breadcrumb");
+  const back = el("button", "", "Projects");
+  back.type = "button";
+  back.onclick = () => setHomeView("projects");
+  crumb.append(back, document.createTextNode(" / " + label));
+  page.appendChild(crumb);
+
+  const head = el("div", "project-detail-head");
+  head.appendChild(el("h2", "", label));
+  const newProject = el("button", "btn ghost small", "New project");
+  newProject.type = "button";
+  newProject.onclick = () => $("#btnNewProj").click();
+  head.appendChild(newProject);
+  page.appendChild(head);
+
+  const prompt = el("div", "project-prompt");
+  const ta = document.createElement("textarea");
+  ta.rows = 2;
+  ta.placeholder = "Type / for skills";
+  ta.addEventListener("input", e => autoResize(e.target));
+  ta.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey){
+      e.preventDefault();
+      sendProjectPrompt(ta.value);
+    }
+  });
+  const actions = el("div", "project-prompt-actions");
+  const attach = el("button", "btn ghost attach", "Attach");
+  attach.type = "button";
+  attach.onclick = () => $("#attachmentInput").click();
+  const send = el("button", "btn", "Send");
+  send.type = "button";
+  send.onclick = () => sendProjectPrompt(ta.value);
+  actions.append(attach, send);
+  prompt.append(ta, actions);
+  page.appendChild(prompt);
+
+  page.appendChild(el("div", "recents-title", "Recents"));
+  const list = el("div", "recent-list");
+  const rows = (STATE.chat.conversations || []).slice(0, 12);
+  if (!rows.length) {
+    list.appendChild(el("div", "empty", "No recent commands yet."));
+  } else {
+    rows.forEach(c => {
+      const row = el("button", "recent-row");
+      row.type = "button";
+      row.appendChild(el("span", "recent-title", c.title || "Untitled conversation"));
+      row.appendChild(el("span", "recent-date", formatShortDate(c.archived_at)));
+      row.onclick = () => openChatFromSidebar(c.id, projectName);
+      list.appendChild(row);
+    });
+  }
+  page.appendChild(list);
+  col.appendChild(page);
+  ta.focus({preventScroll:true});
+}
+
+function formatShortDate(value){
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value).slice(0, 10);
+  return d.toLocaleDateString(undefined, {month:"short", day:"numeric"});
+}
+
+function sendProjectPrompt(text){
+  const input = $("#askInput");
+  input.value = (text || "").trim();
+  autoResize(input);
+  sendAsk();
+}
+
 function renderPhotoWorkspace(photoMessage){
   const col = $("#chatColumn");
   const margin = $("#chatMargin");
   const galley = $("#chatGalley");
   if (galley) galley.classList.add("photo-workspace");
+  if (galley) galley.classList.remove("project-workspace");
   col.innerHTML = "";
   margin.innerHTML = "";
 
@@ -3129,6 +3433,23 @@ $("#askInput").addEventListener("keydown", e => {
 $("#btnAsk").onclick = sendAsk;
 $("#btnAttachFiles").onclick = () => $("#attachmentInput").click();
 $("#attachmentInput").onchange = uploadAttachments;
+$("#btnSidebarNewChat").onclick = async () => {
+  if (STATE.chat.busy) return;
+  await newAskConversation();
+  setHomeView("chat");
+  focusAskInputSoon();
+};
+$("#btnSidebarProjects").onclick = () => setHomeView("projects");
+$("#btnSidebarPhotos").onclick = () => {
+  STATE.home.view = "chat";
+  renderChat();
+  const input = $("#askInput");
+  input.value = "/photo ";
+  autoResize(input);
+  input.focus();
+  input.selectionStart = input.selectionEnd = input.value.length;
+};
+$("#btnSidebarSettings").onclick = () => show("tuning");
 $("#btnClearChat").onclick = () => {
   if (STATE.chat.messages.length && !confirm("Delete this conversation from the current slot? Use New conversation to save it first.")) return;
   clearAskState();
@@ -3156,6 +3477,7 @@ async function sendAsk(){
   const input = $("#askInput");
   const text = input.value.trim();
   if (!text) return;
+  STATE.home.view = "chat";
 
   const command = appCommand(text);
   if (command){
@@ -3944,6 +4266,8 @@ function localStorage_set(v){ try { window.localStorage.setItem("proj", v); }
   catch(e){} }
 
 async function switchProject(name){
+  if (STATE.home && STATE.home.view !== "project-detail")
+    STATE.home.view = "chat";
   STATE.project = name; localStorage_set(name);
   STATE.outline = null; STATE.evidence = {};
   STATE.tuning = { criteria: [], misses: [], settings: {} };
@@ -3979,8 +4303,8 @@ $("#btnNewProj").onclick = async () => {
   await switchProject(r.name);
   toast(`Created ${r.path}`);
 };
-$("#btnNewProjSidebar").onclick = () => $("#btnNewProj").click();
-$("#btnNewChatSidebar").onclick = () => $("#btnNewChat").click();
+const newChatSidebar = $("#btnNewChatSidebar");
+if (newChatSidebar) newChatSidebar.onclick = () => $("#btnNewChat").click();
 
 /* --- boot --------------------------------------------------------------- */
 (async () => {
