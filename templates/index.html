@@ -715,7 +715,7 @@ textarea{resize:vertical;min-height:74px}
 .composer .btn.attach{padding:11px 14px}
 .composer select{flex:0 1 12rem;margin-bottom:0}
 body.ask-empty #p-ask .home-main .wrap{
-  min-height:calc(100vh - 64px);max-width:none;display:flex;flex-direction:column;
+  min-height:100%;max-width:none;display:flex;flex-direction:column;
   align-items:center;justify-content:center;padding:28px 40px 92px;
 }
 body.ask-empty .bakash-title{text-align:center;margin:0 0 28px}
@@ -812,7 +812,8 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
   .tunegrid{grid-template-columns:1fr}
   .margin{position:static;max-height:none}
   .panel{padding:24px 18px 80px}
-  .home-layout{flex-direction:column}
+  .home-layout{flex-direction:column;height:auto;overflow:visible}
+  .home-main{overflow-y:visible}
   .home-sidebar{width:auto;border-right:0;border-bottom:1px solid var(--rule);
     max-height:16rem;position:static}
 }
@@ -824,12 +825,23 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
    Settings keep the existing top-rail project picker untouched, since
    those pages weren't part of this pass and don't need their own copy of
    this navigation. */
-.home-layout{display:flex;align-items:stretch;min-height:calc(100vh - 60px)}
+/* Two independent scroll panes. The layout box is exactly the height left
+   over under the rail (and the update bar when it is showing), measured at
+   runtime into --chrome-h, so neither column can push the window itself into
+   a scrollbar. overflow-y:auto means each column shows its own bar only once
+   its content actually overflows. */
+.home-layout{
+  display:flex;align-items:stretch;
+  height:calc(100vh - var(--chrome-h, 60px));min-height:0;overflow:hidden;
+}
+/* The panel's own padding would sit outside those two scroll panes and push
+   the window into a scrollbar of its own. The columns carry their padding. */
+#p-ask{padding:0}
 .home-sidebar{
-  width:17rem;flex:0 0 17rem;
+  width:17rem;flex:0 0 17rem;min-height:0;
   padding:16px 10px;overflow-y:auto;background:var(--paper);
 }
-.home-main{flex:1;min-width:0}
+.home-main{flex:1;min-width:0;min-height:0;overflow-y:auto}
 .home-main .wrap{padding:34px 40px 90px}
 .sidebar-primary{display:grid;gap:3px;margin-bottom:24px}
 .sidebar-action{
@@ -4336,6 +4348,27 @@ if (newChatSidebar) newChatSidebar.onclick = () => $("#btnNewChat").click();
       renderOutline();
     }
     show("ask");
+  }
+})();
+
+/* --- chrome height -------------------------------------------------------
+   The rail wraps to two rows at some widths and the update bar comes and
+   goes, so the height left for the sidebar and the chat column is measured
+   rather than assumed. Written to --chrome-h, which .home-layout subtracts
+   from the viewport. */
+(function trackChromeHeight(){
+  const rail = document.querySelector('.rail');
+  const bar  = document.getElementById('updateBar');
+  const set = () => {
+    const h = (rail ? rail.offsetHeight : 0) + (bar ? bar.offsetHeight : 0);
+    document.documentElement.style.setProperty('--chrome-h', h + 'px');
+  };
+  set();
+  window.addEventListener('resize', set);
+  if (window.ResizeObserver){
+    const ro = new ResizeObserver(set);
+    if (rail) ro.observe(rail);
+    if (bar)  ro.observe(bar);
   }
 })();
 </script>
