@@ -117,6 +117,57 @@ def offline() -> int:
     failures += not _check("ends with a rule before the body",
                            header.rstrip().endswith("---"), True)
 
+    print("Lesson mode — command and exit recognition")
+    failures += not _check("bare /lesson is a command",
+                           lesson.is_lesson_command("/lesson"), True)
+    failures += not _check("/lessons is not (word boundary)",
+                           lesson.is_lesson_command("/lessons"), False)
+    failures += not _check("plain text is not a command",
+                           lesson.is_lesson_command("expected utility"), False)
+    failures += not _check("/lesson off is an exit",
+                           lesson.is_lesson_mode_exit("/lesson off"), True)
+    failures += not _check("/exit lesson is an exit",
+                           lesson.is_lesson_mode_exit("/exit lesson"), True)
+    failures += not _check(
+        "a subject beginning 'off' is not an exit",
+        lesson.is_lesson_mode_exit("/lesson off topic"), False)
+    failures += not _check("subject extracted from the command",
+                           lesson.lesson_command_query("/lesson  stochastic dominance "),
+                           "stochastic dominance")
+
+    print("Lesson mode — state derived from history")
+    def _msgs(*users):
+        return [{"role": "user", "content": u} for u in users]
+    failures += not _check("off by default", lesson.lesson_mode_active([]), False)
+    failures += not _check("on after bare /lesson",
+                           lesson.lesson_mode_active(_msgs("/lesson")), True)
+    failures += not _check(
+        "off after exit",
+        lesson.lesson_mode_active(_msgs("/lesson", "bayes", "/lesson off")), False)
+    failures += not _check(
+        "back on after re-entry",
+        lesson.lesson_mode_active(_msgs("/lesson", "/lesson off", "/lesson")), True)
+    failures += not _check(
+        "assistant turns ignored",
+        lesson.lesson_mode_active([{"role": "assistant", "content": "/lesson off"},
+                                   {"role": "user", "content": "/lesson"}]), True)
+    failures += not _check("bare subject gets prefixed",
+                           lesson.lesson_mode_question("stochastic dominance"),
+                           "/lesson stochastic dominance")
+    failures += not _check("already prefixed is untouched",
+                           lesson.lesson_mode_question("/lesson bayes"),
+                           "/lesson bayes")
+
+    print("Lesson mode — routing, without touching the network")
+    failures += not _check("non-command falls through to None",
+                           lesson.answer_lesson_command("what is a lottery"), None)
+    failures += not _check(
+        "bare command returns the entry response",
+        lesson.answer_lesson_command("/lesson")["metrics"]["lesson_mode"], True)
+    failures += not _check(
+        "exit returns the exit response",
+        lesson.answer_lesson_command("/lesson off")["metrics"]["lesson_mode"], False)
+
     print("Tier table")
     failures += not _check(
         "every tier names a search function that exists",

@@ -36,6 +36,9 @@ from ask import (
     render_scripture_for_terminal, ask as ask_with_sources,
 )
 from scripture import is_bible_command
+from lesson import (
+    build_lesson, is_lesson_command, is_lesson_mode_exit, lesson_command_query,
+)
 
 # OLLAMA_URL and every *_MODEL name come from config.py -- see that
 # module's docstring. This also fixes a latent bug: the load_dotenv() this
@@ -113,6 +116,15 @@ _last_turn_id = None   # tracks the most recently logged turn, for /flag
 # at all, which is a big part of why the old hardcoded "Tye" check existed
 # in the first place -- there was nothing else to check a reference against.
 _recent_turns: list = []
+
+# Terminal lesson mode. ask.py derives mode state from message history because
+# the Ask engine answers each request from scratch and has no session to hang a
+# flag on. The terminal is the opposite case: it is a live REPL that already
+# holds scope and session state, and its slash commands `continue` before
+# _record_turn() ever runs, so the history literally cannot see that /lesson
+# was typed. A flag is the honest representation here; the two mechanisms
+# describe the same mode, they just read different records of it.
+_lesson_mode = False
 _RECENT_TURNS_KEEP = 4
 
 
@@ -1004,28 +1016,30 @@ def cmd_lesson(arg: str):
     The move goes through cmd_project() so the session reset and recent-turn
     clearing happen exactly as they do for a manual /project.
 
-    lesson is imported here rather than at the top of this file because it
-    reaches the network and can take minutes; nothing else in the terminal
-    should pay for that import or fail on it.
+    A bare /lesson turns the mode on instead of printing usage, matching
+    /bible and /photo. A /lesson with a subject builds it and turns the mode
+    on too, which is what BIBLE_COMMAND_RE already does for "/bible John 3:16".
     """
+    global _lesson_mode
+
     subject = (arg or "").strip()
     if not subject:
-        print("\nUsage: /lesson <subject>")
-        print("  e.g. /lesson stochastic dominance")
-        print("       /lesson Bayesian hierarchical models\n")
+        _lesson_mode = True
+        print("\nLesson mode is on. Type a subject on its own, no prefix needed.")
+        print("  MIT OpenCourseWare first, then peer courseware, open textbooks,")
+        print("  and arXiv/DOAJ when MIT is thin. Each subject becomes its own")
+        print("  indexed project and the scope moves to it when it finishes.")
+        print("  A few minutes per subject: real documents get fetched first.")
+        print("\n  /lesson off or /exit lesson to leave. Slash commands still work.\n")
         return
 
-    try:
-        import lesson
-    except Exception as e:
-        print(f"\n  lesson module unavailable: {type(e).__name__}: {e}\n")
-        return
+    _lesson_mode = True
 
     print(f"\nBuilding a lesson on '{subject}'. This fetches and extracts real")
     print("documents and then drafts from them, so give it a few minutes.\n")
 
     try:
-        result = lesson.build_lesson(subject, on_progress=lambda m: print(f"  {m}", flush=True))
+        result = build_lesson(subject, on_progress=lambda m: print(f"  {m}", flush=True))
     except KeyboardInterrupt:
         print("\n  Interrupted. Anything already indexed stays indexed.\n")
         return
@@ -1053,6 +1067,16 @@ def cmd_lesson(arg: str):
     else:
         print("\n  Nothing was indexed. Run 'python test_lesson.py --probe "
               f"\"{subject}\"' to see which sources responded.\n")
+
+
+def cmd_lesson_off():
+    """Leave lesson mode. Scope is left alone -- /all widens it back."""
+    global _lesson_mode
+    if _lesson_mode:
+        _lesson_mode = False
+        print("\nLesson mode is off. The next line is treated as a question.\n")
+    else:
+        print("\nLesson mode was not on.\n")
 
 
 def cmd_lesson_scope(project: str):
@@ -1095,8 +1119,10 @@ Commands:
   /clear           — wipe the database completely
   /summarize <term> — search the index and summarize every matching
                       document straight off disk, not from retrieved chunks
+  /lesson           — enter lesson mode: type subjects on their own after this
   /lesson <subject> — learn a subject from open courseware: fetch, index,
                       draft an explainer, then scope the session to it
+  /lesson off       — leave lesson mode (also /exit lesson)
   /benchmark       — show timing history across all runs
   /clearbenchmark  — clear benchmark history
   /incognito       — toggle session logging off/on for what follows
@@ -1164,8 +1190,12 @@ if __name__ == "__main__":
                 cmd_summarize(term)
             continue
 
-        if q.lower().startswith("/lesson"):
-            cmd_lesson(q[len("/lesson"):].strip())
+        if is_lesson_mode_exit(q):
+            cmd_lesson_off()
+            continue
+
+        if is_lesson_command(q):
+            cmd_lesson(lesson_command_query(q))
             continue
 
         if q.lower() in COMMANDS:
@@ -1174,6 +1204,15 @@ if __name__ == "__main__":
 
         if q.lower() == "/project" or q.lower().startswith("/project "):
             cmd_project(q[len("/project"):].strip())
+            continue
+
+        # In lesson mode a bare line is a subject, not a question. Every slash
+        # command is matched above and still wins, so /status, /project and
+        # /all keep working without having to leave the mode first -- which
+        # matters, because widening scope mid-study is exactly what you want
+        # to do between subjects.
+        if _lesson_mode and not q.startswith("/"):
+            cmd_lesson(q)
             continue
 
         # Repeat-question check: show the cached answer and let the person

@@ -51,6 +51,14 @@ from photo import (
     answer_photo_command, is_photo_mode_exit, photo_mode_active,
     photo_mode_exit_response, photo_mode_question,
 )
+# lesson.py is imported here rather than lazily because ask.py already imports
+# rag and projects, which are lesson's only module-level dependencies -- there
+# is nothing extra to pay for. lesson defers writer.py itself, inside its own
+# _ask(), so this import does not drag the model layer in either.
+from lesson import (
+    answer_lesson_command, is_lesson_mode_exit, lesson_mode_active,
+    lesson_mode_exit_response, lesson_mode_question,
+)
 
 # writer.py's import above already inserts memory/ onto sys.path (see its
 # own docstring for why), so this is safe here without repeating that setup.
@@ -3493,6 +3501,27 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             improvements=[
                 "answered_in_photo_mode" if in_photo_mode
                 else "answered_explicit_photo_command"
+            ])
+
+    in_lesson_mode = lesson_mode_active(messages[:-1])
+    if is_lesson_mode_exit(last_user):
+        return _quality_finish(
+            lesson_mode_exit_response(), last_user, plan, project=scope,
+            improvements=["exited_lesson_mode"])
+
+    # Last of the three mode checks on purpose. A lesson fetches documents off
+    # the network and writes to the index, so it is by far the most expensive
+    # thing a bare line of text can trigger; scripture and photo get first
+    # refusal on anything they recognise.
+    lesson_action = answer_lesson_command(
+        lesson_mode_question(last_user) if in_lesson_mode else last_user,
+        project=scope)
+    if lesson_action:
+        return _quality_finish(
+            lesson_action, last_user, plan, project=scope,
+            improvements=[
+                "answered_in_lesson_mode" if in_lesson_mode
+                else "answered_explicit_lesson_command"
             ])
 
     if ground and last_user.strip():

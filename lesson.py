@@ -939,3 +939,175 @@ def build_lesson(subject: str, project: str = None, max_docs: int = 10,
         "explainer": explainer_path,
         "rows": rows,
     }
+
+
+# ---------------------------------------------------------------------------
+# Lesson mode
+#
+# The same shape scripture.py and photo.py already use: a command regex, an
+# exit regex, a history-derived active() check, entry and exit responses, and
+# a question rewriter. Keeping the five names and their signatures identical
+# is the point -- ask.py wires all three modes in one block, and a fourth mode
+# should be a copy of that block with the nouns changed, not a new idea.
+#
+# One difference worth stating. scripture and photo modes answer in seconds,
+# so mode is a convenience. A lesson runs for minutes and writes to disk, so
+# staying in the mode matters more: it is the difference between typing
+# "/lesson " before every subject in a study session and just typing subjects.
+#
+# Entering on any /lesson command, with or without a subject, follows what
+# BIBLE_COMMAND_RE already does -- "/bible John 3:16" turns Bible mode on the
+# same as a bare "/bible". Consistency beats cleverness here; someone who
+# types a command with an argument is telling you what they are doing.
+# ---------------------------------------------------------------------------
+
+LESSON_COMMAND_RE = re.compile(r"^\s*/lesson\b\s*(.*)$", re.IGNORECASE | re.DOTALL)
+
+LESSON_MODE_EXIT_RE = re.compile(
+    r"^\s*(?:/lesson\s+(?:off|exit|stop|end|done)|/exit\s+lesson|"
+    r"exit\s+lesson\s+mode|leave\s+lesson\s+mode|stop\s+lesson\s+mode)\s*$",
+    re.IGNORECASE)
+
+
+def is_lesson_command(question: str) -> bool:
+    return bool(LESSON_COMMAND_RE.match(question or ""))
+
+
+def lesson_command_query(question: str) -> str:
+    match = LESSON_COMMAND_RE.match(question or "")
+    return (match.group(1) if match else "").strip()
+
+
+def is_lesson_mode_exit(question: str) -> bool:
+    return bool(LESSON_MODE_EXIT_RE.match(question or ""))
+
+
+def lesson_mode_active(messages: list) -> bool:
+    """
+    Mode state is derived from the conversation rather than held in a global,
+    exactly as scripture_mode_active() does it. The Ask engine answers each
+    request from scratch and has no session to hang a flag on, so the history
+    has to be the record. It also means replaying a transcript reproduces the
+    same behaviour, which a mutable flag would not.
+    """
+    active = False
+    for message in messages or []:
+        if message.get("role") != "user":
+            continue
+        content = message.get("content") or ""
+        if is_lesson_mode_exit(content):
+            active = False
+        elif is_lesson_command(content):
+            active = True
+    return active
+
+
+def lesson_mode_exit_response() -> dict:
+    return {
+        "text": "Lesson mode is off. I will treat the next request normally.",
+        "evidence": {}, "grounded": False, "passages_offered": 0,
+        "metrics": {"route": "lesson_command", "lesson_mode": False},
+    }
+
+
+def lesson_mode_entry_response() -> dict:
+    return {
+        "text": (
+            "Lesson mode is on. Send a subject on its own, without typing "
+            "`/lesson` each time, and I will build a grounded corpus for it "
+            "from open courseware and draft an explainer.\n\n"
+            "Leading with MIT OpenCourseWare, then peer university "
+            "courseware, open textbooks, and finally arXiv and DOAJ when MIT "
+            "is thin. Each subject becomes its own indexed project, so it "
+            "stays searchable afterwards.\n\n"
+            "Expect a few minutes per subject: real documents get fetched and "
+            "extracted before anything is written.\n\n"
+            "Use `/lesson off` or `/exit lesson` to leave lesson mode."
+        ),
+        "evidence": {}, "grounded": False, "passages_offered": 0,
+        "metrics": {"route": "lesson_command", "lesson_mode": True},
+    }
+
+
+def lesson_mode_question(question: str) -> str:
+    return (question if is_lesson_command(question)
+            else f"/lesson {question or ''}".strip())
+
+
+def summarize_result(result: dict) -> str:
+    """Shared prose summary of a finished run, for every surface that reports one."""
+    lines = [
+        f"Lesson built on **{result['subject']}**.",
+        "",
+        f"- Project: `{result['project']}`",
+        f"- Indexed: {result['indexed']} documents ({result['skipped']} skipped)",
+        f"- Tiers: {', '.join(result['tiers_used']) or 'none'}",
+    ]
+    if result.get("manifest"):
+        lines.append(f"- Manifest: `{result['manifest']}`")
+    if result.get("explainer"):
+        lines.append(f"- Explainer: `{result['explainer']}`")
+        lines.append("  Generated, deliberately not indexed. Check it against "
+                     "the manifest before trusting it.")
+    else:
+        lines.append("- Explainer: not written. The corpus is still indexed.")
+
+    indexed = [r for r in result.get("rows", []) if r["status"] == "indexed"]
+    if indexed:
+        lines += ["", "Indexed:"]
+        for r in indexed:
+            lines.append(f"- [{r['tier']}] {r['title']} — {r['url']}")
+
+    skipped = [r for r in result.get("rows", []) if r["status"] != "indexed"]
+    if skipped:
+        lines += ["", "Skipped:"]
+        for r in skipped:
+            lines.append(f"- {r['title']} — {r['status']}")
+
+    if not indexed:
+        lines += ["", "Nothing was indexed. Run `python test_lesson.py --probe "
+                  f"\"{result['subject']}\"` to see which sources responded."]
+    return "\n".join(lines)
+
+
+def answer_lesson_command(question: str, project: str = None,
+                          on_progress=None) -> dict:
+    """
+    The Ask-engine entry point, shaped like answer_bible_command() and
+    answer_photo_command(): returns None when this is not a lesson command, so
+    the caller falls through to normal answering.
+
+    `project` is accepted and deliberately ignored for the build. A lesson
+    always goes into its own project named for the subject -- see cmd_lesson()
+    in orchestrator.py for the reasoning. The parameter stays in the signature
+    because every other answer_*_command() takes it and callers pass it
+    positionally by habit.
+    """
+    if not is_lesson_command(question):
+        return None
+    if is_lesson_mode_exit(question):
+        return lesson_mode_exit_response()
+
+    subject = lesson_command_query(question)
+    if not subject:
+        return lesson_mode_entry_response()
+
+    try:
+        result = build_lesson(subject, on_progress=on_progress)
+    except Exception as e:
+        return {
+            "text": f"Lesson failed for '{subject}': {type(e).__name__}: {e}",
+            "evidence": {}, "grounded": False, "passages_offered": 0,
+            "metrics": {"route": "lesson_command", "lesson_mode": True,
+                        "found": False},
+        }
+
+    return {
+        "text": summarize_result(result),
+        "evidence": {}, "grounded": bool(result["indexed"]),
+        "passages_offered": 0,
+        "metrics": {"route": "lesson_command", "lesson_mode": True,
+                    "found": bool(result["indexed"]),
+                    "project": result["project"],
+                    "indexed": result["indexed"]},
+    }
