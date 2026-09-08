@@ -612,6 +612,7 @@ textarea{resize:vertical;min-height:74px}
   border:1px solid var(--rule);border-radius:2px;padding:12px;margin-top:10px;
   display:grid;gap:10px;background:var(--paper-2);
 }
+.photo-adjustments summary{cursor:pointer;font-family:var(--sans);font-size:13px;color:var(--ink)}
 .photo-adjustments .title{
   font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
   color:var(--ink-faint);
@@ -2761,7 +2762,9 @@ function photoAdjustmentControls(attachments, wrap){
   const modified = (attachments || []).find(a => a.photo_preview && a.role === "modified");
   if (!original || !modified || !modified.source) return null;
 
-  const panel = el("div", "photo-adjustments");
+  const panel = document.createElement("details");
+  panel.className = "photo-adjustments";
+  panel.appendChild(el("summary", "", "Fine tune sliders"));
   panel.appendChild(el("div", "title", "Preview adjustments"));
   const zeroValues = () => ({
     brightness: 0, contrast: 0, warmth: 0, saturation: 0,

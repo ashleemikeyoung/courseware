@@ -267,6 +267,7 @@ def _recipe_for_photo(item: dict, request: str = "") -> str:
     text = " ".join([item.get("description", ""), item.get("text", "")])
     subject = _infer_subject(text)
     lighting_notes = _lighting_notes(text)
+    strategy = _composition_strategy(" ".join([request, text]))
     lines = [
         f"Photo: `{item.get('source')}`",
         f"Likely subject: {subject}",
@@ -288,7 +289,13 @@ def _recipe_for_photo(item: dict, request: str = "") -> str:
         "- Finish: check edges at 100%, then compare before/after for natural separation.",
     ])
     if request:
-        lines.extend(["", f"User goal: {request}"])
+        lines.extend([
+            "",
+            "El Roi Verb Plan",
+            f"- Framing choice: {strategy}.",
+        ])
+        lines.extend(f"- {line}" for line in _verb_plan_lines(request))
+        lines.append(f"User goal: {request}")
     return "\n".join(lines)
 
 
@@ -321,7 +328,11 @@ def _warm_image(image, amount: float = 1.04):
 
 def _crop_preview(image, instructions: str):
     lower = (instructions or "").lower()
-    if not any(term in lower for term in ("crop", "frame", "framing", "tighter", "4:5", "5:4", "square")):
+    if not any(term in lower for term in (
+        "crop", "frame", "framing", "tighter", "4:5", "5:4", "square",
+        "optimize frame", "optimal frame", "autoframe", "rule of thirds",
+        "thirds", "leading lines",
+    )):
         return image
     w, h = image.size
     if "square" in lower:
@@ -332,7 +343,7 @@ def _crop_preview(image, instructions: str):
         target_ratio = 5 / 4
     else:
         target_ratio = w / h
-    if "tighter" in lower:
+    if any(term in lower for term in ("tighter", "optimize frame", "optimal frame", "autoframe", "leading lines", "rule of thirds", "thirds")):
         w2, h2 = int(w * 0.80), int(h * 0.80)
     elif abs((w / h) - target_ratio) < 0.03:
         return image
@@ -374,6 +385,22 @@ def _add_subject_separation(image, instructions: str):
     return Image.composite(subject, background, mask)
 
 
+def _add_foreground_blur(image, amount: float = 2.6):
+    from PIL import Image, ImageDraw, ImageFilter
+
+    base = image.convert("RGB")
+    blurred = base.filter(ImageFilter.GaussianBlur(radius=amount))
+    w, h = base.size
+    mask = Image.new("L", (w, h), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.rectangle((0, int(h * 0.58), w, h), fill=210)
+    draw.rectangle((0, int(h * 0.72), w, h), fill=255)
+    draw.rectangle((0, 0, int(w * 0.10), h), fill=65)
+    draw.rectangle((int(w * 0.90), 0, w, h), fill=65)
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=max(18, min(w, h) // 18)))
+    return Image.composite(blurred, base, mask)
+
+
 def _center_subject_mask(size: tuple[int, int]):
     from PIL import Image, ImageDraw, ImageFilter
 
@@ -407,8 +434,12 @@ def _preview_action_lines(instructions: str) -> list[str]:
     actions = [
         "Applied a visible baseline enhancement: stronger contrast, color, brightness, and sharpening.",
     ]
-    if any(term in lower for term in ("crop", "frame", "framing", "tighter", "4:5", "5:4", "square")):
-        actions.append("Applied a visible center crop for the preview.")
+    if any(term in lower for term in ("crop", "frame", "framing", "tighter", "4:5", "5:4", "square", "optimize frame", "autoframe", "rule of thirds", "thirds", "leading lines")):
+        actions.append(f"Optimized the frame using {_composition_strategy(instructions)}.")
+    if "blur foreground" in lower or "foreground blur" in lower:
+        actions.append("Softened the foreground while keeping the central subject area clearer.")
+    if "blur background" in lower or "background blur" in lower:
+        actions.append("Softened and darkened the background to increase subject separation.")
     if any(term in lower for term in ("bright", "brighter", "lift", "exposure", "light")):
         actions.append("Raised preview brightness.")
     if any(term in lower for term in ("dark", "moody", "deeper")):
@@ -426,6 +457,33 @@ def _preview_action_lines(instructions: str) -> list[str]:
             "Applied a default center-weighted subject pop so the modified preview is visibly different."
         )
     return actions
+
+
+def _composition_strategy(instructions: str) -> str:
+    lower = (instructions or "").lower()
+    if "leading line" in lower or "lines" in lower:
+        return "leading lines with a gentle crop"
+    if "rule of thirds" in lower or "thirds" in lower:
+        return "rule-of-thirds placement"
+    if any(term in lower for term in ("table", "food", "product", "box", "object", "chocolate")):
+        return "a product-style crop that balances repeated shapes and keeps the strongest box near a third line"
+    return "the strongest composition between rule of thirds, leading lines, and subject balance"
+
+
+def _verb_plan_lines(instructions: str) -> list[str]:
+    lower = (instructions or "").lower()
+    lines = []
+    if "blur foreground" in lower or "foreground blur" in lower:
+        lines.append("Foreground: soften near-camera distractions without flattening the subject.")
+    if "blur background" in lower or "background blur" in lower:
+        lines.append("Background: reduce detail and brightness behind the subject.")
+    if any(term in lower for term in ("optimize frame", "optimal frame", "autoframe", "frame", "composition", "crop")):
+        lines.append("Frame: choose the crop by composition rather than applying a fixed crop amount.")
+    if any(term in lower for term in ("subject", "separation", "pop")):
+        lines.append("Subject: keep the main subject brighter and crisper than surrounding areas.")
+    if not lines:
+        lines.append("Tone: preserve the automatic El Roi look and make only goal-directed changes.")
+    return lines
 
 
 def _apply_preview_edits(image, instructions: str):
@@ -451,6 +509,8 @@ def _apply_preview_edits(image, instructions: str):
     if any(term in lower for term in ("flat", "neutral", "minimal", "subtle", "only crop", "crop only")):
         return edited.filter(ImageFilter.UnsharpMask(radius=1.2, percent=80, threshold=3))
     edited = _add_subject_separation(edited, instructions + " subject background")
+    if "blur foreground" in lower or "foreground blur" in lower:
+        edited = _add_foreground_blur(edited)
     return edited
 
 
@@ -629,6 +689,7 @@ def _photo_help(project: str = None) -> str:
         "- `/photo list` to show indexed photos\n"
         "- `/photo analyze <filename or description>` to review subject, framing, lighting, and separation\n"
         "- `/photo edit <filename or description>: <instructions>` to draft an edit plan\n"
+        "- Verb examples: `blur background`, `blur foreground`, `optimize frame`, `use leading lines`, `use rule of thirds`, `improve subject separation`\n"
         "- `/photo off` or `/exit photo` to leave photo mode\n\n"
         f"Default photo folder: `{default_folder}`"
     )
@@ -738,7 +799,11 @@ def _answer_photo_command(question: str, project: str = None) -> dict:
         )
         return _answer_photo_analyze(cleaned.strip(), project=project)
 
-    if lower.startswith(("edit", "adjust", "retouch", "grade", "crop", "develop")):
+    if lower.startswith((
+        "edit", "adjust", "retouch", "grade", "crop", "develop",
+        "blur", "soften", "sharpen", "optimize", "frame", "reframe",
+        "use leading", "leading", "rule of thirds", "thirds", "improve",
+    )):
         cleaned = re.sub(
             r"^(?:edit|adjust|retouch|grade|crop|develop)\b\s*:?",
             "",

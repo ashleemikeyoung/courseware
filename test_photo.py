@@ -138,6 +138,41 @@ def test_photo_edit_generates_before_after_previews(tmp_path, monkeypatch):
     assert "Preview change strength:" in result["text"]
 
 
+def test_photo_verbs_generate_goal_directed_preview(tmp_path, monkeypatch):
+    from PIL import Image
+
+    docs = tmp_path / "documents"
+    projects_root = tmp_path / "projects"
+    source = docs / "GCU" / "Uploaded Photos" / "L1002916.jpg"
+    source.parent.mkdir(parents=True)
+    Image.new("RGB", (160, 100), (110, 90, 70)).save(source, format="JPEG")
+
+    monkeypatch.setattr(photo, "_documents_root", lambda: docs)
+    monkeypatch.setattr(photo.projects, "PROJECTS_ROOT", projects_root)
+    monkeypatch.setattr(photo, "_indexed_photos", lambda project=None, limit=12: [{
+        "source": "GCU/Uploaded Photos/L1002916.jpg",
+        "filename": "L1002916.jpg",
+        "project": "GCU",
+        "description": "A tabletop product photo with chocolate boxes.",
+        "text": "table product chocolate box foreground background",
+        "chunks": 1,
+    }])
+
+    result = photo.answer_photo_command(
+        "/photo blur foreground and blur background, optimize frame",
+        project="GCU",
+    )
+
+    assert result["showAttachments"] is True
+    assert "El Roi Verb Plan" in result["text"]
+    assert "Foreground:" in result["text"]
+    assert "Background:" in result["text"]
+    assert "Optimized the frame" in result["text"]
+    edited = Image.open(next((projects_root / "GCU" / "photo-previews").glob("modified-preview-*.jpg")))
+    assert edited.size[0] < 160
+    assert edited.size[1] < 100
+
+
 def test_photo_adjust_endpoint_returns_modified_preview(tmp_path, monkeypatch):
     from PIL import Image
 
