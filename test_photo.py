@@ -28,6 +28,16 @@ def test_photo_mode_question_prefixes_plain_request():
     assert photo.photo_mode_question("/photo list") == "/photo list"
 
 
+def test_photo_mode_followup_reuses_last_photo_source():
+    messages = [{
+        "role": "assistant",
+        "content": "Photo: `GCU/Uploaded Photos/portrait.jpg`\nLikely subject: person",
+    }]
+
+    assert photo.photo_mode_question("make it warmer", messages) == (
+        "/photo edit GCU/Uploaded Photos/portrait.jpg: make it warmer")
+
+
 def test_photo_edit_request_is_recipe_not_pixel_mutation():
     result = photo.answer_photo_command("/photo edit DSC001.jpg: warmer highlights")
 
@@ -77,6 +87,38 @@ def test_attachment_upload_saves_photo_under_uploaded_photos(tmp_path, monkeypat
     data = response.get_json()
     assert data["saved"] == ["Photo-Test/Uploaded Photos/portrait.raf"]
     assert (tmp_path / "Photo-Test" / "Uploaded Photos" / "portrait.raf").exists()
+
+
+def test_photo_edit_generates_before_after_previews(tmp_path, monkeypatch):
+    from PIL import Image
+
+    docs = tmp_path / "documents"
+    projects_root = tmp_path / "projects"
+    source = docs / "GCU" / "Uploaded Photos" / "portrait.jpg"
+    source.parent.mkdir(parents=True)
+    Image.new("RGB", (80, 60), (80, 90, 120)).save(source)
+
+    monkeypatch.setattr(photo, "_documents_root", lambda: docs)
+    monkeypatch.setattr(photo.projects, "PROJECTS_ROOT", projects_root)
+    monkeypatch.setattr(photo, "_indexed_photos", lambda project=None, limit=12: [{
+        "source": "GCU/Uploaded Photos/portrait.jpg",
+        "filename": "portrait.jpg",
+        "project": "GCU",
+        "description": "Portrait of a person with a busy background.",
+        "text": "Portrait of a person with a busy background.",
+        "chunks": 1,
+    }])
+
+    result = photo.answer_photo_command(
+        "/photo edit portrait: warmer, crop tighter, more subject separation",
+        project="GCU",
+    )
+
+    assert result["showAttachments"] is True
+    assert result["metrics"]["previews"] == 2
+    assert len(result["attachments"]) == 2
+    assert result["attachments"][0]["url"].startswith("/api/photo/file?kind=preview")
+    assert list((projects_root / "GCU" / "photo-previews").glob("*.jpg"))
 
 
 def test_photo_ingest_relative_folder_resolves_inside_project():

@@ -2847,6 +2847,7 @@ async function sendAsk(){
     pending.pending = false;
     pending.sources = Object.keys(ev.evidence || {});
     pending.attachments = ev.attachments || [];
+    pending.showAttachments = !!ev.showAttachments;
     pending.requirements = ev.requirements || [];
     // Provenance for the reply that just streamed in -- what ask.py actually
     // did this turn, not what the toggles merely requested. This is the

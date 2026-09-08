@@ -9,7 +9,9 @@ RAW metadata. The command layer makes that workflow deliberate.
 from __future__ import annotations
 
 import re
+import uuid
 from pathlib import Path
+from urllib.parse import quote_plus
 
 import projects
 
@@ -24,6 +26,7 @@ PHOTO_EXIT_RE = re.compile(
     r"exit\s+photo\s+mode|leave\s+photo\s+mode|stop\s+photo\s+mode)\s*$",
     re.IGNORECASE,
 )
+RAW_EXTENSIONS = {".arw", ".cr2", ".cr3", ".dng", ".nef", ".orf", ".raf", ".rw2"}
 
 
 def _is_photo_command(question: str) -> bool:
@@ -61,13 +64,42 @@ def _photo_mode_exit_response() -> dict:
     }
 
 
-def _photo_mode_question(question: str) -> str:
-    return question if _is_photo_command(question) else f"/photo {question or ''}".strip()
+def _last_photo_source(messages: list) -> str:
+    for message in reversed(messages or []):
+        if message.get("role") != "assistant":
+            continue
+        text = message.get("content") or ""
+        match = re.search(r"^Photo:\s+`([^`]+)`", text, re.MULTILINE)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _photo_mode_question(question: str, messages: list = None) -> str:
+    if _is_photo_command(question):
+        return question
+    q = (question or "").strip()
+    lower = q.lower()
+    if lower.startswith(("list", "photos", "status", "indexed", "library", "ingest", "import", "scan", "rescan")):
+        return f"/photo {q}".strip()
+    source = _last_photo_source(messages or [])
+    if source:
+        return f"/photo edit {source}: {q}".strip()
+    return f"/photo {q}".strip()
 
 
 def _documents_root() -> Path:
     from rag import DOCUMENTS_FOLDER
     return Path(DOCUMENTS_FOLDER).resolve()
+
+
+def _source_path(source: str) -> Path:
+    return (_documents_root() / (source or "")).resolve()
+
+
+def _preview_root(project: str = None) -> Path:
+    name = projects.safe(project or projects.UNFILED)
+    return projects.PROJECTS_ROOT / name / "photo-previews"
 
 
 def _resolve_ingest_target(raw: str, project: str = None) -> tuple[Path, str]:
@@ -256,6 +288,149 @@ def _recipe_for_photo(item: dict, request: str = "") -> str:
     return "\n".join(lines)
 
 
+def _open_photo_preview(path: Path):
+    from PIL import Image
+
+    suffix = path.suffix.lower()
+    if suffix in RAW_EXTENSIONS:
+        import rawpy
+        with rawpy.imread(str(path)) as raw:
+            rgb = raw.postprocess(use_camera_wb=True, output_bps=8)
+        return Image.fromarray(rgb).convert("RGB")
+    return Image.open(path).convert("RGB")
+
+
+def _fit_preview(image, max_edge: int = 1800):
+    image = image.copy()
+    image.thumbnail((max_edge, max_edge))
+    return image
+
+
+def _warm_image(image, amount: float = 1.04):
+    from PIL import Image
+
+    r, g, b = image.split()
+    r = r.point(lambda value: min(255, int(value * amount)))
+    b = b.point(lambda value: max(0, int(value / amount)))
+    return Image.merge("RGB", (r, g, b))
+
+
+def _crop_preview(image, instructions: str):
+    lower = (instructions or "").lower()
+    if not any(term in lower for term in ("crop", "frame", "framing", "tighter", "4:5", "5:4", "square")):
+        return image
+    w, h = image.size
+    if "square" in lower:
+        target_ratio = 1.0
+    elif "4:5" in lower:
+        target_ratio = 4 / 5
+    elif "5:4" in lower:
+        target_ratio = 5 / 4
+    else:
+        target_ratio = w / h
+    if "tighter" in lower:
+        w2, h2 = int(w * 0.88), int(h * 0.88)
+    elif abs((w / h) - target_ratio) < 0.03:
+        return image
+    else:
+        w2, h2 = w, h
+    if w2 / h2 > target_ratio:
+        w2 = int(h2 * target_ratio)
+    else:
+        h2 = int(w2 / target_ratio)
+    left = max(0, (w - w2) // 2)
+    top = max(0, (h - h2) // 2)
+    return image.crop((left, top, left + w2, top + h2))
+
+
+def _add_subject_separation(image, instructions: str):
+    lower = (instructions or "").lower()
+    if not any(term in lower for term in ("separation", "subject", "background", "pop", "portrait")):
+        return image
+
+    from PIL import ImageEnhance, ImageFilter, Image
+
+    base = image.convert("RGB")
+    background = ImageEnhance.Color(base).enhance(0.88)
+    background = ImageEnhance.Contrast(background).enhance(0.96)
+    background = ImageEnhance.Brightness(background).enhance(0.92)
+    background = background.filter(ImageFilter.GaussianBlur(radius=1.2))
+
+    subject = ImageEnhance.Sharpness(base).enhance(1.12)
+    subject = ImageEnhance.Brightness(subject).enhance(1.04)
+    subject = ImageEnhance.Contrast(subject).enhance(1.05)
+
+    w, h = base.size
+    mask = Image.new("L", (w, h), 0)
+    from PIL import ImageDraw
+    draw = ImageDraw.Draw(mask)
+    pad_x, pad_y = int(w * 0.22), int(h * 0.12)
+    draw.ellipse((pad_x, pad_y, w - pad_x, h - pad_y), fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=max(12, min(w, h) // 14)))
+    return Image.composite(subject, background, mask)
+
+
+def _apply_preview_edits(image, instructions: str):
+    from PIL import ImageEnhance, ImageOps
+
+    lower = (instructions or "").lower()
+    edited = _crop_preview(image, instructions)
+    edited = ImageOps.autocontrast(edited, cutoff=0.5)
+    if any(term in lower for term in ("bright", "brighter", "lift", "exposure", "light")):
+        edited = ImageEnhance.Brightness(edited).enhance(1.08)
+    if any(term in lower for term in ("dark", "moody", "deeper")):
+        edited = ImageEnhance.Brightness(edited).enhance(0.95)
+    if any(term in lower for term in ("contrast", "pop", "separation", "subject")):
+        edited = ImageEnhance.Contrast(edited).enhance(1.08)
+    if any(term in lower for term in ("warm", "warmer", "golden")):
+        edited = _warm_image(edited, amount=1.05)
+    if any(term in lower for term in ("vibrant", "color", "saturation")):
+        edited = ImageEnhance.Color(edited).enhance(1.10)
+    edited = _add_subject_separation(edited, instructions)
+    return edited
+
+
+def _preview_pair(item: dict, instructions: str, project: str = None) -> tuple[list, str]:
+    source = item.get("source") or ""
+    path = _source_path(source)
+    root = _documents_root()
+    if not path.exists() or not path.is_relative_to(root):
+        return [], f"Source file is not available: {source}"
+
+    out_dir = _preview_root(project or item.get("project"))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    token = uuid.uuid4().hex[:10]
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(source).stem).strip("-") or "photo"
+    original = out_dir / f"{stem}-{token}-original.jpg"
+    edited = out_dir / f"{stem}-{token}-edited.jpg"
+
+    image = _fit_preview(_open_photo_preview(path))
+    image.save(original, "JPEG", quality=92)
+    _apply_preview_edits(image, instructions).save(edited, "JPEG", quality=92)
+
+    try:
+        original_rel = str(original.relative_to(projects.PROJECTS_ROOT))
+        edited_rel = str(edited.relative_to(projects.PROJECTS_ROOT))
+    except ValueError:
+        return [], "Preview output path is outside the project workspace."
+    return [
+        {
+            "filename": f"Original preview - {Path(source).name}",
+            "content_type": "image/jpeg",
+            "size": original.stat().st_size,
+            "image": True,
+            "url": f"/api/photo/file?kind=preview&path={quote_plus(original_rel)}",
+        },
+        {
+            "filename": f"Edited preview - {Path(source).name}",
+            "content_type": "image/jpeg",
+            "size": edited.stat().st_size,
+            "image": True,
+            "url": f"/api/photo/file?kind=preview&path={quote_plus(edited_rel)}",
+        },
+    ], ""
+
+
 def _answer_photo_analyze(query: str, project: str = None) -> dict:
     matches = _matching_photos(query, project=project, limit=3)
     if not matches:
@@ -301,9 +476,19 @@ def _photo_help(project: str = None) -> str:
 
 def _answer_photo_edit(query: str, project: str = None) -> dict:
     matches = _matching_photos(query, project=project, limit=3)
+    attachments, preview_errors = [], []
     if matches:
         text = "Photo edit recipe:\n\n" + "\n\n---\n\n".join(
             _recipe_for_photo(item, request=query) for item in matches)
+        for item in matches[:1]:
+            pair, error = _preview_pair(item, query, project=project)
+            attachments.extend(pair)
+            if error:
+                preview_errors.append(error)
+        if attachments:
+            text += "\n\nI generated a before/after preview pair below."
+        elif preview_errors:
+            text += "\n\nPreview note: " + "; ".join(preview_errors)
     else:
         text = (
             "I can draft the edit recipe, but I don’t see a matching indexed "
@@ -315,9 +500,12 @@ def _answer_photo_edit(query: str, project: str = None) -> dict:
         "text": text,
         "evidence": {},
         "grounded": bool(matches),
+        "attachments": attachments,
+        "showAttachments": bool(attachments),
         "metrics": {
             "route": "photo_command", "photo_mode": True,
             "action": "edit", "matches": len(matches),
+            "previews": len(attachments),
         },
     }
 

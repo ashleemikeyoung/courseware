@@ -3485,7 +3485,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             improvements=["exited_photo_mode"])
 
     photo_action = answer_photo_command(
-        photo_mode_question(last_user) if in_photo_mode else last_user,
+        photo_mode_question(last_user, messages[:-1]) if in_photo_mode else last_user,
         project=scope)
     if photo_action:
         return _quality_finish(

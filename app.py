@@ -31,7 +31,7 @@ from email.parser import BytesParser
 from pathlib import Path
 from urllib.parse import quote_plus
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, send_file
 
 import writer
 import quality
@@ -431,6 +431,23 @@ def _attachments_for_evidence(evidence: dict, text: str = "") -> list:
     return attachments
 
 
+def _photo_file_path(kind: str, rel_path: str) -> Path | None:
+    roots = {
+        "document": projects.DOCUMENTS_ROOT.resolve(),
+        "preview": projects.PROJECTS_ROOT.resolve(),
+    }
+    root = roots.get(kind)
+    if not root or not rel_path:
+        return None
+    try:
+        path = (root / rel_path).resolve()
+        if not path.is_relative_to(root):
+            return None
+        return path if path.exists() else None
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Jobs
 # ---------------------------------------------------------------------------
@@ -616,6 +633,14 @@ def api_photo_upload():
         "folder": str(projects.DOCUMENTS_ROOT / project),
         "ingest_command": "/photo ingest Uploaded Photos",
     })
+
+
+@app.get("/api/photo/file")
+def api_photo_file():
+    path = _photo_file_path(request.args.get("kind"), request.args.get("path"))
+    if not path:
+        return jsonify({"error": "file not found"}), 404
+    return send_file(path)
 
 
 @app.get("/api/mail/config")
@@ -1214,8 +1239,9 @@ def api_ask():
             on_token=lambda t: emit({"type": "token", "text": t}),
             external_policy="pull",
         )
-        result["attachments"] = _attachments_for_evidence(
+        evidence_attachments = _attachments_for_evidence(
             result.get("evidence") or {}, result.get("text") or "")
+        result["attachments"] = (result.get("attachments") or []) + evidence_attachments
         emit({"type": "done", **result})
 
     return jsonify({"job": start_job(work)})
