@@ -742,6 +742,16 @@ textarea{resize:vertical;min-height:74px}
 }
 .composer .btn{flex:0 0 auto;padding:11px 22px}
 .attach-menu-wrap{position:relative;flex:0 0 auto}
+.btn.send{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:34px;height:34px;padding:0;border-radius:50%;
+  transition:opacity .12s, transform .12s;
+}
+.composer .btn.send{padding:0;margin-bottom:2px}
+.btn.send svg{width:16px;height:16px;fill:currentColor;stroke:none;display:block}
+.btn.send[data-state="busy"] svg{width:13px;height:13px}
+.btn.send[hidden]{display:none}
+.btn.send:active{transform:scale(.94)}
 .btn.attach-plus{padding:8px 13px;font-size:16px;line-height:1;letter-spacing:0}
 .attach-menu{
   position:absolute;bottom:calc(100% + 8px);left:0;z-index:40;display:none;
@@ -1041,7 +1051,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <input id="folderInput" type="file" webkitdirectory directory multiple hidden>
     <textarea id="askInput" rows="1"
       placeholder="Ask about your documents, or anything else. Shift+Enter for a new line."></textarea>
-    <button class="btn" id="btnAsk">Send</button>
+    <button class="btn send" id="btnAsk" type="button" hidden>Send</button>
   </div>
   </div></div>
 </div></section>
@@ -1421,14 +1431,23 @@ function show(tab){
   if (tab === "history") loadHistory();
 }
 /* --- job streaming ------------------------------------------------------ */
+const JOB_STOPPED = "__job_stopped__";
+
 function runJob(url, body, logEl, onEvent){
-  return new Promise((resolve, reject) => {
+  // The returned promise carries an .abort() so the composer's stop button
+  // can cut a stream mid-flight. Aborting closes the EventSource and rejects
+  // with JOB_STOPPED, which callers treat as "keep what arrived" rather than
+  // as a failure worth rolling the turn back.
+  let cancelStream = null, cancelled = false;
+  const job = new Promise((resolve, reject) => {
     logEl.style.display = "none"; logEl.innerHTML = "";
     fetch(url, {method:"POST", headers:{"Content-Type":"application/json"},
                 body: JSON.stringify(withProject(body))})
       .then(r => r.json()).then(j => {
         if (j.error) { logLine(logEl, j.error, "err"); return reject(j.error); }
+        if (cancelled) return reject(JOB_STOPPED);
         const src = new EventSource(`/api/jobs/${j.job}/stream`);
+        cancelStream = () => { src.close(); reject(JOB_STOPPED); };
         src.onmessage = m => {
           const ev = JSON.parse(m.data);
           onEvent(ev, logEl);
@@ -1443,6 +1462,12 @@ function runJob(url, body, logEl, onEvent){
         src.onerror = () => { src.close(); reject("connection lost"); };
       }).catch(reject);
   });
+  job.abort = () => {
+    if (cancelled) return;
+    cancelled = true;
+    if (cancelStream) cancelStream();
+  };
+  return job;
 }
 function logLine(box, text, cls){
   box.style.display = "block";
@@ -2389,7 +2414,7 @@ function renderBench(results, drafts){
    indistinguishable and the wrong source would surface on click. -------- */
 
 STATE.chat = {
-  messages: [], busy: false, turnSeq: 0, history: [], histPos: null,
+  messages: [], busy: false, job: null, turnSeq: 0, history: [], histPos: null,
   loadedProject: null, conversations: []
 };
 STATE.photo = { compare:false };
@@ -2754,7 +2779,7 @@ async function runAppCommand(command){
     return;
   }
 
-  STATE.chat.busy = true; $("#btnAsk").disabled = true;
+  STATE.chat.busy = true; setSendState();
   const pending = {
     role: "assistant",
     content: command === "clear_history_reindex"
@@ -2776,6 +2801,7 @@ async function runAppCommand(command){
     const timeout = new Promise((_, reject) => {
       setTimeout(() => reject(new Error("scan timeout")), 90000);
     });
+    STATE.chat.job = scan;
     const ev = await Promise.race([scan, timeout]);
     const s = ev.summary || {};
     pending.content = `Done. ${s.new?.length || 0} new, ${s.updated?.length || 0} updated, ${s.removed?.length || 0} removed, ${s.unchanged?.length || 0} unchanged. ${s.chunks || 0} chunks indexed.`;
@@ -2783,6 +2809,12 @@ async function runAppCommand(command){
     renderChat();
     loadStatus().catch(() => {});
   } catch(e){
+    if (e === JOB_STOPPED){
+      pending.content = "Scan stopped.";
+      pending.pending = false;
+      renderChat();
+      return;
+    }
     try {
       const res = await fetch("/api/status");
       const status = await res.json();
@@ -2793,7 +2825,7 @@ async function runAppCommand(command){
     pending.pending = false;
     renderChat();
   } finally {
-    STATE.chat.busy = false; $("#btnAsk").disabled = false;
+    STATE.chat.busy = false; STATE.chat.job = null; setSendState();
     if (clientPhotoModeActive()) focusAskInputSoon();
   }
 }
@@ -3520,6 +3552,47 @@ function isAnnotatedBibliography(text){
 function autoResize(ta){
   ta.style.height = "auto";
   ta.style.height = Math.min(ta.scrollHeight, 224) + "px";
+  setSendState();
+}
+
+/* --- send button ----------------------------------------------------------
+   One button, three states, like a tape deck: nothing at all while the
+   prompt is empty, a play arrow once there is something to send, a filled
+   square while a turn is streaming. The square really does stop the stream
+   (see runJob's abort) rather than just looking the part. ---------------- */
+
+const SEND_ICON_PLAY =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4.8l12 7.2-12 7.2z"/></svg>';
+const SEND_ICON_STOP =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="6.5" width="11" height="11" rx="1.5"/></svg>';
+
+function setSendState(){
+  const btn = $("#btnAsk");
+  if (!btn) return;
+  const input = $("#askInput");
+  if (STATE.chat.busy){
+    btn.hidden = false;
+    if (btn.dataset.state !== "busy"){
+      btn.dataset.state = "busy";
+      btn.innerHTML = SEND_ICON_STOP;
+    }
+    btn.title = "Stop";
+    btn.setAttribute("aria-label", "Stop");
+    return;
+  }
+  const hasText = !!(input && input.value.trim());
+  btn.hidden = !hasText;
+  if (btn.dataset.state !== "ready"){
+    btn.dataset.state = "ready";
+    btn.innerHTML = SEND_ICON_PLAY;
+  }
+  btn.title = "Send";
+  btn.setAttribute("aria-label", "Send");
+}
+
+function stopAsk(){
+  const job = STATE.chat.job;
+  if (job && typeof job.abort === "function") job.abort();
 }
 $("#askInput").addEventListener("input", e => autoResize(e.target));
 $("#askInput").addEventListener("keydown", e => {
@@ -3537,7 +3610,7 @@ $("#askInput").addEventListener("keydown", e => {
     STATE.chat.histPos = null;
   }
 });
-$("#btnAsk").onclick = sendAsk;
+$("#btnAsk").onclick = () => (STATE.chat.busy ? stopAsk() : sendAsk());
 $("#attachmentInput").onchange = uploadAttachments;
 $("#folderInput").onchange = uploadAttachments;
 $("#btnSidebarNewChat").onclick = async () => {
@@ -3601,7 +3674,7 @@ async function sendAsk(){
   input.value = ""; autoResize(input);
   const pending = {role: "assistant", content: "", pending: true};
   STATE.chat.messages.push(pending);
-  STATE.chat.busy = true; $("#btnAsk").disabled = true;
+  STATE.chat.busy = true; setSendState();
   renderChat();
 
   const turnId = "t" + (++STATE.chat.turnSeq) + Date.now().toString(36).slice(-4);
@@ -3614,7 +3687,7 @@ async function sendAsk(){
     .map(m => ({role: m.role, content: m.content}));
 
   try {
-    const ev = await runJob("/api/ask",
+    const job = runJob("/api/ask",
       {messages: history, ground, model, turn_id: turnId},
       $("#asklog"),
       (e) => {
@@ -3623,6 +3696,8 @@ async function sendAsk(){
           appendToLastBubble(pending.content);
         }
       });
+    STATE.chat.job = job;
+    const ev = await job;
     pending.content = ev.text;
     pending.pending = false;
     pending.sources = Object.keys(ev.evidence || {});
@@ -3639,13 +3714,21 @@ async function sendAsk(){
     renderChat();
     saveAskConversation();
   } catch(err){
-    STATE.chat.messages.pop();
-    STATE.chat.messages.pop();
-    input.value = text; autoResize(input);
-    renderChat();
-    toast(typeof err === "string" ? err : "That didn't go through");
+    if (err === JOB_STOPPED){
+      // Keep whatever streamed in before the stop; the turn still happened.
+      pending.pending = false;
+      if (!pending.content.trim()) pending.content = "_Stopped._";
+      renderChat();
+      saveAskConversation();
+    } else {
+      STATE.chat.messages.pop();
+      STATE.chat.messages.pop();
+      input.value = text; autoResize(input);
+      renderChat();
+      toast(typeof err === "string" ? err : "That didn't go through");
+    }
   } finally {
-    STATE.chat.busy = false; $("#btnAsk").disabled = false;
+    STATE.chat.busy = false; STATE.chat.job = null; setSendState();
   }
 }
 
