@@ -291,7 +291,7 @@ def _recipe_for_photo(item: dict, request: str = "") -> str:
     if request:
         lines.extend([
             "",
-            "El Roi Verb Plan",
+            "Edit Intent",
             f"- Framing choice: {strategy}.",
         ])
         lines.extend(f"- {line}" for line in _verb_plan_lines(request))
@@ -385,19 +385,72 @@ def _add_subject_separation(image, instructions: str):
     return Image.composite(subject, background, mask)
 
 
-def _add_foreground_blur(image, amount: float = 2.6):
+def _depth_band_mask(size: tuple[int, int], band: str):
     from PIL import Image, ImageDraw, ImageFilter
+
+    w, h = size
+    mask = Image.new("L", (w, h), 0)
+    draw = ImageDraw.Draw(mask)
+    if band == "foreground":
+        draw.rectangle((0, int(h * 0.58), w, h), fill=210)
+        draw.rectangle((0, int(h * 0.72), w, h), fill=255)
+    elif band == "background":
+        draw.rectangle((0, 0, w, int(h * 0.44)), fill=235)
+        draw.rectangle((0, int(h * 0.44), w, int(h * 0.62)), fill=120)
+    else:
+        draw.rectangle((0, 0, w, h), fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=max(18, min(w, h) // 18)))
+    return mask
+
+
+def _apply_depth_of_field(image, instructions: str):
+    from PIL import Image, ImageChops, ImageEnhance, ImageFilter
+
+    lower = (instructions or "").lower()
+    wants_foreground = any(term in lower for term in (
+        "blur foreground", "foreground blur", "soften foreground", "front blur",
+        "blur front", "front out of focus",
+    ))
+    wants_background = any(term in lower for term in (
+        "blur background", "background blur", "soften background", "back blur",
+        "blur back", "back out of focus",
+    ))
+    wants_depth = any(term in lower for term in (
+        "depth of field", "depth-of-field", "field of view", "move focus",
+        "bring focus", "attention", "focus on", "subject separation",
+    ))
+    if not (wants_foreground or wants_background or wants_depth):
+        return image
+
+    base = image.convert("RGB")
+    w, h = base.size
+    focus = ImageEnhance.Sharpness(base).enhance(1.18)
+    focus = ImageEnhance.Contrast(focus).enhance(1.07)
+    subject_mask = _center_subject_mask((w, h))
+    keep_focus = subject_mask.point(lambda value: min(255, int(value * 1.25)))
+
+    if wants_background or wants_depth:
+        background_radius = 4.4 if wants_background else 2.8
+        background = base.filter(ImageFilter.GaussianBlur(radius=background_radius))
+        background = ImageEnhance.Brightness(background).enhance(0.88)
+        background = ImageEnhance.Color(background).enhance(0.90)
+        mask = ImageChops.subtract(_depth_band_mask((w, h), "background"), keep_focus)
+        base = Image.composite(background, base, mask)
+    if wants_foreground or wants_depth:
+        foreground_radius = 3.2 if wants_foreground else 2.0
+        foreground = base.filter(ImageFilter.GaussianBlur(radius=foreground_radius))
+        foreground = ImageEnhance.Contrast(foreground).enhance(0.94)
+        mask = ImageChops.subtract(_depth_band_mask((w, h), "foreground"), keep_focus)
+        base = Image.composite(foreground, base, mask)
+    return Image.composite(focus, base, keep_focus)
+
+
+def _add_foreground_blur(image, amount: float = 2.6):
+    from PIL import Image, ImageFilter
 
     base = image.convert("RGB")
     blurred = base.filter(ImageFilter.GaussianBlur(radius=amount))
-    w, h = base.size
-    mask = Image.new("L", (w, h), 0)
-    draw = ImageDraw.Draw(mask)
-    draw.rectangle((0, int(h * 0.58), w, h), fill=210)
-    draw.rectangle((0, int(h * 0.72), w, h), fill=255)
-    draw.rectangle((0, 0, int(w * 0.10), h), fill=65)
-    draw.rectangle((int(w * 0.90), 0, w, h), fill=65)
-    mask = mask.filter(ImageFilter.GaussianBlur(radius=max(18, min(w, h) // 18)))
+    mask = _depth_band_mask(base.size, "foreground")
     return Image.composite(blurred, base, mask)
 
 
@@ -436,10 +489,8 @@ def _preview_action_lines(instructions: str) -> list[str]:
     ]
     if any(term in lower for term in ("crop", "frame", "framing", "tighter", "4:5", "5:4", "square", "optimize frame", "autoframe", "rule of thirds", "thirds", "leading lines")):
         actions.append(f"Optimized the frame using {_composition_strategy(instructions)}.")
-    if "blur foreground" in lower or "foreground blur" in lower:
-        actions.append("Softened the foreground while keeping the central subject area clearer.")
-    if "blur background" in lower or "background blur" in lower:
-        actions.append("Softened and darkened the background to increase subject separation.")
+    if any(term in lower for term in ("blur foreground", "foreground blur", "blur background", "background blur", "depth of field", "field of view", "bring focus")):
+        actions.append("Adjusted depth of field with separate foreground, focus, and background treatment.")
     if any(term in lower for term in ("bright", "brighter", "lift", "exposure", "light")):
         actions.append("Raised preview brightness.")
     if any(term in lower for term in ("dark", "moody", "deeper")):
@@ -474,9 +525,11 @@ def _verb_plan_lines(instructions: str) -> list[str]:
     lower = (instructions or "").lower()
     lines = []
     if "blur foreground" in lower or "foreground blur" in lower:
-        lines.append("Foreground: soften near-camera distractions without flattening the subject.")
+        lines.append("Depth: move attention away from near-camera distractions.")
     if "blur background" in lower or "background blur" in lower:
-        lines.append("Background: reduce detail and brightness behind the subject.")
+        lines.append("Depth: reduce detail behind the subject while preserving the chosen focus area.")
+    if any(term in lower for term in ("depth of field", "field of view", "move focus", "bring focus", "attention")):
+        lines.append("Focus: choose a clearer subject plane and let front/back areas fall away differently.")
     if any(term in lower for term in ("optimize frame", "optimal frame", "autoframe", "frame", "composition", "crop")):
         lines.append("Frame: choose the crop by composition rather than applying a fixed crop amount.")
     if any(term in lower for term in ("subject", "separation", "pop")):
@@ -509,8 +562,7 @@ def _apply_preview_edits(image, instructions: str):
     if any(term in lower for term in ("flat", "neutral", "minimal", "subtle", "only crop", "crop only")):
         return edited.filter(ImageFilter.UnsharpMask(radius=1.2, percent=80, threshold=3))
     edited = _add_subject_separation(edited, instructions + " subject background")
-    if "blur foreground" in lower or "foreground blur" in lower:
-        edited = _add_foreground_blur(edited)
+    edited = _apply_depth_of_field(edited, instructions)
     return edited
 
 
@@ -699,8 +751,7 @@ def _answer_photo_edit(query: str, project: str = None) -> dict:
     matches = _matching_photos(query, project=project, limit=3)
     attachments, preview_errors = [], []
     if matches:
-        text = "Photo edit recipe:\n\n" + "\n\n---\n\n".join(
-            _recipe_for_photo(item, request=query) for item in matches)
+        text = "I made a new preview from the photo."
         preview_delta = 0.0
         for item in matches[:1]:
             pair, error, delta = _preview_pair(item, query, project=project)
@@ -709,11 +760,11 @@ def _answer_photo_edit(query: str, project: str = None) -> dict:
             if error:
                 preview_errors.append(error)
         if attachments:
+            action_lines = _preview_action_lines(query)
             text += (
-                "\n\nApplied Preview Changes\n"
-                + "\n".join(f"- {line}" for line in _preview_action_lines(query))
-                + f"\n- Preview change strength: {preview_delta:.1f}/255 average channel shift."
-                + "\n\nI generated a before/after preview pair below."
+                "\n\nWhat changed\n"
+                + "\n".join(f"- {line}" for line in action_lines[:3])
+                + f"\n- Preview change strength: {preview_delta:.1f}/255."
             )
         elif preview_errors:
             text += "\n\nPreview note: " + "; ".join(preview_errors)

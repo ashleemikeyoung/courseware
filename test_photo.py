@@ -134,7 +134,7 @@ def test_photo_edit_generates_before_after_previews(tmp_path, monkeypatch):
     diff = ImageChops.difference(original.resize(edited.size), edited)
     assert diff.getbbox()
     assert max(ImageStat.Stat(diff).mean) > 10
-    assert "Applied Preview Changes" in result["text"]
+    assert "What changed" in result["text"]
     assert "Preview change strength:" in result["text"]
 
 
@@ -164,10 +164,10 @@ def test_photo_verbs_generate_goal_directed_preview(tmp_path, monkeypatch):
     )
 
     assert result["showAttachments"] is True
-    assert "El Roi Verb Plan" in result["text"]
-    assert "Foreground:" in result["text"]
-    assert "Background:" in result["text"]
+    assert "What changed" in result["text"]
+    assert "Adjusted depth of field" in result["text"]
     assert "Optimized the frame" in result["text"]
+    assert "Verb examples" not in result["text"]
     edited = Image.open(next((projects_root / "GCU" / "photo-previews").glob("modified-preview-*.jpg")))
     assert edited.size[0] < 160
     assert edited.size[1] < 100
