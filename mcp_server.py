@@ -469,6 +469,69 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        Tool(
+            name="lesson",
+            description=(
+                "Build a grounded corpus on any subject from open courseware, "
+                "index it as a project, and draft an explainer from it. Leads "
+                "with MIT OpenCourseWare and descends to peer university "
+                "courseware, open textbooks, and primary literature (arXiv, "
+                "DOAJ) only when MIT comes back thin. Everything is fetched "
+                "from openly licensed sources, given a provenance header, and "
+                "indexed, so afterwards the subject is permanently searchable "
+                "and citable offline. Use this when the user wants to learn or "
+                "teach a subject the index does not cover yet, rather than "
+                "answering from your own knowledge. Slow: a full run fetches "
+                "and extracts a dozen documents and then drafts from them, so "
+                "expect minutes, not seconds."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "subject": {
+                        "type": "string",
+                        "description": (
+                            "What to learn, in plain words, e.g. 'stochastic "
+                            "dominance' or 'Bayesian hierarchical models'."
+                        ),
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": (
+                            "Project folder to build into. Omit to use a slug "
+                            "of the subject."
+                        ),
+                    },
+                    "max_docs": {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Documents to index per tier (capped at 12).",
+                    },
+                    "tiers": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["mit", "peer", "textbook", "literature"],
+                        },
+                        "description": (
+                            "Pin an explicit tier list, in order, skipping the "
+                            "coverage check. Omit to start at MIT and descend "
+                            "only if coverage is thin. Pass ['literature'] for a "
+                            "peer-reviewed-only pass."
+                        ),
+                    },
+                    "explainer": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": (
+                            "False to build and index the corpus without "
+                            "drafting anything."
+                        ),
+                    },
+                },
+                "required": ["subject"],
+            },
+        ),
     ]
 
 
@@ -526,6 +589,9 @@ async def call_tool(name: str, arguments: dict) -> CallToolResult:
 
     elif name == "query_document_registry":
         return await handle_query_document_registry(arguments or {})
+
+    elif name == "lesson":
+        return await handle_lesson(arguments or {})
 
     return CallToolResult(
         content=[TextContent(type="text", text=f"Unknown tool: {name}")]
@@ -764,6 +830,79 @@ async def handle_ingest_content(arguments: dict) -> CallToolResult:
         return CallToolResult(
             content=[TextContent(type="text", text=f"Ingest error: {str(e)}")]
         )
+
+
+async def handle_lesson(arguments: dict) -> CallToolResult:
+    """
+    lesson.py is imported here rather than at module load, following the same
+    rule as orchestrator/ask/summarize above: it reaches rag.py, writer.py and
+    the network, and none of that should be able to take down search_documents.
+
+    build_lesson() is synchronous and slow -- it fetches a dozen documents,
+    extracts them, and then runs a long local generation. Called directly it
+    would block this server's event loop for minutes, so it goes to a worker
+    thread and the coroutine awaits that instead.
+    """
+    subject = (arguments.get("subject") or "").strip()
+    if not subject:
+        return CallToolResult(
+            content=[TextContent(type="text", text="Error: subject cannot be empty")]
+        )
+
+    try:
+        import lesson as lesson_mod
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(
+                type="text",
+                text=f"lesson module unavailable: {type(e).__name__}: {e}")]
+        )
+
+    try:
+        result = await asyncio.to_thread(
+            lesson_mod.build_lesson,
+            subject,
+            project=(arguments.get("project") or "").strip() or None,
+            max_docs=int(arguments.get("max_docs") or 10),
+            tiers=arguments.get("tiers") or None,
+            explainer=arguments.get("explainer", True),
+        )
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(
+                type="text", text=f"Lesson error: {type(e).__name__}: {e}")]
+        )
+
+    lines = [
+        f"Lesson built for '{result['subject']}' in project '{result['project']}'.",
+        f"Indexed {result['indexed']} documents, skipped {result['skipped']}.",
+        f"Tiers used: {', '.join(result['tiers_used']) or 'none'}.",
+    ]
+    if result.get("manifest"):
+        lines.append(f"Manifest: {result['manifest']}")
+    if result.get("explainer"):
+        lines.append(f"Explainer: {result['explainer']}")
+    else:
+        lines.append("Explainer: not written (skipped, or the local model was "
+                     "unavailable). The corpus is still indexed.")
+    lines.append(f"Total chunks in index: {collection.count()}")
+
+    indexed = [r for r in result["rows"] if r["status"] == "indexed"]
+    if indexed:
+        lines.append("")
+        lines.append("Indexed:")
+        for r in indexed:
+            lines.append(f"  [{r['tier']}] {r['title']}")
+            lines.append(f"        {r['url']}")
+
+    skipped = [r for r in result["rows"] if r["status"] != "indexed"]
+    if skipped:
+        lines.append("")
+        lines.append("Skipped:")
+        for r in skipped:
+            lines.append(f"  {r['title']} -- {r['status']}")
+
+    return CallToolResult(content=[TextContent(type="text", text="\n".join(lines))])
 
 
 async def handle_ask_local(arguments: dict) -> CallToolResult:
