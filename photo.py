@@ -421,9 +421,8 @@ def _preview_pair(item: dict, instructions: str, project: str = None) -> tuple[l
     out_dir = _preview_root(project or item.get("project"))
     out_dir.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex[:10]
-    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(source).stem).strip("-") or "photo"
-    original = out_dir / f"{stem}-{token}-original.jpg"
-    edited = out_dir / f"{stem}-{token}-edited.jpg"
+    original = out_dir / f"original-preview-{token}.jpg"
+    edited = out_dir / f"modified-preview-{token}.jpg"
 
     image = _fit_preview(_open_photo_preview(path))
     image.save(original, "JPEG", quality=92)
@@ -436,14 +435,14 @@ def _preview_pair(item: dict, instructions: str, project: str = None) -> tuple[l
         return [], "Preview output path is outside the project workspace."
     return [
         {
-            "filename": f"Original preview - {Path(source).name}",
+            "filename": "original-preview.jpg",
             "content_type": "image/jpeg",
             "size": original.stat().st_size,
             "image": True,
             "url": f"/api/photo/file?kind=preview&path={quote_plus(original_rel)}",
         },
         {
-            "filename": f"Edited preview - {Path(source).name}",
+            "filename": "modified-preview.jpg",
             "content_type": "image/jpeg",
             "size": edited.stat().st_size,
             "image": True,

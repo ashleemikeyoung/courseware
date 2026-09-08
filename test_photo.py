@@ -94,15 +94,18 @@ def test_photo_edit_generates_before_after_previews(tmp_path, monkeypatch):
 
     docs = tmp_path / "documents"
     projects_root = tmp_path / "projects"
-    source = docs / "GCU" / "Uploaded Photos" / "portrait.jpg"
+    source = docs / "GCU" / "Uploaded Photos" / "L1002916-2.dng"
     source.parent.mkdir(parents=True)
-    Image.new("RGB", (80, 60), (80, 90, 120)).save(source)
+    source.write_bytes(b"raw placeholder")
 
     monkeypatch.setattr(photo, "_documents_root", lambda: docs)
     monkeypatch.setattr(photo.projects, "PROJECTS_ROOT", projects_root)
+    monkeypatch.setattr(
+        photo, "_open_photo_preview",
+        lambda path: Image.new("RGB", (80, 60), (80, 90, 120)))
     monkeypatch.setattr(photo, "_indexed_photos", lambda project=None, limit=12: [{
-        "source": "GCU/Uploaded Photos/portrait.jpg",
-        "filename": "portrait.jpg",
+        "source": "GCU/Uploaded Photos/L1002916-2.dng",
+        "filename": "L1002916-2.dng",
         "project": "GCU",
         "description": "Portrait of a person with a busy background.",
         "text": "Portrait of a person with a busy background.",
@@ -120,8 +123,14 @@ def test_photo_edit_generates_before_after_previews(tmp_path, monkeypatch):
     assert result["attachments"][0]["url"].startswith("/api/photo/file?kind=preview")
     previews = sorted((projects_root / "GCU" / "photo-previews").glob("*.jpg"))
     assert len(previews) == 2
-    original = Image.open(previews[0])
-    edited = Image.open(previews[1])
+    names = {preview.name for preview in previews}
+    assert all("L1002916" not in name and name.endswith(".jpg") for name in names)
+    assert any(name.startswith("original-preview-") for name in names)
+    assert any(name.startswith("modified-preview-") for name in names)
+    assert result["attachments"][0]["filename"] == "original-preview.jpg"
+    assert result["attachments"][1]["filename"] == "modified-preview.jpg"
+    original = Image.open(next(p for p in previews if p.name.startswith("original")))
+    edited = Image.open(next(p for p in previews if p.name.startswith("modified")))
     assert ImageChops.difference(original.resize(edited.size), edited).getbbox()
     assert "Applied Preview Changes" in result["text"]
 
