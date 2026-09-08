@@ -661,6 +661,12 @@ textarea{resize:vertical;min-height:74px}
 .composer .btn{flex:0 0 auto;padding:11px 22px}
 .composer .btn.attach{padding:11px 14px}
 .composer select{flex:0 1 12rem;margin-bottom:0}
+body.photo-mode-active .composer{
+  border:1px dotted var(--blue);border-radius:8px;padding:12px;background:var(--paper-2);
+}
+body.photo-mode-active .composer textarea{
+  border-style:dotted;border-color:var(--blue);background:var(--paper);
+}
 table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}
 th{text-align:left;font-weight:500;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
   color:var(--ink-faint);padding:8px 10px;border-bottom:1px solid var(--ink)}
@@ -2492,6 +2498,18 @@ function latestPhotoMessage(){
   return null;
 }
 
+function focusAskInputSoon(){
+  window.setTimeout(() => {
+    const input = $("#askInput");
+    if (!input || input.disabled) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && active !== input &&
+        /^(?:INPUT|BUTTON|SELECT|TEXTAREA)$/.test(active.tagName || ""))
+      return;
+    input.focus({preventScroll:true});
+  }, 0);
+}
+
 async function runAppCommand(command){
   if (command === "show_attachments"){
     STATE.chat.messages.push({
@@ -2560,6 +2578,7 @@ async function runAppCommand(command){
     renderChat();
   } finally {
     STATE.chat.busy = false; $("#btnAsk").disabled = false;
+    if (clientPhotoModeActive()) focusAskInputSoon();
   }
 }
 
@@ -2633,7 +2652,9 @@ function renderChat(){
   const col = $("#chatColumn");
   const galley = $("#chatGalley");
   const photo = latestPhotoMessage();
-  if (photo && clientPhotoModeActive()){
+  const inPhotoMode = clientPhotoModeActive();
+  document.body.classList.toggle("photo-mode-active", inPhotoMode);
+  if (photo && inPhotoMode){
     renderPhotoWorkspace(photo.message);
     return;
   }
@@ -2703,6 +2724,7 @@ function renderPhotoWorkspace(photoMessage){
     history.appendChild(item);
   });
   margin.appendChild(history);
+  focusAskInputSoon();
 }
 
 function photoFrame(attachment, label){
