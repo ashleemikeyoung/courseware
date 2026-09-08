@@ -83,6 +83,17 @@ def main():
         mathtext.normalize("$5 " + "x" * 250 + r" \alpha $"),
         "$5 " + "x" * 250 + r" \alpha $")
 
+    print("Line-broken model maths is repaired")
+    chk("duplicate expectation stack",
+        mathtext.normalize("Expected Value (\nE\n[\nX\n]\nE[X]):"),
+        "Expected Value (\n\\(E[X]\\)):")
+    chk("duplicate utility stack",
+        mathtext.normalize("utility function \nU\n(\nW\n)\nU(W), but"),
+        "utility function \n\\(U(W)\\), but")
+    chk("ordinary prose lines are untouched",
+        mathtext.normalize("Heads: win $125.\nTails: lose $100."),
+        "Heads: win $125.\nTails: lose $100.")
+
     print("Unicode, for a surface with no renderer")
     chk("sum with subscripts",
         mathtext.render_unicode(r"\(E[U(X)] = \sum p_i u(x_i)\)"),

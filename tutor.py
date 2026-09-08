@@ -105,6 +105,21 @@ same hurdle is demanding on a small stake and negligible on a large one.
 """
 
 
+MATH_STYLE_RULES = """
+Math notation rules:
+
+- Write each formula exactly once, inside LaTeX delimiters.
+- Never write a formula as a vertical stack of symbols, and never write both a
+  rendered-looking stack and the plain formula beside it.
+- For a display equation, prefer a fenced block labelled math, with only the
+  formula inside the block.
+- Inline examples: \\(E[X]\\), \\(U(W)\\), \\(p_H = 0.5\\). Display examples:
+  ```math
+  \\mathbb{E}[U(W)] = \\sum_i p_i U(W + x_i)
+  ```.
+"""
+
+
 
 # ---------------------------------------------------------------------------
 # Classification
@@ -350,7 +365,7 @@ that all deal with it.
 - End with "Still open:" naming anything a reader would need that these
   excerpts do not cover. If nothing, omit the section.
 - No preamble. Start with the subject.
-""" + TEACHING_CONTRACT + """
+""" + MATH_STYLE_RULES + TEACHING_CONTRACT + """
 """
 
 
@@ -984,7 +999,7 @@ actual slides or notes, to a student working through a subject in order.
   where it does in the sequence.
 - Close with "What this sets up:" and one or two sentences pointing forward.
 - No preamble about what you are about to do.
-""" + TEACHING_CONTRACT + """
+""" + MATH_STYLE_RULES + TEACHING_CONTRACT + """
 """
 
 
@@ -1048,7 +1063,8 @@ only.
 - Preserve mathematics in LaTeX, \\( \\) or $ $ inline.
 - After the five, a section "Answers" giving each answer in one or two
   sentences, drawn from the text.
-- No preamble."""
+- No preamble.
+""" + MATH_STYLE_RULES
 
 
 def quiz(syl: dict, index: int = None) -> str:
@@ -1284,7 +1300,7 @@ learning a subject, from the course material given to you.
   a definition, a theorem, or an empirical figure is. Do the first freely and
   never the second.
 - No preamble.
-""" + TEACHING_CONTRACT + """
+""" + MATH_STYLE_RULES + TEACHING_CONTRACT + """
 """
 
 
@@ -1365,7 +1381,7 @@ Shape of the answer:
 - If the material contains a case close to what was asked, say so and compare
   them. A student who brings a bet resembling one in the notes should be told.
 - No preamble.
-""" + TEACHING_CONTRACT + """
+""" + MATH_STYLE_RULES + TEACHING_CONTRACT + """
 """
 
 

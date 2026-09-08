@@ -46,6 +46,12 @@ INLINE_DOLLAR_RE = re.compile(r"(?<!\$)\$(?!\$)([^\n$]{1,200}?)\$(?!\$)")
 DISPLAY_DOLLAR_RE = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
 
 MAX_INLINE = 200
+MATH_ATOM_RE = re.compile(
+    r"^\s*(?:[A-Za-z]|[()\[\]{}=+\-−<>×⋅·*/|]|\\?[A-Za-z]+|"
+    r"\d+(?:\.\d+)?|…|\.{2,})\s*$")
+MATHY_PREFIX_RE = re.compile(
+    r"^\s*([A-Za-z][A-Za-z0-9_]*(?:\[[^\]\n]+\]|\([^\)\n]+\))?"
+    r"(?:\s*[=+\-−<>×⋅·*/]\s*[^,.;:\n]+)?)")
 
 
 # Words that only appear between two dollar signs when those dollar signs are
@@ -63,6 +69,57 @@ PROSE_WORDS = {
 MAX_BARE = 40
 
 WORD_RE = re.compile(r"[A-Za-z]+")
+
+
+def _compact_math(lines: list) -> str:
+    out = "".join((line or "").strip() for line in lines)
+    out = out.replace("−", "-")
+    return out
+
+
+def repair_line_broken_math(text: str) -> str:
+    """
+    Collapse copied/model-written math stacks into one LaTeX-renderable span.
+
+    A local model sometimes emits both the line-broken visual form and the
+    plain source form, e.g. "E" / "[" / "X" / "]" / "E[X]". KaTeX can render
+    the source form, but the visual stack is just stray text. This pass removes
+    the stack when the next line starts with the same compact expression.
+    """
+    if not text or "\n" not in text:
+        return text or ""
+
+    lines = text.splitlines()
+    out = []
+    i = 0
+    while i < len(lines):
+        if not MATH_ATOM_RE.match(lines[i] or ""):
+            out.append(lines[i])
+            i += 1
+            continue
+
+        j = i
+        atoms = []
+        while j < len(lines) and MATH_ATOM_RE.match(lines[j] or ""):
+            atoms.append(lines[j])
+            j += 1
+
+        compact = _compact_math(atoms)
+        if (len(atoms) >= 2 and len(compact) >= 2 and j < len(lines)
+                and MATHY_PREFIX_RE.match(lines[j] or "")):
+            match = MATHY_PREFIX_RE.match(lines[j])
+            formula = (match.group(1) or "").strip().replace("−", "-")
+            squashed = re.sub(r"\s+", "", formula)
+            if squashed.startswith(compact) or compact.startswith(squashed):
+                rest = lines[j][match.end():]
+                out.append(f"\\({formula}\\){rest}")
+                i = j + 1
+                continue
+
+        out.extend(lines[i:j])
+        i = j
+
+    return "\n".join(out)
 
 
 def looks_like_math(body: str) -> bool:
@@ -116,8 +173,9 @@ def normalize(text: str) -> str:
     Display maths first: $$ is unambiguous, has no currency reading, and doing
     it first stops the inline pass from tearing a $$ pair in half.
     """
-    if not text or "$" not in text:
-        return text or ""
+    text = repair_line_broken_math(text or "")
+    if "$" not in text:
+        return text
 
     text = DISPLAY_DOLLAR_RE.sub(lambda m: f"\\[{m.group(1)}\\]", text)
     return INLINE_DOLLAR_RE.sub(

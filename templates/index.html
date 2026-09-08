@@ -514,6 +514,13 @@ textarea{resize:vertical;min-height:74px}
   margin:0;padding:14px 16px;overflow:auto;max-height:32rem;
   font-size:12.5px;line-height:1.65;white-space:pre;tab-size:2;
 }
+.mathblock{
+  border:1px solid var(--rule);background:var(--paper-2);
+  border-radius:2px;margin:1em 0;overflow:hidden;white-space:normal;
+}
+.mathblock .mathbody{
+  padding:16px;overflow:auto;font-size:1.04em;line-height:1.6;
+}
 .tok-comment{color:var(--ink-faint);font-style:italic}
 .tok-string{color:var(--green)}
 .tok-keyword{color:var(--blue);font-weight:600}
@@ -2066,10 +2073,24 @@ function scriptureOrigHtml(s, morph){
 
 function codeBlockHtml(lang, code){
   const label = lang || "text";
+  if (isMathLang(label)) return mathBlockHtml(code);
   return `<div class="codeblock" data-code="${escAttr(code)}">` +
     `<div class="codebar"><span>${esc(label)}</span>` +
     `<button class="copy-code" type="button">Copy</button></div>` +
     `<pre><code class="language-${escAttr(label)}">${highlightCode(code, label)}</code></pre>` +
+    `</div>`;
+}
+
+function isMathLang(lang){
+  return ["math", "tex", "latex"].includes((lang || "").toLowerCase());
+}
+
+function mathBlockHtml(code){
+  const body = (code || "").trim();
+  return `<div class="mathblock" data-code="${escAttr(body)}">` +
+    `<div class="codebar"><span>math</span>` +
+    `<button class="copy-code" type="button">Copy</button></div>` +
+    `<div class="mathbody">\\[${esc(body)}\\]</div>` +
     `</div>`;
 }
 
@@ -2293,7 +2314,7 @@ function wireCitations(containerEl, glossesEl){
   containerEl.addEventListener("click", e => {
     const copy = e.target.closest(".copy-code");
     if (copy){
-      const block = copy.closest(".codeblock");
+      const block = copy.closest(".codeblock,.mathblock");
       const code = block ? block.dataset.code || "" : "";
       navigator.clipboard.writeText(code).then(() => {
         copy.textContent = "Copied";
