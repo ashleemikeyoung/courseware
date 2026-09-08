@@ -360,7 +360,7 @@ def _mit_files(subject: str, limit: int = 40) -> list:
     except Exception:
         return []
 
-    wanted = ("", ".pdf", ".vtt", ".webvtt", ".txt", ".md")
+    wanted = ("", ".pdf", ".vtt", ".webvtt", ".txt", ".md", ".mp4")
     out = []
     for item in payload.get("results") or []:
         page = item.get("url") or ""
@@ -368,6 +368,7 @@ def _mit_files(subject: str, limit: int = 40) -> list:
         if not page or not _host_allowed(page, ["ocw.mit.edu"]) or ext not in wanted:
             continue
         course = _ocw_course_from_url(page)
+        youtube_id = item.get("youtube_id") or ""
         out.append({
             "title": item.get("content_title") or item.get("key") or "",
             "url": page,
@@ -375,6 +376,13 @@ def _mit_files(subject: str, limit: int = 40) -> list:
             "course_url": page.split("/resources/")[0] + "/",
             "ext": ext,
             "origin": f"MIT OpenCourseWare · {course}",
+            "description": _strip_html(item.get("description") or ""),
+            "youtube_id": youtube_id,
+            "youtube_url": f"https://www.youtube.com/watch?v={youtube_id}" if youtube_id else "",
+            "content_type": item.get("content_type") or "",
+            "feature_types": item.get("content_feature_type") or [],
+            "course_numbers": item.get("course_number") or [],
+            "run_slug": (item.get("run_slug") or "").removeprefix("courses/"),
             # Search returns the human-facing resource page, not the asset.
             # Resolved at fetch time so it costs one request per kept file
             # rather than one per candidate.
@@ -655,6 +663,8 @@ def _header(doc: dict, tier: dict, subject: str) -> str:
     if doc.get("course_url"):
         lines.append(f"Course: {doc.get('course', '')} — {doc['course_url']}")
     lines.append(f"URL: {doc['url']}")
+    if doc.get("youtube_url"):
+        lines.append(f"YouTube: {doc['youtube_url']}")
     if meta.get("authors"):
         lines.append("Authors: " + ", ".join(a for a in meta["authors"] if a))
     if meta.get("year") or meta.get("published"):

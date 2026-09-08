@@ -72,7 +72,7 @@ KIND_PATTERNS = [
     ("solution", r"solution"),
     ("reading", r"reading|bibliograph|reference"),
     ("syllabus", r"syllabus|calendar|course info"),
-    ("lecture", r"lecture|slide|notes?\b|chap|\bnote \d"),
+    ("lecture", r"\blec(?:ture)?\b|lecture|slide|notes?\b|chap|\bnote \d|lecture video"),
 ]
 
 
@@ -85,7 +85,8 @@ def classify(title: str, url: str = "") -> str:
 
 
 LEC_NUM_RE = re.compile(r"(?:lecture|lec|chap(?:ter)?|note)\s*#?\s*(\d{1,2})", re.I)
-KEY_TAIL_RE = re.compile(r"_(\d{1,2})[a-z]?/?$")
+KEY_LEC_RE = re.compile(r"(?:lec|lecture|handout|summary)[-_]?(\d{1,2})", re.I)
+KEY_TAIL_RE = re.compile(r"_(\d{1,2})[a-z]?(?:_pdf)?/?$")
 
 
 def sequence_of(title: str, url: str) -> int:
@@ -101,6 +102,9 @@ def sequence_of(title: str, url: str) -> int:
     an unnumbered file is far more often an appendix than an opener.
     """
     match = LEC_NUM_RE.search(title or "")
+    if match:
+        return int(match.group(1))
+    match = KEY_LEC_RE.search(url or "")
     if match:
         return int(match.group(1))
     match = KEY_TAIL_RE.search((url or "").rstrip("/") + "/")
@@ -125,6 +129,28 @@ def course_number(slug: str) -> str:
     return (parts[0] if parts else "").upper()
 
 
+def normalize_subject(subject: str) -> str:
+    """
+    Strip conversational wrappers before searching MIT.
+
+    "Explain to me expected utility" is a request; "expected utility" is the
+    topic. Leaving the wrapper in the API query makes broad intro courses win
+    because they match ordinary words like "explain" and "me" in surrounding
+    text.
+    """
+    text = " ".join((subject or "").strip().split())
+    text = re.sub(
+        r"^(?:please\s+)?(?:explain|teach|show|walk)\s+(?:me\s+)?"
+        r"(?:about\s+|through\s+|how\s+to\s+|what\s+is\s+|what\s+are\s+)?",
+        "",
+        text,
+        flags=re.I,
+    )
+    text = re.sub(r"^(?:i\s+want\s+to\s+learn|help\s+me\s+learn)\s+(?:about\s+)?",
+                  "", text, flags=re.I)
+    return text.strip() or (subject or "").strip()
+
+
 # ---------------------------------------------------------------------------
 # Building the syllabus
 # ---------------------------------------------------------------------------
@@ -147,7 +173,7 @@ def _home_course(hits: list) -> str:
     return max(scores, key=scores.get) if scores else ""
 
 
-def _course_inventory(slug: str, limit: int = 60) -> list:
+def _course_inventory(slug: str, limit: int = 200) -> list:
     """
     Every file in one course, classified and ordered.
 
@@ -163,13 +189,36 @@ def _course_inventory(slug: str, limit: int = 60) -> list:
     out = []
     seen = set()
     for f in files:
-        if course_of(f["url"]) != slug or f["url"] in seen:
+        if _hit_course_slug(f) != slug or f["url"] in seen:
             continue
         seen.add(f["url"])
         f = dict(f)
         f["kind"] = classify(f["title"], f["url"])
         f["seq"] = sequence_of(f["title"], f["url"])
         out.append(f)
+    out.sort(key=lambda f: (f["seq"], f["title"]))
+    return out
+
+
+def _hit_course_slug(hit: dict) -> str:
+    return hit.get("run_slug") or course_of(hit.get("url", ""))
+
+
+def _merge_course_hits(inventory: list, hits: list, slug: str) -> list:
+    """
+    Keep topic-specific MIT hits even when a course-number inventory search
+    misses them or buries them late.
+    """
+    out = [dict(f) for f in inventory]
+    seen = {f.get("url") for f in out}
+    for hit in hits or []:
+        if _hit_course_slug(hit) != slug or hit.get("url") in seen:
+            continue
+        f = dict(hit)
+        f["kind"] = classify(f.get("title", ""), f.get("url", ""))
+        f["seq"] = sequence_of(f.get("title", ""), f.get("url", ""))
+        out.append(f)
+        seen.add(f.get("url"))
     out.sort(key=lambda f: (f["seq"], f["title"]))
     return out
 
@@ -187,7 +236,61 @@ it is nearby in the course, and do not include the whole course. Use the
 indices given. If nothing covers the subject, answer {"core": [], "prerequisite": []}."""
 
 
-def _select_arc(subject: str, lectures: list) -> list:
+def _subject_words(subject: str) -> set:
+    return {
+        w for w in re.findall(r"[a-z]{4,}", (subject or "").lower())
+        if w not in {"explain", "teach", "show", "learn", "about"}
+    }
+
+
+def _seed_core_indices(subject: str, lectures: list, hits: list, slug: str) -> list:
+    """
+    Topic search hits are direct evidence that MIT has a relevant lecture.
+
+    Match by sequence number instead of exact title so a hit on "Lecture
+    Summary 20: Uncertainty" also brings in "Lec 20: Uncertainty" and its
+    transcript if the course exposes both.
+    """
+    words = _subject_words(subject)
+    seqs = set()
+    for hit in hits or []:
+        if _hit_course_slug(hit) != slug:
+            continue
+        kind = classify(hit.get("title", ""), hit.get("url", ""))
+        if kind not in {"lecture", "transcript"}:
+            continue
+        haystack = " ".join([
+            hit.get("title", ""),
+            hit.get("description", ""),
+            " ".join(hit.get("feature_types") or []),
+        ]).lower()
+        if words and not (words & set(re.findall(r"[a-z]{4,}", haystack))):
+            continue
+        seq = sequence_of(hit.get("title", ""), hit.get("url", ""))
+        if seq != 999:
+            seqs.add(seq)
+
+    if not seqs:
+        return []
+    return [i for i, lec in enumerate(lectures) if lec.get("seq") in seqs]
+
+
+def _prerequisite_indices(subject: str, lectures: list, core: list) -> list:
+    if not core:
+        return []
+    words = _subject_words(subject)
+    first = min(lectures[i].get("seq", 999) for i in core)
+    prereq = []
+    for i, lec in enumerate(lectures):
+        if lec.get("seq", 999) >= first or i in core:
+            continue
+        title_words = set(re.findall(r"[a-z]{4,}", lec.get("title", "").lower()))
+        if words & title_words or {"utility", "preference", "choice"} & title_words:
+            prereq.append(i)
+    return prereq[-2:]
+
+
+def _select_arc(subject: str, lectures: list, hits: list = None, slug: str = "") -> list:
     """
     Ordered lectures for this subject: prerequisites first, then core.
 
@@ -201,6 +304,7 @@ def _select_arc(subject: str, lectures: list) -> list:
         f"Subject: {subject}\n\nLectures, in course order:\n{listing}",
         ARC_SYSTEM, num_predict=400)
 
+    seeded_core = _seed_core_indices(subject, lectures, hits or [], slug)
     core, prereq = [], []
     if reply:
         match = re.search(r"\{.*\}", reply, re.DOTALL)
@@ -215,12 +319,19 @@ def _select_arc(subject: str, lectures: list) -> list:
             except Exception:
                 core, prereq = [], []
 
+    if seeded_core:
+        core = seeded_core
+
     if not core:
-        words = {w for w in re.findall(r"[a-z]{4,}", (subject or "").lower())}
+        words = _subject_words(subject)
         core = [i for i, lec in enumerate(lectures)
                 if words & set(re.findall(r"[a-z]{4,}", lec["title"].lower()))]
         if not core:
             core = list(range(len(lectures)))[:6]
+    if seeded_core:
+        prereq = [i for i in prereq if i not in core]
+        if not prereq:
+            prereq = _prerequisite_indices(subject, lectures, core)
 
     arc = []
     for i in sorted(prereq):
@@ -240,7 +351,7 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
     instead. The syllabus knows they exist from the moment it is built, which
     is the part that matters.
     """
-    subject = (subject or "").strip()
+    subject = normalize_subject(subject)
     if not subject:
         raise ValueError("subject cannot be empty")
 
@@ -252,7 +363,7 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
             on_progress(message)
 
     say(f"Finding the MIT course that owns '{subject}'...")
-    hits = lesson._mit_files(subject, limit=25)
+    hits = lesson._mit_files(subject, limit=40)
     if not hits:
         return {"subject": subject, "project": project, "course": None,
                 "lectures": [], "assignments": [], "exams": [], "related": [],
@@ -262,14 +373,14 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
     number = course_number(slug)
     say(f"Home course: {number}. Reading its full file list...")
 
-    inventory = _course_inventory(slug)
+    inventory = _merge_course_hits(_course_inventory(slug), hits, slug)
     lectures = [f for f in inventory if f["kind"] == "lecture"]
     assignments = [f for f in inventory if f["kind"] in {"assignment", "solution"}]
     exams = [f for f in inventory if f["kind"] == "exam"]
 
     say(f"  {len(lectures)} lectures, {len(assignments)} assignments, {len(exams)} exams")
 
-    arc = _select_arc(subject, lectures) if lectures else []
+    arc = _select_arc(subject, lectures, hits=hits, slug=slug) if lectures else []
     say(f"Teaching arc: {len(arc)} lectures "
         f"({sum(1 for a in arc if a['role'] == 'prerequisite')} as prerequisites)")
 
@@ -282,6 +393,8 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
             "n": i,
             "title": lec["title"],
             "url": lec["url"],
+            "youtube_url": lec.get("youtube_url", ""),
+            "description": lec.get("description", ""),
             "role": lec["role"],
             "seq": lec["seq"],
             "file": row.get("file", ""),
@@ -510,6 +623,8 @@ def sources(syl: dict, index: int = None) -> str:
     lec = lectures[i]
     return (f"## Sources for: {lec['title']}\n\n"
             f"- OCW page: {lec['url']}\n"
+            + (f"- YouTube: {lec['youtube_url']}\n" if lec.get("youtube_url") else "")
+            +
             f"- Course: {syl['course']['number']} {syl['course']['title']} — "
             f"{syl['course']['url']}\n"
             f"- Indexed as: `{lec['file'] or '(not indexed)'}`\n"
