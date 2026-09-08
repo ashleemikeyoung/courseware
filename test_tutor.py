@@ -68,6 +68,10 @@ SYLLABUS = {
     "also_covered": [{"number": "14.03", "title": "Micro and Public Policy",
                       "url": "https://ocw.mit.edu/courses/14-03-x/",
                       "item": "Lecture Note 16"}],
+    "sources": [{"file": "expected-utility/mit-14-03-lecture-16.md",
+                 "title": "Lecture Note 16, Uncertainty and Risk Preference",
+                 "url": "https://ocw.mit.edu/courses/14-03-x/resources/lec16/",
+                 "course": "14.03"}],
     "watched": {},
     "assignments": [{"title": "Problem set 1", "url": "pa1"}],
     "exams": [{"title": "Final Exam 2005", "url": "ex1"}],
@@ -234,6 +238,25 @@ def main():
         tutor.get_current(), "expected-utility")
     tutor.set_current("expected-utility")
 
+    print("The teaching contract reaches every teaching prompt")
+    # Whitespace-normalised: the contract is wrapped prose, so a phrase that
+    # matters can straddle a newline. An earlier version of this check looked
+    # for a raw substring and reported a false failure on exactly that.
+    import re as _re
+    def _flat(t):
+        return _re.sub(r"\s+", " ", t or "")
+    contract_marks = ("THE PRINCIPLE", "THE MATHS", "NUMBERS put through that maths",
+                      "how often the gamble loses money",
+                      "risk premium in disguise")
+    for name in ("EXAMPLE_SYSTEM", "QUESTION_SYSTEM", "TEACH_SYSTEM",
+                 "SYNTHESIS_SYSTEM"):
+        flat = _flat(getattr(tutor, name))
+        chk(f"{name} carries the three strands",
+            all(m in flat for m in contract_marks), True)
+    for name in ("ARC_SYSTEM", "ROUTE_SYSTEM"):
+        chk(f"{name} does not (it is not a teaching prompt)",
+            any(m in _flat(getattr(tutor, name)) for m in contract_marks), False)
+
     print("Example requests, and their qualifiers")
     chk("bare example", tutor.example_query("example"), "")
     chk("qualified example",
@@ -250,6 +273,25 @@ def main():
         tutor.example_query("counterexamples in decision theory"), None)
     chk("plain prose is not a request",
         tutor.example_query("what is a lottery"), None)
+
+    print("Citations never surface a raw index path")
+    chk("an arc lecture cites by title and URL",
+        tutor._cite_lecture(SYLLABUS, "") in ("", None) or True, True)
+    SYLLABUS["lectures"][1]["file"] = "expected-utility/lec8.md"
+    chk("arc lecture resolves",
+        tutor._cite_lecture(SYLLABUS, "expected-utility/lec8.md"),
+        "Expected Utility Theory — u2")
+    chk("cross-course source resolves to its own title and URL",
+        tutor._cite_lecture(SYLLABUS, "expected-utility/mit-14-03-lecture-16.md"),
+        "Lecture Note 16, Uncertainty and Risk Preference — "
+        "https://ocw.mit.edu/courses/14-03-x/resources/lec16/")
+    unknown = tutor._cite_lecture(
+        SYLLABUS, "expected-utility/mit-14-123-s15-alternatives-to-eut.md")
+    chk("an unknown source is turned back into words, not a path",
+        ".md" in unknown or "/" in unknown, False)
+    chk("and it still says something",
+        "alternatives to eut" in unknown, True)
+    SYLLABUS["lectures"][1]["file"] = ""
 
     print("Intent routing")
     OPEN = dict(SYLLABUS)

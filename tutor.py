@@ -58,6 +58,55 @@ import lesson
 
 
 # ---------------------------------------------------------------------------
+# The teaching contract
+#
+# Three strands, always, in this order: the principle, the maths that states
+# it, and numbers put through that maths. The reasoning is in tutor.py's own
+# history -- an early answer gave the principle with no arithmetic, and a later
+# one quoted the Rabin calibration figures at a student while declining to
+# apply them to the bet she had actually been offered. Both failures are the
+# same failure: a strand missing.
+#
+# Some people only learn from examples. An example whose arithmetic is shown
+# teaches the principle as a side effect; an example that states its
+# conclusion teaches nothing that transfers.
+# ---------------------------------------------------------------------------
+
+TEACHING_CONTRACT = """
+How to explain anything, every time:
+
+1. THE PRINCIPLE, in one or two plain sentences. What is true, and why it
+   matters. No notation yet.
+2. THE MATHS that states it, in LaTeX, display form. The general statement,
+   with its symbols named.
+3. NUMBERS put through that maths. Every arithmetic step written out, not
+   just the result. Choose numbers that make the point visible.
+
+Never give a principle without the maths that states it. Never give maths
+without numbers put through it. A reader who only follows examples must be
+able to reach the principle by reading the arithmetic, and a reader who only
+follows the algebra must be able to check it against the numbers.
+
+Expected value versus what actually happens:
+
+Whenever you compute an expected value for a gamble, also state the outcomes
+themselves -- what happens on each branch, with what probability, and how
+often the gamble loses money. A positive expected value is not a likely gain,
+and no single play ever pays the mean. Show both or the reader will conflate
+them.
+
+When the student states a decision rule:
+
+Apply THEIR rule first and explicitly: compute the quantity, compare it to
+their threshold, give the verdict in one sentence. Then say what the threshold
+amounts to in the theory, and what it does not capture. A flat expected-value
+hurdle is a risk premium in disguise, and it is not scale-invariant -- the
+same hurdle is demanding on a small stake and negligible on a large one.
+"""
+
+
+
+# ---------------------------------------------------------------------------
 # Classification
 #
 # OCW resource keys and titles are consistent enough to classify from, and
@@ -300,7 +349,9 @@ that all deal with it.
   from, in the sentence, not as a footnote.
 - End with "Still open:" naming anything a reader would need that these
   excerpts do not cover. If nothing, omit the section.
-- No preamble. Start with the subject."""
+- No preamble. Start with the subject.
+""" + TEACHING_CONTRACT + """
+"""
 
 
 def synthesize(subject: str, rows: list, budget: int = 90000) -> str:
@@ -643,6 +694,12 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
                    "url": f"https://ocw.mit.edu/courses/{slug}/"},
         "synthesis": synthesis,
         "lectures": planned,
+        # Everything indexed for this lesson beyond the arc. Kept so a
+        # retrieved passage from another course can be cited by its title and
+        # URL rather than by the filename it happens to have on disk.
+        "sources": [{"file": r.get("file", ""), "title": r.get("title", ""),
+                     "url": r.get("url", ""), "course": r.get("course", "")}
+                    for r in cross_rows if r.get("status") == "indexed"],
         "also_covered": also_covered,
         "assignments": [{"title": a["title"], "url": a["url"]} for a in assignments],
         "exams": [{"title": e["title"], "url": e["url"]} for e in exams],
@@ -799,7 +856,9 @@ actual slides or notes, to a student working through a subject in order.
 - Open with one sentence on what this lecture establishes and why it comes
   where it does in the sequence.
 - Close with "What this sets up:" and one or two sentences pointing forward.
-- No preamble about what you are about to do."""
+- No preamble about what you are about to do.
+""" + TEACHING_CONTRACT + """
+"""
 
 
 def teach(syl: dict, index: int = None) -> str:
@@ -1005,11 +1064,34 @@ def _passages(syl: dict, query: str, n: int = 4) -> list:
 
 
 def _cite_lecture(syl: dict, source: str) -> str:
-    """Map an indexed filename back to the lecture a reader would recognise."""
+    """
+    Map an indexed filename back to something a reader would recognise.
+
+    Three places to look, because a lesson indexes more than its arc: the
+    lectures, then the cross-course material the synthesis drew on, then a
+    last resort that at least reads like a title.
+
+    That last resort exists because the raw path leaked into a real answer --
+    "Source: expected-utility/mit-14-123-s15-microeconomic-theory-iii-
+    alternatives-to-expected-utility-t.md" is an implementation detail wearing
+    a citation's clothes. A slug turned back into words is not a proper
+    citation either, but it is honest about what it is and it is readable.
+    """
     for lec in syl.get("lectures") or []:
         if lec.get("file") and lec["file"] == source:
             return f"{lec['title']} — {lec['url']}"
-    return source or ""
+
+    for row in syl.get("sources") or []:
+        if row.get("file") and row["file"] == source:
+            title = row.get("title") or ""
+            url = row.get("url") or ""
+            return f"{title} — {url}" if url else title
+
+    if not source:
+        return ""
+    stem = Path(source).stem
+    stem = re.sub(r"^(?:mit-)?", "", stem)
+    return stem.replace("-", " ").strip()
 
 
 def _evidence_block(syl: dict, passages: list, budget: int = 40000) -> str:
@@ -1054,7 +1136,12 @@ learning a subject, from the course material given to you.
 - End with one sentence naming what the example demonstrates.
 - If the requested variation is not something the material supports, say so in
   one line and work the closest example the material does support instead.
-- No preamble."""
+- Applying the material's method to fresh numbers is not inventing; inventing
+  a definition, a theorem, or an empirical figure is. Do the first freely and
+  never the second.
+- No preamble.
+""" + TEACHING_CONTRACT + """
+"""
 
 
 def example(syl: dict, qualifier: str = "") -> str:
@@ -1097,19 +1184,45 @@ def example(syl: dict, qualifier: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 QUESTION_SYSTEM = """You are answering one question from a student working
-through a subject, using the course material given to you and nothing else.
+through a subject, using the course material given to you.
 
-- Answer the question that was asked, first, in the first sentence.
-- Then walk through it: the reasoning, the steps, the arithmetic if there is
-  any. Show the working rather than asserting the result.
-- Use only the material provided. If it does not settle the question, say so
-  plainly and answer as far as the material goes.
-- Preserve mathematics in LaTeX: \\( \\) inline, \\[ \\] display. \\mathbb{E}[X] or
-  E[X] with square brackets, never E(X); every sum carries its index.
-- Name the document a definition or result comes from, in the sentence.
+The difference between facts and application, which is the whole of your job:
+
+- FACTS come from the material only. Definitions, theorems, axioms, named
+  results, empirical figures, who said what. Never invent one, never import
+  one from memory, and name the document each comes from in the sentence.
+
+- APPLYING the material's own method to the student's numbers is not
+  inventing, it is the point. If they hand you a gamble, compute its expected
+  value and its expected utility with the formula the material states. Do the
+  arithmetic. Show it. "The material does not contain this specific bet" is
+  never a reason to decline -- a worked method applies to instances it does
+  not mention, which is what makes it a method.
+
+- When the answer genuinely depends on something the student has not told you,
+  such as their utility function or their current wealth, say exactly what it
+  depends on and then answer under the standard cases: risk neutral, and risk
+  averse with a concave utility the material actually uses.
+
+- Only say the material does not settle the question when it lacks the METHOD,
+  not merely the instance. If it lacks the method, say so plainly and answer as
+  far as the material does reach.
+
+Shape of the answer:
+
+- The answer to the question asked, in the first sentence. If the question is
+  "should I", give the condition under which the answer is yes and the
+  condition under which it is no, before the reasoning.
+- Then the working: the reasoning, the steps, the arithmetic.
 - If the question contains a mistake or a false premise, say so before
   answering it.
-- No preamble."""
+- Preserve mathematics in LaTeX: \\( \\) inline, \\[ \\] display. \\mathbb{E}[X] or
+  E[X] with square brackets, never E(X); every sum carries its index.
+- If the material contains a case close to what was asked, say so and compare
+  them. A student who brings a bet resembling one in the notes should be told.
+- No preamble.
+""" + TEACHING_CONTRACT + """
+"""
 
 
 def answer_question(syl: dict, question: str) -> str:
