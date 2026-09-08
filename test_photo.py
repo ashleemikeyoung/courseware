@@ -90,7 +90,7 @@ def test_attachment_upload_saves_photo_under_uploaded_photos(tmp_path, monkeypat
 
 
 def test_photo_edit_generates_before_after_previews(tmp_path, monkeypatch):
-    from PIL import Image
+    from PIL import Image, ImageChops
 
     docs = tmp_path / "documents"
     projects_root = tmp_path / "projects"
@@ -118,7 +118,12 @@ def test_photo_edit_generates_before_after_previews(tmp_path, monkeypatch):
     assert result["metrics"]["previews"] == 2
     assert len(result["attachments"]) == 2
     assert result["attachments"][0]["url"].startswith("/api/photo/file?kind=preview")
-    assert list((projects_root / "GCU" / "photo-previews").glob("*.jpg"))
+    previews = sorted((projects_root / "GCU" / "photo-previews").glob("*.jpg"))
+    assert len(previews) == 2
+    original = Image.open(previews[0])
+    edited = Image.open(previews[1])
+    assert ImageChops.difference(original.resize(edited.size), edited).getbbox()
+    assert "Applied Preview Changes" in result["text"]
 
 
 def test_photo_ingest_relative_folder_resolves_inside_project():

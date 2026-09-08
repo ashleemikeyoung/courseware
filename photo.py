@@ -329,7 +329,7 @@ def _crop_preview(image, instructions: str):
     else:
         target_ratio = w / h
     if "tighter" in lower:
-        w2, h2 = int(w * 0.88), int(h * 0.88)
+        w2, h2 = int(w * 0.80), int(h * 0.80)
     elif abs((w / h) - target_ratio) < 0.03:
         return image
     else:
@@ -351,14 +351,14 @@ def _add_subject_separation(image, instructions: str):
     from PIL import ImageEnhance, ImageFilter, Image
 
     base = image.convert("RGB")
-    background = ImageEnhance.Color(base).enhance(0.88)
-    background = ImageEnhance.Contrast(background).enhance(0.96)
-    background = ImageEnhance.Brightness(background).enhance(0.92)
-    background = background.filter(ImageFilter.GaussianBlur(radius=1.2))
+    background = ImageEnhance.Color(base).enhance(0.72)
+    background = ImageEnhance.Contrast(background).enhance(0.88)
+    background = ImageEnhance.Brightness(background).enhance(0.78)
+    background = background.filter(ImageFilter.GaussianBlur(radius=2.4))
 
-    subject = ImageEnhance.Sharpness(base).enhance(1.12)
-    subject = ImageEnhance.Brightness(subject).enhance(1.04)
-    subject = ImageEnhance.Contrast(subject).enhance(1.05)
+    subject = ImageEnhance.Sharpness(base).enhance(1.28)
+    subject = ImageEnhance.Brightness(subject).enhance(1.12)
+    subject = ImageEnhance.Contrast(subject).enhance(1.12)
 
     w, h = base.size
     mask = Image.new("L", (w, h), 0)
@@ -370,22 +370,43 @@ def _add_subject_separation(image, instructions: str):
     return Image.composite(subject, background, mask)
 
 
+def _preview_action_lines(instructions: str) -> list[str]:
+    lower = (instructions or "").lower()
+    actions = ["Applied autocontrast and a small global contrast lift."]
+    if any(term in lower for term in ("crop", "frame", "framing", "tighter", "4:5", "5:4", "square")):
+        actions.append("Applied a visible center crop for the preview.")
+    if any(term in lower for term in ("bright", "brighter", "lift", "exposure", "light")):
+        actions.append("Raised preview brightness.")
+    if any(term in lower for term in ("dark", "moody", "deeper")):
+        actions.append("Darkened the preview.")
+    if any(term in lower for term in ("warm", "warmer", "golden")):
+        actions.append("Warmed the color balance.")
+    if any(term in lower for term in ("vibrant", "color", "saturation")):
+        actions.append("Increased color saturation.")
+    if any(term in lower for term in ("separation", "subject", "background", "pop", "portrait")):
+        actions.append(
+            "Applied a center-weighted subject separation preview: brighter/sharper center, darker/softer background."
+        )
+    return actions
+
+
 def _apply_preview_edits(image, instructions: str):
     from PIL import ImageEnhance, ImageOps
 
     lower = (instructions or "").lower()
     edited = _crop_preview(image, instructions)
     edited = ImageOps.autocontrast(edited, cutoff=0.5)
+    edited = ImageEnhance.Contrast(edited).enhance(1.08)
     if any(term in lower for term in ("bright", "brighter", "lift", "exposure", "light")):
-        edited = ImageEnhance.Brightness(edited).enhance(1.08)
+        edited = ImageEnhance.Brightness(edited).enhance(1.18)
     if any(term in lower for term in ("dark", "moody", "deeper")):
-        edited = ImageEnhance.Brightness(edited).enhance(0.95)
+        edited = ImageEnhance.Brightness(edited).enhance(0.85)
     if any(term in lower for term in ("contrast", "pop", "separation", "subject")):
-        edited = ImageEnhance.Contrast(edited).enhance(1.08)
+        edited = ImageEnhance.Contrast(edited).enhance(1.16)
     if any(term in lower for term in ("warm", "warmer", "golden")):
-        edited = _warm_image(edited, amount=1.05)
+        edited = _warm_image(edited, amount=1.12)
     if any(term in lower for term in ("vibrant", "color", "saturation")):
-        edited = ImageEnhance.Color(edited).enhance(1.10)
+        edited = ImageEnhance.Color(edited).enhance(1.22)
     edited = _add_subject_separation(edited, instructions)
     return edited
 
@@ -486,7 +507,11 @@ def _answer_photo_edit(query: str, project: str = None) -> dict:
             if error:
                 preview_errors.append(error)
         if attachments:
-            text += "\n\nI generated a before/after preview pair below."
+            text += (
+                "\n\nApplied Preview Changes\n"
+                + "\n".join(f"- {line}" for line in _preview_action_lines(query))
+                + "\n\nI generated a before/after preview pair below."
+            )
         elif preview_errors:
             text += "\n\nPreview note: " + "; ".join(preview_errors)
     else:
