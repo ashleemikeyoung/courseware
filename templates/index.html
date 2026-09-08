@@ -300,6 +300,11 @@ nav button:focus-visible,.btn:focus-visible,.cite:focus-visible{
   color:var(--ink-faint);margin:0 0 10px;
 }
 h1{font-size:1.85rem;font-weight:600;letter-spacing:-.01em;margin:0 0 6px;line-height:1.2}
+/* h2 and h3 were inheriting body's 1.62, so a single 32px heading sat in a
+   52px line box and every section opened with ~20px of leading nobody asked
+   for. Body leading is for paragraphs; a heading is one or two lines and
+   wants its own. Same inheritance was padding the sidebar rows below. */
+h2,h3{line-height:1.2}
 h2{font-size:1.2rem;font-weight:600;margin:0 0 4px}
 .lede{color:var(--ink-soft);margin:0 0 26px;max-width:44rem}
 .bakash-title{margin-bottom:10px}
@@ -683,7 +688,10 @@ textarea{resize:vertical;min-height:74px}
 }
 .projects-grid{display:grid;grid-template-columns:repeat(2,minmax(16rem,1fr));gap:18px}
 .project-card{
-  min-height:8.8rem;border:1px solid var(--rule);border-radius:8px;background:var(--paper);
+  /* 8.8rem forced 141px of card around 47px of content -- title, one meta
+     row, and 58px of nothing held open by space-between. 6.25rem leaves a
+     deliberate band instead of a void. */
+  min-height:6.25rem;border:1px solid var(--rule);border-radius:8px;background:var(--paper);
   padding:18px 20px;display:flex;flex-direction:column;justify-content:space-between;
   cursor:pointer;box-shadow:0 1px 0 var(--shadow);
 }
@@ -929,18 +937,18 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 }
 .home-main{flex:1;min-width:0;min-height:0;overflow-y:auto}
 .home-main .wrap{padding:34px 40px 90px}
-.sidebar-primary{display:grid;gap:3px;margin-bottom:24px}
+.sidebar-primary{display:grid;gap:3px;margin-bottom:16px}
 .sidebar-action{
   display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;
   padding:8px 10px;border-radius:6px;cursor:pointer;color:var(--ink);
-  font-family:var(--sans);font-size:14px;text-align:left;
+  font-family:var(--sans);font-size:14px;line-height:1.25;text-align:left;
 }
 .sidebar-action:hover,.sidebar-action.active{background:var(--paper-3)}
 .sidebar-icon{
   width:18px;flex:0 0 18px;text-align:center;color:var(--ink-faint);
   font-family:var(--mono);font-size:14px;line-height:1;
 }
-.sidebar-section{margin-bottom:22px}
+.sidebar-section{margin-bottom:14px}
 .sidebar-head{
   display:flex;align-items:center;justify-content:space-between;
   font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
@@ -953,7 +961,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 .sidebar-add:hover{color:var(--ink);border-color:var(--ink-soft)}
 .sidebar-item{
   display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:6px;
-  cursor:pointer;font-size:13.5px;color:var(--ink);white-space:nowrap;
+  cursor:pointer;font-size:13.5px;line-height:1.25;color:var(--ink);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;
 }
 .sidebar-item:hover{background:var(--paper-3);color:var(--ink)}
