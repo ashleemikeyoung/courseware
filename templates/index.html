@@ -608,6 +608,30 @@ textarea{resize:vertical;min-height:74px}
   font-family:var(--sans);font-size:12px;color:var(--ink-soft);
 }
 .mail-attachment .cap span:first-child{font-weight:700;color:var(--ink)}
+.galley.photo-workspace{grid-template-columns:minmax(0,1fr) 18rem;gap:1.6rem;justify-content:stretch}
+.galley.photo-workspace .column{max-width:none}
+.photo-stage{display:grid;gap:10px}
+.photo-stage-tools{display:flex;justify-content:flex-end;align-items:center;gap:12px}
+.photo-frames{display:grid;grid-template-columns:1fr;gap:12px;align-items:start}
+.photo-frames.compare{grid-template-columns:repeat(2,minmax(0,1fr))}
+.photo-frame{border:1px solid var(--rule);border-radius:8px;overflow:hidden;background:var(--paper)}
+.photo-frame img{display:block;width:100%;height:auto;max-height:calc(100vh - 280px);object-fit:contain;background:#111}
+.photo-frame .cap{
+  display:flex;justify-content:space-between;gap:12px;padding:8px 10px;
+  font-family:var(--sans);font-size:12px;color:var(--ink-soft);
+}
+.photo-frame .cap span:first-child{font-weight:700;color:var(--ink)}
+.photo-history{display:grid;gap:10px}
+.photo-history .title{
+  font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-faint);
+}
+.photo-history-item{border-left:2px solid var(--rule);padding-left:10px;font-size:13px;color:var(--ink-soft)}
+.photo-history-item.user{border-left-color:var(--blue);color:var(--ink)}
+.photo-history-item .role{
+  display:block;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-faint);margin-bottom:3px;
+}
 .photo-adjustments{
   border:1px solid var(--rule);border-radius:2px;padding:12px;margin-top:10px;
   display:grid;gap:10px;background:var(--paper-2);
@@ -702,6 +726,8 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 
 @media(max-width:880px){
   .galley{grid-template-columns:1fr;gap:1.6rem}
+  .galley.photo-workspace{grid-template-columns:1fr}
+  .photo-frames.compare{grid-template-columns:1fr}
   .tunegrid{grid-template-columns:1fr}
   .margin{position:static;max-height:none}
   .panel{padding:24px 18px 80px}
@@ -2202,6 +2228,7 @@ STATE.chat = {
   messages: [], busy: false, turnSeq: 0, history: [], histPos: null,
   loadedProject: null, conversations: []
 };
+STATE.photo = { compare:false };
 
 function loadAskHistory(){
   try {
@@ -2443,6 +2470,28 @@ function latestChatAttachments(){
   return [];
 }
 
+function clientPhotoModeActive(){
+  let active = false;
+  STATE.chat.messages.forEach(m => {
+    if (m.role !== "user") return;
+    const text = (m.content || "").trim().toLowerCase();
+    if (/^(?:\/photo\s+(?:off|exit|stop|done)|\/exit\s+photo|exit\s+photo\s+mode|leave\s+photo\s+mode|stop\s+photo\s+mode)$/.test(text))
+      active = false;
+    else if (/^\/photo\b/.test(text))
+      active = true;
+  });
+  return active;
+}
+
+function latestPhotoMessage(){
+  for (let i = STATE.chat.messages.length - 1; i >= 0; i--){
+    const m = STATE.chat.messages[i];
+    const atts = m.attachments || [];
+    if (m.role === "assistant" && atts.some(a => a.photo_preview)) return {message:m, index:i};
+  }
+  return null;
+}
+
 async function runAppCommand(command){
   if (command === "show_attachments"){
     STATE.chat.messages.push({
@@ -2582,6 +2631,16 @@ function writerDefaultModel(){
 
 function renderChat(){
   const col = $("#chatColumn");
+  const galley = $("#chatGalley");
+  const photo = latestPhotoMessage();
+  if (photo && clientPhotoModeActive()){
+    renderPhotoWorkspace(photo.message);
+    return;
+  }
+  if (galley) galley.classList.remove("photo-workspace");
+  const margin = $("#chatMargin");
+  if (margin)
+    margin.innerHTML = '<div class="hint" id="chatHint">Click any citation to read its source.</div><div id="chatGlosses"></div>';
   if (!STATE.chat.messages.length){
     col.innerHTML = "";
     return;
@@ -2591,6 +2650,76 @@ function renderChat(){
   setContextVisibility(STATE.showContext);
   wireCitations(col, $("#chatGlosses"));
   window.scrollTo(0, document.body.scrollHeight);
+}
+
+function renderPhotoWorkspace(photoMessage){
+  const col = $("#chatColumn");
+  const margin = $("#chatMargin");
+  const galley = $("#chatGalley");
+  if (galley) galley.classList.add("photo-workspace");
+  col.innerHTML = "";
+  margin.innerHTML = "";
+
+  const attachments = photoMessage.attachments || [];
+  const original = attachments.find(a => a.photo_preview && a.role === "original");
+  const modified = attachments.find(a => a.photo_preview && a.role === "modified");
+  const display = attachments.find(a => a.photo_preview && a.role === "display");
+  const current = modified || display || original;
+  if (!current) return;
+
+  const stage = el("div", "photo-stage");
+  const tools = el("div", "photo-stage-tools");
+  if (original && current && original !== current) {
+    const compare = el("label", "toggle");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = !!STATE.photo.compare;
+    input.onchange = () => {
+      STATE.photo.compare = input.checked;
+      renderPhotoWorkspace(photoMessage);
+    };
+    compare.append(input, el("span", "", "Compare with original"));
+    tools.appendChild(compare);
+  }
+  stage.appendChild(tools);
+
+  const frames = el("div", "photo-frames" + (STATE.photo.compare && original && original !== current ? " compare" : ""));
+  if (STATE.photo.compare && original && original !== current)
+    frames.appendChild(photoFrame(original, "Before"));
+  frames.appendChild(photoFrame(current, current.role === "display" ? "Photo" : "Current"));
+  stage.appendChild(frames);
+  const controls = photoAdjustmentControls(attachments, stage);
+  if (controls && current.role !== "display") stage.appendChild(controls);
+  col.appendChild(stage);
+
+  const history = el("div", "photo-history");
+  history.appendChild(el("div", "title", "Command history"));
+  STATE.chat.messages.slice(-12).forEach(m => {
+    if (m.pending) return;
+    const item = el("div", "photo-history-item " + m.role);
+    item.appendChild(el("span", "role", m.role === "user" ? "Command" : "Change"));
+    const text = (m.content || "").replace(/\s+/g, " ").trim();
+    item.appendChild(el("span", "", text.length > 180 ? text.slice(0, 177) + "..." : text));
+    history.appendChild(item);
+  });
+  margin.appendChild(history);
+}
+
+function photoFrame(attachment, label){
+  const link = el("a", "photo-frame");
+  link.dataset.role = attachment.role || "";
+  link.href = attachment.url;
+  link.target = "_blank";
+  link.rel = "noopener";
+  const img = document.createElement("img");
+  img.src = attachment.url;
+  img.alt = attachment.filename || label;
+  link.appendChild(img);
+  const cap = el("div", "cap");
+  cap.appendChild(el("span", "", attachment.filename || label));
+  cap.appendChild(el("span", "", label));
+  link.appendChild(cap);
+  return link;
 }
 
 function chatBubble(m, index){
@@ -2796,8 +2925,10 @@ function photoAdjustmentControls(attachments, wrap){
   let lastCommitted = {values: copyValues(values), url: initialUrl, delta: ""};
   const undoStack = [];
 
-  const previewImage = () => wrap.querySelector('.mail-attachment[data-role="modified"] img');
-  const previewLink = () => wrap.querySelector('.mail-attachment[data-role="modified"]');
+  const previewImage = () => wrap.querySelector(
+    '.mail-attachment[data-role="modified"] img, .photo-frame[data-role="modified"] img');
+  const previewLink = () => wrap.querySelector(
+    '.mail-attachment[data-role="modified"], .photo-frame[data-role="modified"]');
   const setPreviewUrl = url => {
     if (!url) return;
     const img = previewImage();
