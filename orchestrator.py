@@ -985,6 +985,90 @@ def cmd_summarize(term: str):
         print()
 
 
+def cmd_lesson(arg: str):
+    """
+    /lesson <subject> — build a corpus on a subject from open courseware,
+    index it, and scope the session to it.
+
+    Same shared pipeline as MCP's lesson tool and test_lesson.py --live (see
+    lesson.py's module docstring), so "how does a subject get learned" has one
+    answer no matter which door you came in through.
+
+    Two deliberate choices here. The lesson always builds into its own project
+    named after the subject, never into whatever scope happens to be active --
+    running /lesson while scoped to a dissertation folder should not quietly
+    drop a dozen MIT lecture PDFs into it. And on success the scope then moves
+    to that new project, because the reason anyone asks for a lesson is that
+    they are about to ask questions about it, and leaving the scope where it
+    was means the first of those questions gets answered from the wrong corpus.
+    The move goes through cmd_project() so the session reset and recent-turn
+    clearing happen exactly as they do for a manual /project.
+
+    lesson is imported here rather than at the top of this file because it
+    reaches the network and can take minutes; nothing else in the terminal
+    should pay for that import or fail on it.
+    """
+    subject = (arg or "").strip()
+    if not subject:
+        print("\nUsage: /lesson <subject>")
+        print("  e.g. /lesson stochastic dominance")
+        print("       /lesson Bayesian hierarchical models\n")
+        return
+
+    try:
+        import lesson
+    except Exception as e:
+        print(f"\n  lesson module unavailable: {type(e).__name__}: {e}\n")
+        return
+
+    print(f"\nBuilding a lesson on '{subject}'. This fetches and extracts real")
+    print("documents and then drafts from them, so give it a few minutes.\n")
+
+    try:
+        result = lesson.build_lesson(subject, on_progress=lambda m: print(f"  {m}", flush=True))
+    except KeyboardInterrupt:
+        print("\n  Interrupted. Anything already indexed stays indexed.\n")
+        return
+    except Exception as e:
+        print(f"\n  Lesson failed: {type(e).__name__}: {e}\n")
+        return
+
+    print()
+    print(f"  Project:   {result['project']}")
+    print(f"  Indexed:   {result['indexed']} documents")
+    print(f"  Skipped:   {result['skipped']}")
+    print(f"  Tiers:     {', '.join(result['tiers_used']) or 'none'}")
+    if result.get("manifest"):
+        print(f"  Manifest:  {result['manifest']}")
+    if result.get("explainer"):
+        print(f"  Explainer: {result['explainer']}")
+        print("             (generated, deliberately not indexed -- check it "
+              "against the manifest)")
+    else:
+        print("  Explainer: not written. The corpus is still indexed.")
+    print(f"  Total chunks in database: {collection.count()}")
+
+    if result["indexed"]:
+        cmd_lesson_scope(result["project"])
+    else:
+        print("\n  Nothing was indexed. Run 'python test_lesson.py --probe "
+              f"\"{subject}\"' to see which sources responded.\n")
+
+
+def cmd_lesson_scope(project: str):
+    """
+    Scope to a project the lesson just created. Split out from cmd_lesson so
+    the rescan-then-switch ordering lives in one place: projects.discover()
+    reads the folder tree, and cmd_project() validates against it, so a
+    project created moments ago is visible only because build_lesson()
+    created the directory before indexing into it.
+    """
+    print()
+    cmd_project(project)
+    print("  Ask a question and it will be answered from what was just learned.")
+    print("  /all to widen the scope again.\n")
+
+
 COMMANDS = {
     "/rescan": cmd_rescan,
     "/status": cmd_status,
@@ -1011,6 +1095,8 @@ Commands:
   /clear           — wipe the database completely
   /summarize <term> — search the index and summarize every matching
                       document straight off disk, not from retrieved chunks
+  /lesson <subject> — learn a subject from open courseware: fetch, index,
+                      draft an explainer, then scope the session to it
   /benchmark       — show timing history across all runs
   /clearbenchmark  — clear benchmark history
   /incognito       — toggle session logging off/on for what follows
@@ -1076,6 +1162,10 @@ if __name__ == "__main__":
                 print("\nUsage: /summarize <search term>\n")
             else:
                 cmd_summarize(term)
+            continue
+
+        if q.lower().startswith("/lesson"):
+            cmd_lesson(q[len("/lesson"):].strip())
             continue
 
         if q.lower() in COMMANDS:
