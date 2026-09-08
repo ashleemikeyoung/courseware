@@ -72,6 +72,10 @@ def main():
     chk("problem set is an assignment", tutor.classify("Problem set 4"), "assignment")
     chk("lecture slides are a lecture",
         tutor.classify("Expected Utility Theory - Lecture Slides"), "lecture")
+    chk("lec video titles are lectures",
+        tutor.classify("Lec 20: Uncertainty",
+                       "https://ocw.mit.edu/courses/x/resources/lec-20-uncertainty/"),
+        "lecture")
     chk("transcript beats lecture, so the syllabus does not double up",
         tutor.classify("Lecture 3 transcript"), "transcript")
     chk("chapter notes count as lectures",
@@ -84,6 +88,10 @@ def main():
         tutor.sequence_of("Expected Utility Theory - Lecture Slides",
                           "https://ocw.mit.edu/courses/14-121-x/resources/mit14_121f15_5s/"),
         5)
+    chk("lecture number can come from an OCW lec URL",
+        tutor.sequence_of("Uncertainty",
+                          "https://ocw.mit.edu/courses/14-01-x/resources/lec-20-uncertainty/"),
+        20)
     chk("unnumbered files sort to the end, not the front",
         tutor.sequence_of("Readings", "https://ocw.mit.edu/c/resources/readings/"), 999)
 
@@ -101,6 +109,32 @@ def main():
             {"url": "https://ocw.mit.edu/courses/18-s096-b/resources/4/"},
             {"url": "https://ocw.mit.edu/courses/18-s096-b/resources/5/"},
         ]), "14-121-a")
+    chk("teaching wrapper is stripped before MIT search",
+        tutor.normalize_subject("Explain to me expected utility"), "expected utility")
+
+    lectures = [
+        {"title": "Lecture Summary 02: Preferences and Utility Functions",
+         "url": "https://ocw.mit.edu/courses/14-01-x/resources/mit14_01_f23_lec2_pdf/",
+         "seq": 2},
+        {"title": "Lec 20: Uncertainty",
+         "url": "https://ocw.mit.edu/courses/14-01-x/resources/lec-20-uncertainty/",
+         "seq": 20},
+        {"title": "Lec 21: Social Insurance",
+         "url": "https://ocw.mit.edu/courses/14-01-x/resources/lec-21-social-insurance/",
+         "seq": 21},
+    ]
+    lesson._ask = lambda *args, **kwargs: None
+    arc = tutor._select_arc("expected utility", lectures, hits=[{
+        "title": "Lec 20: Uncertainty",
+        "description": "risk aversion, expected utility theory",
+        "url": "https://ocw.mit.edu/courses/14-01-x/resources/lec-20-uncertainty/",
+        "run_slug": "14-01-x",
+        "feature_types": ["Lecture Videos"],
+    }], slug="14-01-x")
+    chk("topic hit seeds the actual matching lecture",
+        [a["seq"] for a in arc if a["role"] == "core"], [20])
+    chk("utility prerequisite is kept before a late seeded lecture",
+        [a["seq"] for a in arc if a["role"] == "prerequisite"], [2])
 
     print("Navigation words")
     chk("next", tutor.navigation_word("next"), "next")
