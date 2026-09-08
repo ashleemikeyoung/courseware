@@ -518,22 +518,29 @@ textarea{resize:vertical;min-height:74px}
   border:0;border-top:1px solid var(--rule);margin:1.35em 0;
 }
 .chatmsg .bubble.pending{white-space:normal}
-.run-progress{
-  display:grid;gap:8px;max-width:360px;color:var(--ink-faint);
-  font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+/* The brand's own leaf, breathing, instead of a sweeping bar and the word
+   WORKING. Same mark as the wordmark, so the wait reads as the app thinking
+   rather than as a generic spinner bolted on. The stem end is the pivot, so
+   it sways from where it would be attached. */
+.run-leaf{display:flex;align-items:center;min-height:1.6em}
+.run-leaf svg{
+  height:22px;width:auto;fill:var(--blue);color:var(--blue);
+  transform-origin:14% 92%;
+  animation:leaf-breathe 1.9s ease-in-out infinite;
 }
-.run-progress .track{
-  height:4px;overflow:hidden;border-radius:999px;background:var(--rule);
+@keyframes leaf-breathe{
+  0%   {transform:rotate(-8deg) scale(.92);opacity:.4}
+  50%  {transform:rotate(5deg)  scale(1.05);opacity:1}
+  100% {transform:rotate(-8deg) scale(.92);opacity:.4}
 }
-.run-progress .bar{
-  width:38%;height:100%;border-radius:inherit;background:var(--blue);
-  animation:progress-sweep 1.15s ease-in-out infinite;
+.run-leaf .sr-only{
+  position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+  overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;
 }
-@keyframes progress-sweep{
-  0%{transform:translateX(-110%)}
-  100%{transform:translateX(270%)}
+@media (prefers-reduced-motion:reduce){
+  .run-leaf svg{animation:leaf-fade 2.4s ease-in-out infinite}
+  @keyframes leaf-fade{0%,100%{opacity:.45}50%{opacity:1}}
 }
-@media (prefers-reduced-motion:reduce){.run-progress .bar{animation:none;width:100%}}
 .chatmsg .sources{margin-top:.6em}
 .chatmsg .sources.hidden{display:none}
 .active-requirements{
@@ -3217,9 +3224,13 @@ function chatBubble(m, index){
   return box;
 }
 
+const LEAF_PATH = "M361.00 557.91 C212.51 518.64 77.16 407.49 23.20 280.50 C7.86 244.41 1.06 215.37 1.02 185.80 C0.92 113.11 39.36 51.52 105.84 17.88 C137.89 1.66 174.63 -3.52 212.00 2.92 C245.53 8.70 278.96 24.36 308.53 48.15 C329.83 65.29 356.13 95.72 376.41 126.70 C440.35 224.38 467.83 352.98 452.97 485.03 C449.99 511.58 448.96 516.43 446.25 516.82 C444.65 517.05 442.90 515.91 440.13 512.82 C434.69 506.75 314.30 361.94 293.54 336.50 C284.12 324.95 271.71 309.20 265.97 301.50 C254.86 286.60 242.65 273.03 241.45 274.23 C239.73 275.93 248.46 295.27 260.56 316.62 C270.72 334.54 278.93 351.24 363.68 526.32 C372.01 543.53 377.99 557.07 377.81 558.32 C377.36 561.49 374.24 561.41 361.00 557.91 Z";
+
 function runningIndicatorHtml(){
-  return '<div class="run-progress" role="status" aria-live="polite">' +
-    '<span>Working</span><div class="track"><div class="bar"></div></div></div>';
+  return '<div class="run-leaf" role="status" aria-live="polite">' +
+    '<svg viewBox="0 0 457 562" aria-hidden="true" focusable="false">' +
+    '<path fill="currentColor" d="' + LEAF_PATH + '"/></svg>' +
+    '<span class="sr-only">Working</span></div>';
 }
 
 /* Thumbs for training data, not just a reaction emoji. A click writes
