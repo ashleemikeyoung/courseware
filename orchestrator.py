@@ -1047,8 +1047,10 @@ def cmd_lesson(arg: str):
         if not syllabus:
             print("\n  No lesson is open yet. Type a subject to start one.\n")
             return
+        import mathtext
         rendered, syllabus = tutor.handle(syllabus, word)
-        print("\n" + (rendered or tutor.render_syllabus(syllabus)) + "\n")
+        print("\n" + mathtext.render_unicode(
+            rendered or tutor.render_placement(syllabus)) + "\n")
         return
 
     print(f"\nPlanning a lesson on '{text}'. Real documents get fetched and")
@@ -1065,7 +1067,12 @@ def cmd_lesson(arg: str):
 
     if syllabus.get("course") and syllabus.get("lectures"):
         tutor.set_current(syllabus["project"])
-        print("\n" + tutor.render_answer(syllabus) + "\n")
+        # The terminal has no maths renderer, so LaTeX would arrive as
+        # backslashes. render_unicode() is not a TeX engine -- it converts what
+        # decision theory actually writes and leaves the rest as source, which
+        # reads better than either raw \sum or a wrong guess at it.
+        import mathtext
+        print("\n" + mathtext.render_unicode(tutor.render_answer(syllabus)) + "\n")
         cmd_lesson_scope(syllabus["project"])
         return
 

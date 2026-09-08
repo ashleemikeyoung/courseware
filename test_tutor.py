@@ -149,6 +149,19 @@ def main():
         [a["seq"] for a in arc if a["role"] == "prerequisite"], [2])
     lesson._ask = ORIGINAL_ASK
 
+    print("Course titles are not printed twice")
+    chk("OCW title already carrying its number",
+        tutor.strip_number_prefix("14.121 Microeconomic Theory I (Fall 2015)"),
+        "Microeconomic Theory I (Fall 2015)")
+    chk("slash-numbered title with a term",
+        tutor.strip_number_prefix("14.03/14.003 Fall 2016 Lecture 16 Notes"),
+        "Lecture 16 Notes")
+    chk("a title that is only its number keeps it",
+        tutor.strip_number_prefix("14.121"), "14.121")
+    chk("a title with no number is untouched",
+        tutor.strip_number_prefix("Attitudes Towards Risk"),
+        "Attitudes Towards Risk")
+
     print("Video metadata")
     chk("ISO-8601 duration parsed", tutor.duration_seconds("PT1H16M54S"), 4614)
     chk("minutes-only duration parsed", tutor.duration_seconds("PT47M30S"), 2850)
@@ -191,6 +204,10 @@ def main():
     chk("names a covering lecture", "Expected Utility Theory" in placement, True)
     chk("marks the current position", "> " in placement, True)
     chk("distinguishes prerequisites", "prerequisite" in placement, True)
+    chk("does not invent a lecture number from the deck index",
+        "lecture 8" in placement.lower(), False)
+    chk("does not print the course number twice",
+        "14.121 14.121" in placement, False)
     chk("shows the recording's runtime", "1:16:54" in placement, True)
     chk("cross-references the other course", "14.03" in placement, True)
     chk("does not list lectures outside the arc",

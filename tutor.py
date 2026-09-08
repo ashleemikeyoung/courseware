@@ -52,6 +52,7 @@ import urllib.parse
 from datetime import date
 from pathlib import Path
 
+import mathtext
 import projects
 import lesson
 
@@ -120,6 +121,26 @@ COURSE_SLUG_RE = re.compile(r"/courses/([^/]+)/")
 def course_of(url: str) -> str:
     match = COURSE_SLUG_RE.search(url or "")
     return match.group(1) if match else ""
+
+
+NUMBER_PREFIX_RE = re.compile(
+    r"^\s*\d+\.[\w.]+\s*(?:/\s*[\d.]+)?\s*(?:S\d\d|F\d\d|[A-Za-z]+\s+\d{4})?\s*[,:\-–]?\s*",
+    re.IGNORECASE)
+
+
+def strip_number_prefix(title: str) -> str:
+    """
+    OCW titles usually start with the course number already: "14.121
+    Microeconomic Theory I (Fall 2015)", "14.03/14.003 Fall 2016 Lecture 16
+    Notes". Printing our own number in front of that gives "14.121 14.121
+    Microeconomic Theory I", which looks like a bug because it is one.
+
+    Only the leading number is removed, and only when the rest is not empty --
+    a title that is nothing but its course number keeps it, since an empty
+    label is worse than a repeated one.
+    """
+    cleaned = NUMBER_PREFIX_RE.sub("", title or "").strip()
+    return cleaned or (title or "").strip()
 
 
 def course_number(slug: str) -> str:
@@ -266,8 +287,10 @@ that all deal with it.
   disagree or one goes further, say so.
 - State every definition and theorem in full. Do not describe a result you
   could state.
-- Preserve mathematics in LaTeX: \\( \\) inline, \\[ \\] display. Never rewrite a
-  formula into keyboard characters.
+- Preserve mathematics in LaTeX. Inline math in \\( \\) or $ $; display math in
+  \\[ \\] or $$ $$, on its own line. All four are rendered, so use whichever
+  the source material uses. Never rewrite a formula into keyboard characters,
+  and never leave a symbol like \\sum or \\pi outside a math delimiter.
 - Structure it as the subject demands, with short headed sections.
 - Attribute where it matters: name the document a definition or theorem comes
   from, in the sentence, not as a footnote.
@@ -295,8 +318,14 @@ def synthesize(subject: str, rows: list, budget: int = 90000) -> str:
     if not excerpts:
         return ""
 
-    return lesson._ask(f"Subject: {subject}\n\n" + "\n\n".join(excerpts),
-                       SYNTHESIS_SYSTEM, num_predict=5000) or ""
+    # Normalized on the way out, not on the way in. The model writes whatever
+    # delimiters the source material taught it, and OCW's notes are $-TeX, so
+    # what comes back is a mixture. One pass here means every surface -- the
+    # browser, the terminal, a stored syllabus -- sees the same two delimiter
+    # pairs, and a price like $5 is never mistaken for the start of a formula.
+    return mathtext.normalize(
+        lesson._ask(f"Subject: {subject}\n\n" + "\n\n".join(excerpts),
+                    SYNTHESIS_SYSTEM, num_predict=5000) or "")
 
 
 # ---------------------------------------------------------------------------
@@ -673,12 +702,17 @@ def render_placement(syl: dict) -> str:
 
     course = syl["course"]
     lines = ["## Where this is taught", "",
-             f"**{course['number']} {course['title']}**  ·  {course['url']}", ""]
+             f"**{course['number']} {strip_number_prefix(course['title'])}**"
+             f"  ·  {course['url']}", ""]
 
     for lec in syl.get("lectures", []):
         mark = ">" if lec["n"] == syl.get("position", 0) + 1 else " "
-        role = ("prerequisite" if lec["role"] == "prerequisite"
-                else f"lecture {lec['seq']}")
+        # `seq` is the deck's position among that course's slide files, NOT the
+        # lecture number in the course. In 14.121 deck 5 is lecture 8. Printing
+        # "lecture 5" beside "Expected Utility Theory" states something false
+        # about MIT's own course, so the ordinal is dropped and only the role
+        # is claimed -- which is the part actually derived from evidence.
+        role = "prerequisite" if lec["role"] == "prerequisite" else "covers this"
         line = f"{mark} {lec['title']}  ({role})"
         if lec["status"] != "indexed":
             line += f"  [{lec['status']}]"
@@ -695,7 +729,7 @@ def render_placement(syl: dict) -> str:
     if also:
         lines += ["", "Also covered in:"]
         for item in also:
-            lines.append(f"  {item['number']}  {item['item']}")
+            lines.append(f"  {item['number']}  {strip_number_prefix(item['item'])}")
             lines.append(f"      {item['url']}")
 
     return "\n".join(lines)
@@ -750,8 +784,9 @@ actual slides or notes, to a student working through a subject in order.
   is thin or garbled, say so rather than filling the gap.
 - State every definition and theorem in full. Do not describe a result you
   could state.
-- Preserve mathematics in LaTeX: \\( \\) inline, \\[ \\] display. Never rewrite a
-  formula into keyboard characters.
+- Preserve mathematics in LaTeX. Inline in \\( \\) or $ $; display in \\[ \\] or
+  $$ $$ on its own line. Never rewrite a formula into keyboard characters, and
+  never leave a symbol like \\sum or \\pi sitting outside a math delimiter.
 - Open with one sentence on what this lecture establishes and why it comes
   where it does in the sequence.
 - Close with "What this sets up:" and one or two sentences pointing forward.
@@ -784,10 +819,10 @@ def teach(syl: dict, index: int = None) -> str:
     except Exception as e:
         return f"{header}\nCould not read the indexed text: {type(e).__name__}: {e}"
 
-    body = lesson._ask(
+    body = mathtext.normalize(lesson._ask(
         f"Subject being learned: {syl['subject']}\n"
         f"Lecture: {lec['title']}\n\n{text[:40000]}",
-        TEACH_SYSTEM, num_predict=4000)
+        TEACH_SYSTEM, num_predict=4000) or "")
 
     if not body:
         return (f"{header}\nThe local model did not answer, so here is the "
@@ -809,7 +844,7 @@ only.
 - Test recall and understanding of what the text actually states: definitions,
   the conditions of a theorem, what a term means, why a step follows.
 - Do not ask about anything the text does not contain.
-- Preserve mathematics in LaTeX, \\( \\) inline.
+- Preserve mathematics in LaTeX, \\( \\) or $ $ inline.
 - After the five, a section "Answers" giving each answer in one or two
   sentences, drawn from the text.
 - No preamble."""
@@ -850,9 +885,9 @@ def quiz(syl: dict, index: int = None) -> str:
         except Exception:
             text = ""
         if text:
-            generated = lesson._ask(
+            generated = mathtext.normalize(lesson._ask(
                 f"Lecture: {lec['title']}\n\n{text[:30000]}",
-                QUIZ_SYSTEM, num_predict=2000)
+                QUIZ_SYSTEM, num_predict=2000) or "")
             if generated:
                 parts += ["### Quick recall check", "",
                           "*Generated from the indexed lecture text. Check "

@@ -966,6 +966,14 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 }
 .sidebar-empty{font-size:12px;color:var(--ink-faint);padding:4px}
 </style>
+<!-- KaTeX, vendored under static/vendor/katex rather than pulled from a CDN.
+     Everything else in this app runs without the network and the math should
+     too: a lesson read on a plane must still show its formulas. Only the
+     woff2 faces are shipped (20 files, ~300KB); the CSS still lists woff and
+     ttf fallbacks, but no browser this app targets will ever ask for them. -->
+<link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
+<script defer src="/static/vendor/katex/katex.min.js"></script>
+<script defer src="/static/vendor/katex/auto-render.min.js"></script>
 </head>
 <body>
 
@@ -2925,6 +2933,44 @@ function writerDefaultModel(){
   return role ? role.model : null;
 }
 
+/* Typeset any LaTeX the model produced.
+
+   All four delimiter pairs are accepted, not just the two the prompts ask
+   for. The prompt says \( \) and \[ \]; local models cheerfully emit $ and $$
+   instead, and the OCW notes themselves are written in $-delimited TeX. A
+   renderer that only honours the delimiters we asked for prints "$\sum p_n =
+   1$" at the reader, which is worse than useless -- it looks like a bug in
+   the material rather than in us.
+
+   throwOnError:false so one malformed expression degrades to its own source
+   text instead of taking down the rest of the answer. */
+const MATH_DELIMITERS = [
+  {left: "$$", right: "$$", display: true},
+  {left: "\\[", right: "\\]", display: true},
+  {left: "\\(", right: "\\)", display: false},
+];
+/* No bare "$" pair, deliberately. It was tried, and in a tool that teaches
+   decision theory it is actively harmful: "the price was $5 and the cost was
+   $3" pairs its two dollar signs and renders as "5andthecostwas3". The Allais
+   paradox is written in dollars; 14.03's worked example is a draw between $2
+   and $0. mathtext.normalize() on the server decides which dollar signs are
+   maths -- it converts them to \\( \\) only when what sits between them
+   actually contains TeX -- so by the time text reaches here the question is
+   already settled. */
+
+function typesetMath(root){
+  if (!root || typeof renderMathInElement !== "function") return;
+  try {
+    renderMathInElement(root, {
+      delimiters: MATH_DELIMITERS,
+      throwOnError: false,
+      ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
+    });
+  } catch (e) {
+    /* Never let a math failure break the transcript. */
+  }
+}
+
 function renderChat(){
   const col = $("#chatColumn");
   const galley = $("#chatGalley");
@@ -2963,6 +3009,10 @@ function renderChat(){
   STATE.chat.messages.forEach((m, i) => col.appendChild(chatBubble(m, i)));
   setContextVisibility(STATE.showContext);
   wireCitations(col, $("#chatGlosses"));
+  // After citations are wired, so KaTeX cannot swallow a citation marker, and
+  // once per render rather than per bubble -- renderMathInElement walks the
+  // tree itself and doing it per bubble would walk it n times.
+  typesetMath(col);
   anchorLatestTurn({scroll: true});
 }
 
@@ -3608,6 +3658,10 @@ function appendToLastBubble(text){
   if (!bubble) return renderChat();
   bubble.classList.toggle("bibliography", isAnnotatedBibliography(text));
   bubble.innerHTML = mdToHtml(text || "", {showCitations: STATE.showContext});
+  // Deliberately NOT typeset here. This runs on every streamed token, and
+  // half-arrived math ("\\(u(x") is not valid LaTeX -- rendering it would
+  // flash errors through the whole answer as it lands. The final renderChat()
+  // typesets once, when the text is complete.
   anchorLatestTurn({scroll: false});
 }
 
