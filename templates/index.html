@@ -174,7 +174,10 @@ button,input,textarea,select{font:inherit;color:inherit}
 .brand .wordmark{
   font-family:var(--serif);font-size:24px;line-height:1;color:var(--ink);
   letter-spacing:.01em;display:inline-block;
+  background:none;border:0;padding:0;cursor:pointer;transition:opacity .12s;
 }
+.brand .wordmark:hover{opacity:.72}
+.brand .wordmark:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
 .brand .wordmark .roi{color:var(--blue);letter-spacing:.01em}
 /* The wordmark carries the brand, so this only has to name the tool. Set on
    the baseline of the logo rather than centred, so the two align optically.
@@ -187,8 +190,11 @@ button,input,textarea,select{font:inherit;color:inherit}
   font-family:var(--wordmark);font-weight:500;font-size:19px;
   color:var(--ink-faint);padding-top:2px;white-space:nowrap;
 }
+/* One icon left in here since Home moved onto the wordmark, so the nav no
+   longer claims a row of its own -- it rides at the end of the rail. */
 nav{
-  display:flex;flex:1 0 100%;order:10;align-items:stretch;overflow:visible;
+  display:flex;flex:0 0 auto;order:20;margin-left:auto;
+  align-items:center;overflow:visible;
 }
 nav button{
   flex:0 0 auto;
@@ -885,14 +891,13 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 
 <div class="rail">
   <div class="brand">
-    <span class="wordmark">El<span class="roi">Roi</span></span>
+    <button class="wordmark" id="btnHome" type="button" title="Home" aria-label="Home">El<span class="roi">Roi</span></button>
   </div>
   <div class="projpick">
     <select id="projSel" title="Project"></select>
     <button id="btnNewProj" title="New project">+</button>
   </div>
   <nav id="nav">
-    <button data-tab="ask" aria-selected="true"><span class="home-tab"><span class="home-icon" aria-hidden="true">⌂</span><span>Home</span></span></button>
     <button class="icon-tab" data-tab="tuning" aria-selected="false" title="Settings" aria-label="Settings">⚙</button>
   </nav>
   <div class="themes" role="group" aria-label="Theme">
@@ -2846,7 +2851,40 @@ function renderChat(){
   STATE.chat.messages.forEach((m, i) => col.appendChild(chatBubble(m, i)));
   setContextVisibility(STATE.showContext);
   wireCitations(col, $("#chatGlosses"));
-  window.scrollTo(0, document.body.scrollHeight);
+  anchorLatestTurn({scroll: true});
+}
+
+/* Park the question you just asked at the top of the reading column and let
+   the answer fill in underneath it, rather than chasing the bottom of a
+   growing response and making you scroll back up to read from the start.
+   The tail spacer is what makes that possible on a short answer: without it
+   there is nothing below to scroll against, so the question could not reach
+   the top. It shrinks as the answer grows and disappears once the turn is
+   taller than the pane. */
+function anchorLatestTurn(opts){
+  const pane = document.querySelector(".home-main");
+  const col = $("#chatColumn");
+  if (!pane || !col) return;
+  const asks = col.querySelectorAll(".chatmsg.user");
+  const last = asks[asks.length - 1];
+  if (!last) return;
+
+  let tail = col.querySelector("#chatTail");
+  if (!tail){ tail = document.createElement("div"); tail.id = "chatTail"; }
+  tail.style.height = "0px";
+  col.appendChild(tail);
+
+  const paneTop = pane.getBoundingClientRect().top;
+  const askTop = last.getBoundingClientRect().top;
+  const colBottom = col.getBoundingClientRect().bottom;
+  const turnHeight = colBottom - askTop;
+  tail.style.height = Math.max(0, pane.clientHeight - turnHeight - 28) + "px";
+
+  if (!opts || opts.scroll !== false){
+    const target = askTop - paneTop + pane.scrollTop - 12;
+    pane.scrollTo({top: Math.max(0, target),
+                   behavior: opts && opts.smooth ? "smooth" : "auto"});
+  }
 }
 
 function renderProjectsWorkspace(){
@@ -3423,7 +3461,7 @@ function appendToLastBubble(text){
   if (!bubble) return renderChat();
   bubble.classList.toggle("bibliography", isAnnotatedBibliography(text));
   bubble.innerHTML = mdToHtml(text || "", {showCitations: STATE.showContext});
-  window.scrollTo(0, document.body.scrollHeight);
+  anchorLatestTurn({scroll: false});
 }
 
 function isAnnotatedBibliography(text){
@@ -3459,6 +3497,7 @@ $("#btnSidebarNewChat").onclick = async () => {
   setHomeView("chat");
   focusAskInputSoon();
 };
+$("#btnHome").onclick = () => { show("ask"); setHomeView("chat"); };
 $("#btnSidebarProjects").onclick = () => setHomeView("projects");
 $("#btnSidebarPhotos").onclick = () => {
   STATE.home.view = "chat";
