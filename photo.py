@@ -372,7 +372,9 @@ def _add_subject_separation(image, instructions: str):
 
 def _preview_action_lines(instructions: str) -> list[str]:
     lower = (instructions or "").lower()
-    actions = ["Applied autocontrast and a small global contrast lift."]
+    actions = [
+        "Applied a visible baseline enhancement: stronger contrast, color, brightness, and sharpening.",
+    ]
     if any(term in lower for term in ("crop", "frame", "framing", "tighter", "4:5", "5:4", "square")):
         actions.append("Applied a visible center crop for the preview.")
     if any(term in lower for term in ("bright", "brighter", "lift", "exposure", "light")):
@@ -387,16 +389,23 @@ def _preview_action_lines(instructions: str) -> list[str]:
         actions.append(
             "Applied a center-weighted subject separation preview: brighter/sharper center, darker/softer background."
         )
+    elif not any(term in lower for term in ("flat", "neutral", "minimal", "subtle", "only crop", "crop only")):
+        actions.append(
+            "Applied a default center-weighted subject pop so the modified preview is visibly different."
+        )
     return actions
 
 
 def _apply_preview_edits(image, instructions: str):
-    from PIL import ImageEnhance, ImageOps
+    from PIL import ImageEnhance, ImageFilter, ImageOps
 
     lower = (instructions or "").lower()
     edited = _crop_preview(image, instructions)
-    edited = ImageOps.autocontrast(edited, cutoff=0.5)
-    edited = ImageEnhance.Contrast(edited).enhance(1.08)
+    edited = ImageOps.autocontrast(edited, cutoff=1.5)
+    edited = ImageEnhance.Contrast(edited).enhance(1.22)
+    edited = ImageEnhance.Color(edited).enhance(1.14)
+    edited = ImageEnhance.Brightness(edited).enhance(1.06)
+    edited = ImageEnhance.Sharpness(edited).enhance(1.18)
     if any(term in lower for term in ("bright", "brighter", "lift", "exposure", "light")):
         edited = ImageEnhance.Brightness(edited).enhance(1.18)
     if any(term in lower for term in ("dark", "moody", "deeper")):
@@ -407,16 +416,25 @@ def _apply_preview_edits(image, instructions: str):
         edited = _warm_image(edited, amount=1.12)
     if any(term in lower for term in ("vibrant", "color", "saturation")):
         edited = ImageEnhance.Color(edited).enhance(1.22)
-    edited = _add_subject_separation(edited, instructions)
+    if any(term in lower for term in ("flat", "neutral", "minimal", "subtle", "only crop", "crop only")):
+        return edited.filter(ImageFilter.UnsharpMask(radius=1.2, percent=80, threshold=3))
+    edited = _add_subject_separation(edited, instructions + " subject background")
     return edited
 
 
-def _preview_pair(item: dict, instructions: str, project: str = None) -> tuple[list, str]:
+def _preview_delta(original, edited) -> float:
+    from PIL import ImageChops, ImageStat
+
+    diff = ImageChops.difference(original.resize(edited.size), edited)
+    return max(ImageStat.Stat(diff).mean)
+
+
+def _preview_pair(item: dict, instructions: str, project: str = None) -> tuple[list, str, float]:
     source = item.get("source") or ""
     path = _source_path(source)
     root = _documents_root()
     if not path.exists() or not path.is_relative_to(root):
-        return [], f"Source file is not available: {source}"
+        return [], f"Source file is not available: {source}", 0.0
 
     out_dir = _preview_root(project or item.get("project"))
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -425,14 +443,16 @@ def _preview_pair(item: dict, instructions: str, project: str = None) -> tuple[l
     edited = out_dir / f"modified-preview-{token}.jpg"
 
     image = _fit_preview(_open_photo_preview(path))
+    edited_image = _apply_preview_edits(image, instructions)
+    delta = _preview_delta(image, edited_image)
     image.save(original, "JPEG", quality=92)
-    _apply_preview_edits(image, instructions).save(edited, "JPEG", quality=92)
+    edited_image.save(edited, "JPEG", quality=92)
 
     try:
         original_rel = str(original.relative_to(projects.PROJECTS_ROOT))
         edited_rel = str(edited.relative_to(projects.PROJECTS_ROOT))
     except ValueError:
-        return [], "Preview output path is outside the project workspace."
+        return [], "Preview output path is outside the project workspace.", 0.0
     return [
         {
             "filename": "original-preview.jpg",
@@ -448,7 +468,7 @@ def _preview_pair(item: dict, instructions: str, project: str = None) -> tuple[l
             "image": True,
             "url": f"/api/photo/file?kind=preview&path={quote_plus(edited_rel)}",
         },
-    ], ""
+    ], "", delta
 
 
 def _answer_photo_analyze(query: str, project: str = None) -> dict:
@@ -500,15 +520,18 @@ def _answer_photo_edit(query: str, project: str = None) -> dict:
     if matches:
         text = "Photo edit recipe:\n\n" + "\n\n---\n\n".join(
             _recipe_for_photo(item, request=query) for item in matches)
+        preview_delta = 0.0
         for item in matches[:1]:
-            pair, error = _preview_pair(item, query, project=project)
+            pair, error, delta = _preview_pair(item, query, project=project)
             attachments.extend(pair)
+            preview_delta = max(preview_delta, delta)
             if error:
                 preview_errors.append(error)
         if attachments:
             text += (
                 "\n\nApplied Preview Changes\n"
                 + "\n".join(f"- {line}" for line in _preview_action_lines(query))
+                + f"\n- Preview change strength: {preview_delta:.1f}/255 average channel shift."
                 + "\n\nI generated a before/after preview pair below."
             )
         elif preview_errors:

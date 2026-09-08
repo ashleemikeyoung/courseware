@@ -90,7 +90,7 @@ def test_attachment_upload_saves_photo_under_uploaded_photos(tmp_path, monkeypat
 
 
 def test_photo_edit_generates_before_after_previews(tmp_path, monkeypatch):
-    from PIL import Image, ImageChops
+    from PIL import Image, ImageChops, ImageStat
 
     docs = tmp_path / "documents"
     projects_root = tmp_path / "projects"
@@ -131,8 +131,11 @@ def test_photo_edit_generates_before_after_previews(tmp_path, monkeypatch):
     assert result["attachments"][1]["filename"] == "modified-preview.jpg"
     original = Image.open(next(p for p in previews if p.name.startswith("original")))
     edited = Image.open(next(p for p in previews if p.name.startswith("modified")))
-    assert ImageChops.difference(original.resize(edited.size), edited).getbbox()
+    diff = ImageChops.difference(original.resize(edited.size), edited)
+    assert diff.getbbox()
+    assert max(ImageStat.Stat(diff).mean) > 10
     assert "Applied Preview Changes" in result["text"]
+    assert "Preview change strength:" in result["text"]
 
 
 def test_photo_ingest_relative_folder_resolves_inside_project():
