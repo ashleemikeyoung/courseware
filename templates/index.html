@@ -2780,6 +2780,14 @@ function photoAdjustmentControls(attachments, wrap){
   const delta = el("div", "photo-delta", "");
   const inputs = {};
   const initialUrl = modified.url;
+  const previewPathFromUrl = url => {
+    try {
+      return new URL(url || "", window.location.origin).searchParams.get("path") || "";
+    } catch(e) {
+      return "";
+    }
+  };
+  const basePreviewPath = modified.preview_path || previewPathFromUrl(modified.url);
   const copyValues = src => Object.assign(zeroValues(), src || {});
   const sameValues = (a, b) => rows.every(([key]) => Number(a[key] || 0) === Number(b[key] || 0));
   let lastCommitted = {values: copyValues(values), url: initialUrl, delta: ""};
@@ -2846,6 +2854,7 @@ function photoAdjustmentControls(attachments, wrap){
           source: modified.source,
           project: modified.project || STATE.project,
           adjustments: values,
+          base_preview: basePreviewPath,
         }),
       });
       const data = await r.json();

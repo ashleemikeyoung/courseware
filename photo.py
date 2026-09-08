@@ -97,6 +97,10 @@ def _source_path(source: str) -> Path:
     return (_documents_root() / (source or "")).resolve()
 
 
+def _project_path(rel_path: str) -> Path:
+    return (projects.PROJECTS_ROOT / (rel_path or "")).resolve()
+
+
 def _preview_root(project: str = None) -> Path:
     name = projects.safe(project or projects.UNFILED)
     return projects.PROJECTS_ROOT / name / "photo-previews"
@@ -493,7 +497,8 @@ def _preview_delta(original, edited) -> float:
 
 
 def generate_adjusted_preview(source: str, project: str = None,
-                              adjustments: dict = None) -> tuple[dict, float, str]:
+                              adjustments: dict = None,
+                              base_preview: str = "") -> tuple[dict, float, str]:
     source = source or ""
     path = _source_path(source)
     root = _documents_root()
@@ -506,7 +511,13 @@ def generate_adjusted_preview(source: str, project: str = None,
     edited = out_dir / f"modified-preview-{token}.jpg"
 
     image = _fit_preview(_open_photo_preview(path))
-    edited_image = _apply_slider_adjustments(image, adjustments)
+    base_image = None
+    base_path = _project_path(base_preview) if base_preview else None
+    if base_path and base_path.exists() and base_path.is_relative_to(projects.PROJECTS_ROOT):
+        base_image = _open_photo_preview(base_path)
+    if base_image is None:
+        base_image = _apply_preview_edits(image, "subject background pop warm vibrant color contrast")
+    edited_image = _apply_slider_adjustments(base_image, adjustments)
     delta = _preview_delta(image, edited_image)
     edited_image.save(edited, "JPEG", quality=92)
 
@@ -524,6 +535,7 @@ def generate_adjusted_preview(source: str, project: str = None,
         "role": "modified",
         "source": source,
         "project": projects.safe(project or projects.UNFILED),
+        "preview_path": edited_rel,
     }, delta, ""
 
 
@@ -562,6 +574,7 @@ def _preview_pair(item: dict, instructions: str, project: str = None) -> tuple[l
             "role": "original",
             "source": source,
             "project": projects.safe(project or item.get("project") or projects.UNFILED),
+            "preview_path": original_rel,
         },
         {
             "filename": "modified-preview.jpg",
@@ -573,6 +586,7 @@ def _preview_pair(item: dict, instructions: str, project: str = None) -> tuple[l
             "role": "modified",
             "source": source,
             "project": projects.safe(project or item.get("project") or projects.UNFILED),
+            "preview_path": edited_rel,
         },
     ], "", delta
 

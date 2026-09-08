@@ -173,6 +173,38 @@ def test_photo_adjust_endpoint_returns_modified_preview(tmp_path, monkeypatch):
     assert list((projects_root / "GCU" / "photo-previews").glob("modified-preview-*.jpg"))
 
 
+def test_photo_adjust_uses_modified_preview_as_base(tmp_path, monkeypatch):
+    from PIL import Image, ImageStat
+
+    docs = tmp_path / "documents"
+    projects_root = tmp_path / "projects"
+    source = docs / "GCU" / "Uploaded Photos" / "portrait.jpg"
+    source.parent.mkdir(parents=True)
+    Image.new("RGB", (80, 60), (30, 30, 30)).save(source)
+
+    base = projects_root / "GCU" / "photo-previews" / "modified-preview-base.jpg"
+    base.parent.mkdir(parents=True)
+    Image.new("RGB", (80, 60), (210, 120, 80)).save(base)
+
+    monkeypatch.setattr(photo, "_documents_root", lambda: docs)
+    monkeypatch.setattr(photo.projects, "PROJECTS_ROOT", projects_root)
+
+    attachment, _, error = photo.generate_adjusted_preview(
+        "GCU/Uploaded Photos/portrait.jpg",
+        project="GCU",
+        adjustments={"blur": 0},
+        base_preview="GCU/photo-previews/modified-preview-base.jpg",
+    )
+
+    assert not error
+    edited_rel = attachment["preview_path"]
+    edited = Image.open(projects_root / edited_rel)
+    mean = ImageStat.Stat(edited).mean
+    assert mean[0] > 190
+    assert mean[1] > 100
+    assert mean[2] > 60
+
+
 def test_photo_ingest_relative_folder_resolves_inside_project():
     target, error = photo._resolve_ingest_target("Uploaded Photos", project="GCU")
 
