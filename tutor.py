@@ -140,7 +140,7 @@ def normalize_subject(subject: str) -> str:
     """
     text = " ".join((subject or "").strip().split())
     text = re.sub(
-        r"^(?:please\s+)?(?:explain|teach|show|walk)\s+(?:me\s+)?"
+        r"^(?:please\s+)?(?:explain|teach|show|walk)\s+(?:(?:to\s+)?me\s+)?"
         r"(?:about\s+|through\s+|how\s+to\s+|what\s+is\s+|what\s+are\s+)?",
         "",
         text,

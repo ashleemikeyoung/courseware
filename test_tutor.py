@@ -30,6 +30,8 @@ projects.PROJECTS_ROOT = Path(tempfile.mkdtemp(prefix="tutor-test-"))
 import lesson      # noqa: E402
 import tutor       # noqa: E402
 
+ORIGINAL_ASK = lesson._ask
+
 
 _failures = 0
 
@@ -135,6 +137,7 @@ def main():
         [a["seq"] for a in arc if a["role"] == "core"], [20])
     chk("utility prerequisite is kept before a late seeded lecture",
         [a["seq"] for a in arc if a["role"] == "prerequisite"], [2])
+    lesson._ask = ORIGINAL_ASK
 
     print("Navigation words")
     chk("next", tutor.navigation_word("next"), "next")
@@ -159,6 +162,8 @@ def main():
     chk("a nav word with nothing open is answered, not crashed",
         lesson.answer_lesson_command("/lesson next")["metrics"]["found"] is False
         or tutor.get_current() != "", True)
+    tutor.save(dict(SYLLABUS))
+    tutor.set_current("expected-utility")
 
     reply = lesson.answer_lesson_command("/lesson syllabus")
     chk("syllabus names the course", "14.121" in reply["text"], True)
