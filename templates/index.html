@@ -741,7 +741,25 @@ textarea{resize:vertical;min-height:74px}
   flex:1;min-height:44px;max-height:14rem;resize:none;font-size:15px;line-height:1.5;
 }
 .composer .btn{flex:0 0 auto;padding:11px 22px}
-.composer .btn.attach{padding:11px 14px}
+.attach-menu-wrap{position:relative;flex:0 0 auto}
+.btn.attach-plus{padding:8px 13px;font-size:16px;line-height:1;letter-spacing:0}
+.attach-menu{
+  position:absolute;bottom:calc(100% + 8px);left:0;z-index:40;display:none;
+  min-width:11.5rem;padding:4px;background:var(--paper);
+  border:1px solid var(--rule);border-radius:5px;box-shadow:0 12px 28px var(--shadow);
+}
+.attach-menu.open{display:block}
+.attach-menu button{
+  display:flex;align-items:center;gap:9px;width:100%;
+  background:none;border:0;border-radius:3px;cursor:pointer;
+  padding:8px 10px;text-align:left;
+  font-family:var(--sans);font-size:13px;color:var(--ink);
+}
+.attach-menu button:hover,.attach-menu button:focus{background:var(--paper-2);outline:0}
+.attach-menu svg{
+  width:15px;height:15px;flex:0 0 auto;fill:none;stroke:currentColor;
+  stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;color:var(--ink-soft);
+}
 .composer select{flex:0 1 12rem;margin-bottom:0}
 body.ask-empty #p-ask .home-main .wrap{
   min-height:100%;max-width:none;display:flex;flex-direction:column;
@@ -1018,8 +1036,9 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
   <div class="log" id="asklog" style="display:none"></div>
 
   <div class="composer">
-    <button class="btn ghost attach" id="btnAttachFiles" title="Attach files" aria-label="Attach files">Attach</button>
+    <span id="composerAttachSlot"></span>
     <input id="attachmentInput" type="file" accept="image/*,.arw,.bmp,.cr2,.cr3,.dng,.docx,.gif,.jpeg,.jpg,.md,.nef,.orf,.pdf,.png,.pptx,.raf,.rw2,.tiff,.txt,.xlsx" multiple hidden>
+    <input id="folderInput" type="file" webkitdirectory directory multiple hidden>
     <textarea id="askInput" rows="1"
       placeholder="Ask about your documents, or anything else. Shift+Enter for a new line."></textarea>
     <button class="btn" id="btnAsk">Send</button>
@@ -3022,9 +3041,7 @@ function renderProjectDetailWorkspace(){
     }
   });
   const actions = el("div", "project-prompt-actions");
-  const attach = el("button", "btn ghost attach", "Attach");
-  attach.type = "button";
-  attach.onclick = () => $("#attachmentInput").click();
+  const attach = buildAttachMenu();
   const send = el("button", "btn", "Send");
   send.type = "button";
   send.onclick = () => sendProjectPrompt(ta.value);
@@ -3521,8 +3538,8 @@ $("#askInput").addEventListener("keydown", e => {
   }
 });
 $("#btnAsk").onclick = sendAsk;
-$("#btnAttachFiles").onclick = () => $("#attachmentInput").click();
 $("#attachmentInput").onchange = uploadAttachments;
+$("#folderInput").onchange = uploadAttachments;
 $("#btnSidebarNewChat").onclick = async () => {
   if (STATE.chat.busy) return;
   await newAskConversation();
@@ -3632,8 +3649,8 @@ async function sendAsk(){
   }
 }
 
-async function uploadAttachments(){
-  const input = $("#attachmentInput");
+async function uploadAttachments(ev){
+  const input = (ev && ev.target) || $("#attachmentInput");
   const files = Array.from(input.files || []);
   if (!files.length) return;
   if (!STATE.project) {
@@ -3643,7 +3660,7 @@ async function uploadAttachments(){
   const form = new FormData();
   form.append("project", STATE.project);
   files.forEach(file => form.append("files", file));
-  $("#btnAttachFiles").disabled = true;
+  setAttachBusy(true);
   try {
     const r = await fetch("/api/photo/upload", {method: "POST", body: form});
     const data = await r.json();
@@ -3661,9 +3678,74 @@ async function uploadAttachments(){
     toast("Could not attach files");
   } finally {
     input.value = "";
-    $("#btnAttachFiles").disabled = false;
+    setAttachBusy(false);
   }
 }
+
+/* --- attach menu ----------------------------------------------------------
+   The composer's "+" opens a two-item menu: files (paper clip) or a whole
+   folder (webkitdirectory, which hands us every file inside). Both feed the
+   same /api/photo/upload handler, so the only difference is which hidden
+   input we click. The project-detail prompt reuses the same builder. ----- */
+
+const ATTACH_ICON_CLIP =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.9-2.9l8.5-8.5"/></svg>';
+const ATTACH_ICON_FOLDER =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2 2 0 0 1 5 5.5h3.6a2 2 0 0 1 1.6.8l1 1.4H19a2 2 0 0 1 2 2v8.3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+
+function closeAttachMenus(){
+  document.querySelectorAll(".attach-menu.open").forEach(m => m.classList.remove("open"));
+  document.querySelectorAll(".attach-plus").forEach(b => b.setAttribute("aria-expanded", "false"));
+}
+
+function setAttachBusy(busy){
+  document.querySelectorAll(".attach-plus").forEach(b => { b.disabled = !!busy; });
+}
+
+function buildAttachMenu(){
+  const wrap = el("div", "attach-menu-wrap");
+
+  const plus = el("button", "btn ghost attach-plus", "+");
+  plus.type = "button";
+  plus.title = "Add files or a folder";
+  plus.setAttribute("aria-label", "Add files or a folder");
+  plus.setAttribute("aria-haspopup", "menu");
+  plus.setAttribute("aria-expanded", "false");
+
+  const menu = el("div", "attach-menu");
+  menu.setAttribute("role", "menu");
+
+  const item = (icon, label, pick) => {
+    const b = el("button", "", "");
+    b.type = "button";
+    b.setAttribute("role", "menuitem");
+    b.innerHTML = icon + "<span>" + label + "</span>";
+    b.onclick = e => { e.stopPropagation(); closeAttachMenus(); pick(); };
+    return b;
+  };
+
+  menu.append(
+    item(ATTACH_ICON_CLIP, "Attach files", () => $("#attachmentInput").click()),
+    item(ATTACH_ICON_FOLDER, "Attach folder", () => $("#folderInput").click())
+  );
+
+  plus.onclick = e => {
+    e.stopPropagation();
+    const wasOpen = menu.classList.contains("open");
+    closeAttachMenus();
+    if (!wasOpen){
+      menu.classList.add("open");
+      plus.setAttribute("aria-expanded", "true");
+    }
+  };
+
+  wrap.append(plus, menu);
+  return wrap;
+}
+
+document.addEventListener("click", closeAttachMenus);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeAttachMenus(); });
+$("#composerAttachSlot").replaceWith(buildAttachMenu());
 
 /* --- summarize -------------------------------------------------------------
    Search finds every file that mentions the term (see summarize.py's
