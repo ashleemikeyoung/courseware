@@ -185,8 +185,11 @@ button,input,textarea,select{font:inherit;color:inherit}
   color:var(--blue);font-size:.78em;height:.78em;width:auto;
   fill:currentColor;margin-right:.28em;vertical-align:.52em;
 }
+/* The baseline shift is expressed in the mark's own em, so it has to come
+   down as the size goes up or the ™ climbs off the cap line. .56/.61 keeps
+   it sitting exactly where .36/.95 put it, only bigger. */
 .brand .wordmark .tm{
-  font-size:.36em;vertical-align:.95em;margin-left:.14em;
+  font-size:.56em;vertical-align:.61em;margin-left:.09em;
   letter-spacing:0;color:var(--ink-faint);
 }
 .brand .wordmark:hover{opacity:.72}
@@ -313,7 +316,7 @@ h2{font-size:1.2rem;font-weight:600;margin:0 0 4px}
    shared. Everything is in em, so the mark tracks the heading at either
    size -- 2.35rem inline, 3.45rem in the empty state. */
 .bakash-title .tm{
-  font-size:.36em;vertical-align:.95em;margin-left:.14em;
+  font-size:.56em;vertical-align:.61em;margin-left:.09em;
   letter-spacing:0;color:var(--ink-faint);font-variant-caps:normal;
 }
 .bakash-title .definition{
