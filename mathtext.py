@@ -48,18 +48,65 @@ DISPLAY_DOLLAR_RE = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
 MAX_INLINE = 200
 
 
+# Words that only appear between two dollar signs when those dollar signs are
+# money and the text between them is a sentence. Kept small and boring on
+# purpose -- this list decides what gets typeset, so anything ambiguous stays
+# out of it.
+PROSE_WORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "cost", "costs",
+    "each", "for", "from", "gets", "he", "in", "is", "it", "million",
+    "billion", "of", "or", "pay", "pays", "per", "price", "she", "so", "than",
+    "that", "the", "then", "they", "to", "was", "were", "when", "with", "you",
+}
+
+# Beyond this, a run between two dollar signs is a sentence, not a symbol.
+MAX_BARE = 40
+
+WORD_RE = re.compile(r"[A-Za-z]+")
+
+
 def looks_like_math(body: str) -> bool:
     """
     Does the text between two dollar signs actually contain maths?
 
-    Length is checked as well as markup: a very long run between two dollar
-    signs is far more likely to be two prices in one sentence than a single
-    inline expression, even if a stray backslash happens to fall between them.
+    Two ways to qualify.
+
+    The certain one is TeX markup: a control sequence, a subscript, a
+    superscript. "$\\sum p_n = 1$" is maths and nothing else.
+
+    The second exists because economics prose is full of bare symbols --
+    "$E(X)$", "$V(X)$", "$u$", "$F$" -- which carry no markup at all. An
+    earlier version of this rule refused all of them, and the very first real
+    lesson printed "($E(X)$)" at the reader with the dollar signs showing.
+    That is the same class of failure as the currency bug, just in the other
+    direction.
+
+    So a short run also qualifies when it cannot be money: money written in
+    English starts with a digit right after the sign ("$5", "$1 million",
+    "$0.50"), so a leading digit disqualifies outright. What remains has to
+    contain a letter, stay under MAX_BARE characters, and contain no ordinary
+    English word -- because the thing between the dollar signs in "the price
+    was $5 and the cost was $3" is a clause, and clauses have words like
+    "and" in them.
+
+    The residual failure is a sentence of pure symbols between two prices,
+    which does not occur in this material.
     """
-    body = body or ""
-    if not body.strip() or len(body) > MAX_INLINE:
+    body = (body or "").strip()
+    if not body or len(body) > MAX_INLINE:
         return False
-    return bool(TEX_MARKUP_RE.search(body))
+    if TEX_MARKUP_RE.search(body):
+        return True
+
+    if len(body) > MAX_BARE:
+        return False
+    if body[0].isdigit() or body[0] in ".,":
+        return False
+
+    words = WORD_RE.findall(body)
+    if not words:
+        return False
+    return not any(w.lower() in PROSE_WORDS for w in words)
 
 
 def normalize(text: str) -> str:

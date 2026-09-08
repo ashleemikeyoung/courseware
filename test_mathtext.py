@@ -49,6 +49,20 @@ def main():
         mathtext.normalize("CE = $0.50, so the premium is $0.50"),
         "CE = $0.50, so the premium is $0.50")
 
+    print("Bare symbols are maths, because economics prose is full of them")
+    chk("expectation operator", mathtext.normalize("Expected Value ($E(X)$):"),
+        "Expected Value (\\(E(X)\\)):")
+    chk("variance operator", mathtext.normalize("Variance ($V(X)$)"),
+        "Variance (\\(V(X)\\))")
+    chk("a single letter", mathtext.normalize("the utility $u$ is concave"),
+        "the utility \\(u\\) is concave")
+    chk("a CDF", mathtext.normalize("lottery $F$ dominates"),
+        "lottery \\(F\\) dominates")
+    chk("a clause between two prices is still not maths",
+        mathtext.normalize("worth $5 and worth $3"), "worth $5 and worth $3")
+    chk("a long symbol run is not maths",
+        mathtext.normalize("$" + "abc " * 12 + "$"), "$" + "abc " * 12 + "$")
+
     print("Real maths is converted")
     chk("a control sequence makes it maths",
         mathtext.normalize(r"probabilities ($\sum p_n = 1$)."),

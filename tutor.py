@@ -291,6 +291,10 @@ that all deal with it.
   \\[ \\] or $$ $$, on its own line. All four are rendered, so use whichever
   the source material uses. Never rewrite a formula into keyboard characters,
   and never leave a symbol like \\sum or \\pi outside a math delimiter.
+- Use the notation the source material uses, and standard notation elsewhere:
+  \\mathbb{E}[X] or E[X] with square brackets for expectation, never E(X);
+  \\operatorname{Var}(X) or \\sigma^2 for variance, never V(X); and always give a
+  sum its index, \\sum_i p_i x_i or \\sum_{i=1}^{n} p_i x_i, never a bare \\sum.
 - Structure it as the subject demands, with short headed sections.
 - Attribute where it matters: name the document a definition or theorem comes
   from, in the sentence, not as a footnote.
@@ -787,6 +791,10 @@ actual slides or notes, to a student working through a subject in order.
 - Preserve mathematics in LaTeX. Inline in \\( \\) or $ $; display in \\[ \\] or
   $$ $$ on its own line. Never rewrite a formula into keyboard characters, and
   never leave a symbol like \\sum or \\pi sitting outside a math delimiter.
+- Use the notation the source material uses, and standard notation elsewhere:
+  \\mathbb{E}[X] or E[X] with square brackets for expectation, never E(X);
+  \\operatorname{Var}(X) or \\sigma^2 for variance, never V(X); and always give a
+  sum its index, \\sum_i p_i x_i or \\sum_{i=1}^{n} p_i x_i, never a bare \\sum.
 - Open with one sentence on what this lecture establishes and why it comes
   where it does in the sequence.
 - Close with "What this sets up:" and one or two sentences pointing forward.
