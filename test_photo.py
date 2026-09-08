@@ -173,6 +173,39 @@ def test_photo_verbs_generate_goal_directed_preview(tmp_path, monkeypatch):
     assert edited.size[1] < 100
 
 
+def test_photo_show_keeps_listed_filename_without_edit_pair(tmp_path, monkeypatch):
+    from PIL import Image
+
+    docs = tmp_path / "documents"
+    projects_root = tmp_path / "projects"
+    source = docs / "GCU" / "Uploaded Photos" / "L1002916.dng"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"raw placeholder")
+
+    monkeypatch.setattr(photo, "_documents_root", lambda: docs)
+    monkeypatch.setattr(photo.projects, "PROJECTS_ROOT", projects_root)
+    monkeypatch.setattr(
+        photo, "_open_photo_preview",
+        lambda path: Image.new("RGB", (80, 60), (80, 90, 120)))
+    monkeypatch.setattr(photo, "_indexed_photos", lambda project=None, limit=12: [{
+        "source": "GCU/Uploaded Photos/L1002916.dng",
+        "filename": "L1002916.dng",
+        "project": "GCU",
+        "description": "A tabletop product photo.",
+        "text": "table product chocolate",
+        "chunks": 1,
+    }])
+
+    result = photo.answer_photo_command("/photo show L1002916.dng", project="GCU")
+
+    assert result["metrics"]["action"] == "show"
+    assert result["showAttachments"] is True
+    assert len(result["attachments"]) == 1
+    assert result["attachments"][0]["filename"] == "L1002916.dng"
+    assert result["attachments"][0]["role"] == "display"
+    assert "modified-preview" not in result["attachments"][0]["preview_path"]
+
+
 def test_photo_adjust_endpoint_returns_modified_preview(tmp_path, monkeypatch):
     from PIL import Image
 

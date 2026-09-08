@@ -703,6 +703,40 @@ def _preview_pair(item: dict, instructions: str, project: str = None) -> tuple[l
     ], "", delta
 
 
+def _display_preview(item: dict, project: str = None) -> tuple[list, str]:
+    source = item.get("source") or ""
+    path = _source_path(source)
+    root = _documents_root()
+    if not path.exists() or not path.is_relative_to(root):
+        return [], f"Source file is not available: {source}"
+
+    out_dir = _preview_root(project or item.get("project"))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    token = uuid.uuid4().hex[:10]
+    preview = out_dir / f"display-preview-{token}.jpg"
+
+    image = _fit_preview(_open_photo_preview(path))
+    image.save(preview, "JPEG", quality=92)
+
+    try:
+        preview_rel = str(preview.relative_to(projects.PROJECTS_ROOT))
+    except ValueError:
+        return [], "Preview output path is outside the project workspace."
+
+    return [{
+        "filename": item.get("filename") or Path(source).name,
+        "content_type": "image/jpeg",
+        "size": preview.stat().st_size,
+        "image": True,
+        "url": f"/api/photo/file?kind=preview&path={quote_plus(preview_rel)}",
+        "photo_preview": True,
+        "role": "display",
+        "source": source,
+        "project": projects.safe(project or item.get("project") or projects.UNFILED),
+        "preview_path": preview_rel,
+    }], ""
+
+
 def _answer_photo_analyze(query: str, project: str = None) -> dict:
     matches = _matching_photos(query, project=project, limit=3)
     if not matches:
@@ -739,12 +773,49 @@ def _photo_help(project: str = None) -> str:
         "- `/photo ingest` to scan photos already under the documents root\n"
         "- `/photo ingest <folder-name>` to create or scan a specific folder there\n"
         "- `/photo list` to show indexed photos\n"
+        "- `/photo show <filename or description>` to display a listed photo\n"
         "- `/photo analyze <filename or description>` to review subject, framing, lighting, and separation\n"
         "- `/photo edit <filename or description>: <instructions>` to draft an edit plan\n"
         "- Verb examples: `blur background`, `blur foreground`, `optimize frame`, `use leading lines`, `use rule of thirds`, `improve subject separation`\n"
         "- `/photo off` or `/exit photo` to leave photo mode\n\n"
         f"Default photo folder: `{default_folder}`"
     )
+
+
+def _answer_photo_show(query: str, project: str = None) -> dict:
+    matches = _matching_photos(query, project=project, limit=1)
+    if not matches:
+        return {
+            "text": (
+                "I don’t see that photo yet. Run `/photo list` to see the indexed names, "
+                "or `/photo ingest` after adding photos."
+            ),
+            "evidence": {},
+            "grounded": False,
+            "attachments": [],
+            "showAttachments": False,
+            "metrics": {
+                "route": "photo_command", "photo_mode": True,
+                "action": "show", "matches": 0, "previews": 0,
+            },
+        }
+
+    item = matches[0]
+    attachments, error = _display_preview(item, project=project)
+    text = f"Photo: `{item.get('source')}`\nShowing `{item.get('filename') or Path(item.get('source') or '').name}`."
+    if error:
+        text += f"\n\nPreview note: {error}"
+    return {
+        "text": text,
+        "evidence": {},
+        "grounded": True,
+        "attachments": attachments,
+        "showAttachments": bool(attachments),
+        "metrics": {
+            "route": "photo_command", "photo_mode": True,
+            "action": "show", "matches": len(matches), "previews": len(attachments),
+        },
+    }
 
 
 def _answer_photo_edit(query: str, project: str = None) -> dict:
@@ -840,6 +911,15 @@ def _answer_photo_command(question: str, project: str = None) -> dict:
             "grounded": True,
             "metrics": {"route": "photo_command", "photo_mode": True, "action": "ingest"},
         }
+
+    if lower.startswith(("show", "view", "open", "display")):
+        cleaned = re.sub(
+            r"^(?:show|view|open|display)\b\s*:?",
+            "",
+            query,
+            flags=re.I,
+        )
+        return _answer_photo_show(cleaned.strip(), project=project)
 
     if lower.startswith(("analyze", "review", "critique", "compose", "composition")):
         cleaned = re.sub(
