@@ -234,6 +234,42 @@ def main():
         tutor.get_current(), "expected-utility")
     tutor.set_current("expected-utility")
 
+    print("Example requests, and their qualifiers")
+    chk("bare example", tutor.example_query("example"), "")
+    chk("qualified example",
+        tutor.example_query("example linear expected utility"),
+        "linear expected utility")
+    chk("the opposite qualifier is carried through",
+        tutor.example_query("example non-linear"), "non-linear")
+    chk("a natural phrasing", tutor.example_query("show me an example of CARA"),
+        "CARA")
+    chk("filler after example is dropped",
+        tutor.example_query("example of stochastic dominance"),
+        "stochastic dominance")
+    chk("a subject that merely contains the word is not a request",
+        tutor.example_query("counterexamples in decision theory"), None)
+    chk("plain prose is not a request",
+        tutor.example_query("what is a lottery"), None)
+
+    print("Intent routing")
+    OPEN = dict(SYLLABUS)
+    chk("navigation still wins", tutor.route(OPEN, "next")[0], "nav")
+    chk("example is recognised before anything else",
+        tutor.route(OPEN, "example non-linear"), ("example", "non-linear"))
+    chk("a question mark makes it a question",
+        tutor.route(OPEN, "does concavity imply risk aversion?")[0], "question")
+    chk("a question word makes it a question",
+        tutor.route(OPEN, "why does the certainty equivalent fall")[0], "question")
+    chk("an imperative walkthrough is a question",
+        tutor.route(OPEN, "walk me through the Allais rearrangement")[0],
+        "question")
+    chk("a short noun phrase is a new subject",
+        tutor.route(OPEN, "stochastic dominance")[0], "subject")
+    chk("with nothing open, even a question is a subject",
+        tutor.route({}, "why does concavity matter?")[0], "subject")
+    chk("the payload is carried through",
+        tutor.route(OPEN, "stochastic dominance")[1], "stochastic dominance")
+
     print("Navigation, through lesson.py's Ask entry point")
     chk("a nav word with nothing open is answered, not crashed",
         lesson.answer_lesson_command("/lesson next")["metrics"]["found"] is False

@@ -1032,6 +1032,11 @@ def lesson_mode_entry_response() -> dict:
             "stays searchable afterwards.\n\n"
             "Expect a few minutes per subject: real documents get fetched and "
             "extracted before anything is written.\n\n"
+            "While a lesson is open: `next` walks the lectures, `example` "
+            "works one through and takes a variation (`example non-linear "
+            "utility`), `quiz` tests you, `sources` shows the OCW pages, "
+            "`related` branches. Or ask a question in plain words and it is "
+            "answered from the lesson's own indexed material.\n\n"
             "Use `/lesson off` or `/exit lesson` to leave lesson mode."
         ),
         "evidence": {}, "grounded": False, "passages_offered": 0,
@@ -1124,22 +1129,32 @@ def answer_lesson_command(question: str, project: str = None,
 
     import tutor
 
-    word = tutor.navigation_word(body)
-    if word:
-        syllabus = tutor.current_syllabus()
-        if not syllabus:
-            return _lesson_response(
-                "No lesson is open yet. Send a subject and I will find the "
-                "course that teaches it.", found=False)
-        text, syllabus = tutor.handle(syllabus, word)
-        return _lesson_response(text or tutor.render_syllabus(syllabus),
+    syllabus = tutor.current_syllabus()
+    kind, payload = tutor.route(syllabus, body)
+
+    if kind in {"nav", "example", "question"} and not syllabus:
+        return _lesson_response(
+            "No lesson is open yet. Send a subject and I will find the "
+            "course that teaches it.", found=False)
+
+    if kind == "nav":
+        text, syllabus = tutor.handle(syllabus, payload)
+        return _lesson_response(text or tutor.render_placement(syllabus),
+                                project=syllabus.get("project", ""))
+
+    if kind == "example":
+        return _lesson_response(tutor.example(syllabus, payload),
+                                project=syllabus.get("project", ""))
+
+    if kind == "question":
+        return _lesson_response(tutor.answer_question(syllabus, payload),
                                 project=syllabus.get("project", ""))
 
     try:
-        syllabus = tutor.plan(body, on_progress=on_progress)
+        syllabus = tutor.plan(payload, on_progress=on_progress)
     except Exception as e:
         return _lesson_response(
-            f"Could not plan a lesson on '{body}': {type(e).__name__}: {e}",
+            f"Could not plan a lesson on '{payload}': {type(e).__name__}: {e}",
             found=False)
 
     if syllabus.get("course") and syllabus.get("lectures"):
@@ -1151,10 +1166,10 @@ def answer_lesson_command(question: str, project: str = None,
             lectures=len(syllabus["lectures"]))
 
     try:
-        result = build_lesson(body, on_progress=on_progress)
+        result = build_lesson(payload, on_progress=on_progress)
     except Exception as e:
         return _lesson_response(
-            f"Lesson failed for '{body}': {type(e).__name__}: {e}", found=False)
+            f"Lesson failed for '{payload}': {type(e).__name__}: {e}", found=False)
 
     return _lesson_response(
         "MIT does not appear to cover this one, so I went down the wider "

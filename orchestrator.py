@@ -1029,11 +1029,16 @@ def cmd_lesson(arg: str):
         print("  cover it and which you need first, then teach them in order.")
         print("\n  While a lesson is open:")
         print("    next      teach the next lecture in the arc")
+        print("    example   a worked example; add a variation, e.g.")
+        print("              'example non-linear utility'")
         print("    quiz      MIT's own problem sets and exams, plus recall questions")
         print("    sources   the OCW pages behind the current lecture")
         print("    related   the rest of the course, and courses that overlap")
         print("    syllabus  the whole plan, with your place marked")
         print("    back / repeat")
+        print("\n  Ask questions in plain words too. Anything that reads as a")
+        print("  question is answered from the lesson's own indexed material;")
+        print("  a short noun phrase starts a new subject.")
         print("\n  Slash commands still work. /lesson off or /exit lesson to leave.\n")
         return
 
@@ -1041,17 +1046,34 @@ def cmd_lesson(arg: str):
 
     import tutor
 
-    word = tutor.navigation_word(text)
-    if word:
-        syllabus = tutor.current_syllabus()
-        if not syllabus:
-            print("\n  No lesson is open yet. Type a subject to start one.\n")
-            return
-        import mathtext
-        rendered, syllabus = tutor.handle(syllabus, word)
+    import mathtext
+
+    syllabus = tutor.current_syllabus()
+    kind, payload = tutor.route(syllabus, text)
+
+    if kind in {"nav", "example", "question"} and not syllabus:
+        print("\n  No lesson is open yet. Type a subject to start one.\n")
+        return
+
+    if kind == "nav":
+        rendered, syllabus = tutor.handle(syllabus, payload)
         print("\n" + mathtext.render_unicode(
             rendered or tutor.render_placement(syllabus)) + "\n")
         return
+
+    if kind == "example":
+        label = f" of {payload}" if payload else ""
+        print(f"\n  Working an example{label}...\n", flush=True)
+        print(mathtext.render_unicode(tutor.example(syllabus, payload)) + "\n")
+        return
+
+    if kind == "question":
+        print("\n  Working through that...\n", flush=True)
+        print(mathtext.render_unicode(
+            tutor.answer_question(syllabus, payload)) + "\n")
+        return
+
+    text = payload
 
     print(f"\nPlanning a lesson on '{text}'. Real documents get fetched and")
     print("extracted before anything is taught, so give it a few minutes.\n")
@@ -1071,7 +1093,6 @@ def cmd_lesson(arg: str):
         # backslashes. render_unicode() is not a TeX engine -- it converts what
         # decision theory actually writes and leaves the rest as source, which
         # reads better than either raw \sum or a wrong guess at it.
-        import mathtext
         print("\n" + mathtext.render_unicode(tutor.render_answer(syllabus)) + "\n")
         cmd_lesson_scope(syllabus["project"])
         return
@@ -1158,7 +1179,8 @@ Commands:
   /summarize <term> — search the index and summarize every matching
                       document straight off disk, not from retrieved chunks
   /lesson           — enter lesson mode: type subjects on their own after this,
-                      then next / quiz / sources / related / syllabus / back
+                      then next / example / quiz / sources / related / syllabus,
+                      or just ask a question about what you are learning
   /lesson <subject> — learn a subject from open courseware: fetch, index,
                       draft an explainer, then scope the session to it
   /lesson off       — leave lesson mode (also /exit lesson)

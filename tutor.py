@@ -768,6 +768,7 @@ def render_answer(syl: dict) -> str:
 
     videos = [lec for lec in syl.get("lectures", []) if lec.get("video")]
     nav = ["next — walk the lectures one at a time",
+           "example — work one through, or `example <variation>`",
            "quiz — MIT's own problem sets and exams, plus recall questions",
            "sources · related · syllabus"]
     if videos:
@@ -954,6 +955,256 @@ def advance(syl: dict, step: int = 1) -> dict:
 
 def at_end(syl: dict) -> bool:
     return syl.get("position", 0) >= len(syl.get("lectures") or []) - 1
+
+
+# ---------------------------------------------------------------------------
+# Retrieval inside an open lesson
+#
+# The lesson's own project is already a scoped, indexed corpus, so a question
+# or an example request does not need a fresh search of the whole index -- it
+# needs the two or three passages of THIS subject that bear on what was asked.
+# That is exactly what rag.search does when it is given a project.
+# ---------------------------------------------------------------------------
+
+def _passages(syl: dict, query: str, n: int = 4) -> list:
+    """
+    The indexed passages of this lesson most relevant to `query`, each with the
+    lecture it came from.
+
+    Falls back to the current lecture when retrieval returns nothing, because
+    "I found no passage" is almost never the useful answer to someone standing
+    inside a lesson: they are asking about the thing in front of them.
+    """
+    import rag
+
+    out = []
+    try:
+        found = rag.search(query, n_results=n, project=syl.get("project"))
+        docs = (found.get("documents") or [[]])[0]
+        metas = (found.get("metadatas") or [[]])[0]
+        for doc, meta in zip(docs, metas):
+            out.append({"text": doc, "source": (meta or {}).get("source", "")})
+    except Exception:
+        out = []
+
+    if out:
+        return out
+
+    lectures = syl.get("lectures") or []
+    if not lectures:
+        return []
+    lec = lectures[max(0, min(syl.get("position", 0), len(lectures) - 1))]
+    if lec.get("file"):
+        try:
+            text = rag.read_indexed_source_text(lec["file"]) or ""
+        except Exception:
+            text = ""
+        if text:
+            out.append({"text": text[:20000], "source": lec["file"]})
+    return out
+
+
+def _cite_lecture(syl: dict, source: str) -> str:
+    """Map an indexed filename back to the lecture a reader would recognise."""
+    for lec in syl.get("lectures") or []:
+        if lec.get("file") and lec["file"] == source:
+            return f"{lec['title']} — {lec['url']}"
+    return source or ""
+
+
+def _evidence_block(syl: dict, passages: list, budget: int = 40000) -> str:
+    share = max(2000, budget // max(1, len(passages)))
+    return "\n\n".join(
+        f"--- {_cite_lecture(syl, p['source']) or 'indexed source'} ---\n"
+        f"{p['text'][:share]}"
+        for p in passages)
+
+
+# ---------------------------------------------------------------------------
+# Worked examples
+# ---------------------------------------------------------------------------
+
+EXAMPLE_RE = re.compile(
+    r"^\s*(?:worked\s+)?(?:example|show\s+me\s+an\s+example|give\s+me\s+an\s+example)"
+    r"\b(?:\s+(?:of|for|with|using))?\s*[:,]?\s*(.*)$",
+    re.IGNORECASE | re.DOTALL)
+
+
+def example_query(text: str):
+    """
+    ("", "")   -> not an example request
+    ("*", q)   -> an example request, q possibly empty
+    """
+    match = EXAMPLE_RE.match(text or "")
+    if not match:
+        return None
+    return match.group(1).strip()
+
+
+EXAMPLE_SYSTEM = """You are writing one worked numerical example for a student
+learning a subject, from the course material given to you.
+
+- One example, worked all the way through. Not a survey of examples.
+- Choose numbers that make the arithmetic clean and the point visible.
+- Show every step. State what is being computed before computing it.
+- Preserve mathematics in LaTeX: \\( \\) inline, \\[ \\] display. \\mathbb{E}[X] or
+  E[X] with square brackets, never E(X); every sum carries its index.
+- If the material contains a worked example that fits, use its numbers and say
+  which document they come from rather than inventing new ones.
+- End with one sentence naming what the example demonstrates.
+- If the requested variation is not something the material supports, say so in
+  one line and work the closest example the material does support instead.
+- No preamble."""
+
+
+def example(syl: dict, qualifier: str = "") -> str:
+    """
+    A worked example, steered by whatever the reader typed after "example".
+
+    "example" alone works from the current lecture. "example linear expected
+    utility" and "example non-linear" retrieve on those words, so the two give
+    genuinely different examples rather than the same one relabelled: the
+    qualifier is a retrieval query first and a generation instruction second.
+    """
+    subject = syl.get("subject", "")
+    query = f"{subject} {qualifier}".strip() if qualifier else subject
+    passages = _passages(syl, query or "worked example")
+
+    if not passages:
+        return ("Nothing is indexed for this lesson yet, so there is no "
+                "material to work an example from.")
+
+    want = (f"Write one worked example of: {qualifier}\n"
+            f"Within the subject: {subject}") if qualifier else (
+            f"Write one worked example for: {subject}")
+
+    body = mathtext.normalize(lesson._ask(
+        f"{want}\n\nCourse material:\n\n{_evidence_block(syl, passages)}",
+        EXAMPLE_SYSTEM, num_predict=2500) or "")
+
+    if not body:
+        return ("The local model did not answer. The material for this is "
+                f"indexed: {_cite_lecture(syl, passages[0]['source'])}")
+
+    heading = f"## Worked example: {qualifier}" if qualifier else "## Worked example"
+    cites = sorted({_cite_lecture(syl, p["source"]) for p in passages if p["source"]})
+    footer = "\n".join(f"Source: {c}" for c in cites[:3])
+    return f"{heading}\n\n{body}\n\n{footer}\n\nexample <variation> · next · quiz · sources"
+
+
+# ---------------------------------------------------------------------------
+# Questions the reader poses
+# ---------------------------------------------------------------------------
+
+QUESTION_SYSTEM = """You are answering one question from a student working
+through a subject, using the course material given to you and nothing else.
+
+- Answer the question that was asked, first, in the first sentence.
+- Then walk through it: the reasoning, the steps, the arithmetic if there is
+  any. Show the working rather than asserting the result.
+- Use only the material provided. If it does not settle the question, say so
+  plainly and answer as far as the material goes.
+- Preserve mathematics in LaTeX: \\( \\) inline, \\[ \\] display. \\mathbb{E}[X] or
+  E[X] with square brackets, never E(X); every sum carries its index.
+- Name the document a definition or result comes from, in the sentence.
+- If the question contains a mistake or a false premise, say so before
+  answering it.
+- No preamble."""
+
+
+def answer_question(syl: dict, question: str) -> str:
+    passages = _passages(syl, question)
+    if not passages:
+        return ("Nothing is indexed for this lesson yet, so there is nothing "
+                "to answer from.")
+
+    body = mathtext.normalize(lesson._ask(
+        f"Subject being learned: {syl.get('subject', '')}\n"
+        f"Question: {question}\n\nCourse material:\n\n"
+        f"{_evidence_block(syl, passages)}",
+        QUESTION_SYSTEM, num_predict=3000) or "")
+
+    if not body:
+        return "The local model did not answer. Try again, or type sources."
+
+    cites = sorted({_cite_lecture(syl, p["source"]) for p in passages if p["source"]})
+    footer = "\n".join(f"Source: {c}" for c in cites[:3])
+    return f"{body}\n\n{footer}\n\nexample · next · quiz · related"
+
+
+# ---------------------------------------------------------------------------
+# Intent
+#
+# In lesson mode a bare line used to mean "start a new subject", which was
+# fine when the mode only did one thing. Now the same line might be a
+# navigation word, a request for a worked example, a question about the open
+# lesson, or genuinely a new subject. Getting that wrong is expensive in one
+# direction: mistaking a question for a subject spends minutes fetching
+# documents to answer something that needed one retrieval.
+#
+# Cheap tests run first and the model only sees what they cannot settle,
+# which keeps the common cases instant and honest about being heuristics.
+# ---------------------------------------------------------------------------
+
+QUESTION_SHAPE_RE = re.compile(
+    r"^\s*(?:what|why|how|when|where|which|who|whose|is|are|was|were|do|does|"
+    r"did|can|could|would|should|will|if|suppose|assume|given|explain|show|"
+    r"prove|derive|solve|compute|calculate|walk\s+me|help\s+me|tell\s+me|"
+    r"i\s+(?:don'?t|do\s+not|still|am|think)|so\s+)\b",
+    re.IGNORECASE)
+
+# A subject is a noun phrase. A question has a verb, or a question mark, or
+# runs long enough that it cannot be a topic name.
+SUBJECT_MAX_WORDS = 6
+
+ROUTE_SYSTEM = """Decide what a line typed by a student inside a lesson means.
+
+Answer with one word and nothing else:
+  question  -- they are asking about the subject they are currently learning
+  subject   -- they are naming a different subject they want to learn next
+
+A short noun phrase naming a field or a concept is a subject. Anything asking
+for an explanation, a derivation, a calculation, or a judgement about the
+current subject is a question, even without a question mark."""
+
+
+def route(syl: dict, text: str) -> tuple:
+    """
+    ("nav", word) | ("example", qualifier) | ("question", text) | ("subject", text)
+    """
+    text = (text or "").strip()
+    if not text:
+        return ("subject", "")
+
+    word = navigation_word(text)
+    if word:
+        return ("nav", word)
+
+    qualifier = example_query(text)
+    if qualifier is not None:
+        return ("example", qualifier)
+
+    # With no lesson open there is nothing to ask about, so anything is a
+    # subject. This is also what makes the very first line of a session work.
+    if not (syl or {}).get("lectures"):
+        return ("subject", text)
+
+    if text.endswith("?") or QUESTION_SHAPE_RE.match(text):
+        return ("question", text)
+
+    words = text.split()
+    if len(words) <= SUBJECT_MAX_WORDS and not text.endswith("."):
+        # Short, no question shape, no terminal punctuation: almost always a
+        # topic name. The model is asked only when it is longer than that,
+        # where the cost of a wrong guess is a multi-minute fetch.
+        return ("subject", text)
+
+    from config import ROUTING_MODEL
+    reply = (lesson._ask(
+        f"Currently learning: {syl.get('subject', '')}\n"
+        f"Line typed: {text}",
+        ROUTE_SYSTEM, model=ROUTING_MODEL, num_predict=10) or "").strip().lower()
+    return ("subject", text) if reply.startswith("subject") else ("question", text)
 
 
 # ---------------------------------------------------------------------------
