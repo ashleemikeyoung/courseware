@@ -752,7 +752,14 @@ textarea{resize:vertical;min-height:74px}
 .btn.send[data-state="busy"] svg{width:13px;height:13px}
 .btn.send[hidden]{display:none}
 .btn.send:active{transform:scale(.94)}
-.btn.attach-plus{padding:8px 13px;font-size:16px;line-height:1;letter-spacing:0}
+.btn.attach-plus{
+  border:0;border-radius:50%;padding:0;
+  width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;
+  font-size:19px;line-height:1;letter-spacing:0;
+}
+.btn.attach-plus:hover,.btn.attach-plus[aria-expanded="true"]{
+  background:var(--paper-2);color:var(--ink);border:0;
+}
 .attach-menu{
   position:absolute;bottom:calc(100% + 8px);left:0;z-index:40;display:none;
   min-width:11.5rem;padding:4px;background:var(--paper);
