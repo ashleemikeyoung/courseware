@@ -20,6 +20,7 @@ Same script shape as test_lesson.py and test_summarize.py: run it and read it.
 
 import sys
 import tempfile
+import copy
 from pathlib import Path
 
 import projects
@@ -237,6 +238,31 @@ def main():
     chk("a lost pointer falls back to the most recent syllabus",
         tutor.get_current(), "expected-utility")
     tutor.set_current("expected-utility")
+
+    print("Lazy lesson sources")
+    lazy = copy.deepcopy(SYLLABUS)
+    lazy["project"] = "lazy-expected-utility"
+    lazy["synthesis"] = ""
+    lazy["lectures"][0]["status"] = "pending: opens when reached"
+    lazy["lectures"][0]["file"] = ""
+    calls = []
+    original_ingest = lesson._ingest_one
+
+    def fake_ingest(doc, tier, subject, project):
+        calls.append(doc["title"])
+        return {"title": doc["title"], "url": doc["url"],
+                "course": doc.get("course", ""), "file": "lazy/lec1.md",
+                "status": "indexed"}
+
+    lesson._ingest_one = fake_ingest
+    try:
+        opened = tutor.ensure_indexed(lazy, 0)
+        chk("pending lecture is opened on demand",
+            opened["lectures"][0]["status"], "indexed")
+        chk("only the selected lecture is opened",
+            calls, ["Choice, Preference, and Utility"])
+    finally:
+        lesson._ingest_one = original_ingest
 
     print("The teaching contract reaches every teaching prompt")
     # Whitespace-normalised: the contract is wrapped prose, so a phrase that

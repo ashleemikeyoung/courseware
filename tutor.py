@@ -573,15 +573,136 @@ def _select_arc(subject: str, lectures: list, hits: list = None, slug: str = "")
     return arc
 
 
+def _lecture_resource(lec: dict, syl: dict) -> dict:
+    """Rebuild the MIT file shape needed by lesson._ingest_one()."""
+    course = syl.get("course") or {}
+    out = dict(lec)
+    out.setdefault("course", course.get("title", ""))
+    out.setdefault("course_url", course.get("url", ""))
+    out.setdefault("origin", "MIT OpenCourseWare")
+    out.setdefault("resolve", "ocw_page")
+    out.setdefault("kind", "lecture")
+    return out
+
+
+def _alternates_for(lec: dict, inventory: list) -> list:
+    """
+    Other same-lecture resources that may be more teachable than the primary.
+
+    OCW often has a scanned handout, a video resource, and a transcript under
+    the same lecture number. A skipped scan should not stop the lesson when a
+    transcript or lecture video page for the same class exists.
+    """
+    seq = lec.get("seq")
+    if not seq or seq == 999:
+        return []
+
+    alts = []
+    for item in inventory:
+        if item.get("url") == lec.get("url") or item.get("seq") != seq:
+            continue
+        if item.get("kind") not in {"lecture", "transcript"}:
+            continue
+        alts.append({
+            "title": item.get("title", ""),
+            "url": item.get("url", ""),
+            "kind": item.get("kind", "lecture"),
+            "course": item.get("course", ""),
+            "course_url": item.get("course_url", ""),
+            "origin": item.get("origin", "MIT OpenCourseWare"),
+            "resolve": item.get("resolve", "ocw_page"),
+            "youtube_url": item.get("youtube_url", ""),
+            "description": item.get("description", ""),
+            "seq": item.get("seq", seq),
+        })
+    return alts[:4]
+
+
+def ensure_indexed(syl: dict, index: int = None, on_progress=None) -> dict:
+    """
+    Index the selected lecture only when the student actually reaches it.
+
+    This keeps the first /lesson response fast: planning records the arc, then
+    teach(), quiz(), sources(), examples, and questions open the relevant
+    source on demand.
+    """
+    lectures = syl.get("lectures") or []
+    if not lectures:
+        return syl
+
+    i = syl.get("position", 0) if index is None else index
+    i = max(0, min(i, len(lectures) - 1))
+    lec = lectures[i]
+    status = lec.get("status", "")
+    if status == "indexed" and lec.get("file"):
+        return syl
+    if status and not status.startswith("pending"):
+        return syl
+
+    def say(message):
+        if on_progress:
+            on_progress(message)
+
+    tier = lesson.TIER_BY_KEY["mit"]
+    candidates = [_lecture_resource(lec, syl)]
+    candidates.extend(lec.get("alternates") or [])
+
+    last_row = None
+    for pos, candidate in enumerate(candidates):
+        label = candidate.get("title") or lec.get("title")
+        say(f"Opening {label}...")
+        row = lesson._ingest_one(candidate, tier, syl.get("subject", ""),
+                                 syl.get("project", ""))
+        last_row = row
+        if row.get("status") == "indexed":
+            lec["file"] = row.get("file", "")
+            lec["status"] = "indexed"
+            if pos:
+                lec["source_title"] = candidate.get("title", "")
+                lec["source_url"] = candidate.get("url", "")
+            save(syl)
+            return syl
+
+    if last_row:
+        lec["file"] = last_row.get("file", "")
+        lec["status"] = last_row.get("status", "skipped")
+        save(syl)
+    return syl
+
+
+def _indexed_rows(syl: dict) -> list:
+    rows = []
+    for lec in syl.get("lectures") or []:
+        if lec.get("status") == "indexed" and lec.get("file"):
+            rows.append({
+                "file": lec.get("file", ""),
+                "title": lec.get("source_title") or lec.get("title", ""),
+                "url": lec.get("source_url") or lec.get("url", ""),
+                "course": (syl.get("course") or {}).get("title", ""),
+                "status": "indexed",
+            })
+    return rows
+
+
+def ensure_synthesis(syl: dict) -> dict:
+    if (syl.get("synthesis") or "").strip():
+        return syl
+    if syl.get("lectures"):
+        syl = ensure_indexed(syl)
+    rows = _indexed_rows(syl)
+    if rows:
+        syl["synthesis"] = synthesize(syl.get("subject", ""), rows)
+        save(syl)
+    return syl
+
+
 def plan(subject: str, project: str = None, on_progress=None) -> dict:
     """
-    Build and persist a syllabus, indexing the arc's lectures as it goes.
+    Build and persist a lightweight syllabus.
 
-    Assignments and exams are recorded as links and deliberately not fetched
-    here. A course's problem sets are several more PDFs and most of them will
-    never be opened in a given session, so they are pulled on demand by quiz()
-    instead. The syllabus knows they exist from the moment it is built, which
-    is the part that matters.
+    The lecture files themselves are deliberately not fetched here. A lesson
+    should start teaching quickly, then index each source only when the student
+    reaches it.
     """
     subject = normalize_subject(subject)
     if not subject:
@@ -616,7 +737,6 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
     say(f"Teaching arc: {len(arc)} lectures "
         f"({sum(1 for a in arc if a['role'] == 'prerequisite')} as prerequisites)")
 
-    tier = lesson.TIER_BY_KEY["mit"]
     videos = topic_videos(subject)
     if videos:
         say(f"  {len(videos)} recorded lectures found")
@@ -624,19 +744,27 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
 
     planned = []
     for i, lec in enumerate(arc, 1):
-        say(f"  reading {i}/{len(arc)}: {lec['title']}")
-        row = lesson._ingest_one(lec, tier, subject, project)
         entry = {
             "n": i,
             "title": lec["title"],
             "url": lec["url"],
             "role": lec["role"],
             "seq": lec["seq"],
-            "file": row.get("file", ""),
-            "status": row["status"],
+            "course": lec.get("course", ""),
+            "course_url": lec.get("course_url", ""),
+            "origin": lec.get("origin", "MIT OpenCourseWare"),
+            "resolve": lec.get("resolve", "ocw_page"),
+            "kind": lec.get("kind", "lecture"),
+            "file": "",
+            "status": "pending: opens when reached",
+            "alternates": _alternates_for(lec, inventory),
         }
         if lec.get("video"):
             entry["video"] = lec["video"]
+        if lec.get("youtube_url"):
+            entry["youtube_url"] = lec["youtube_url"]
+        if lec.get("description"):
+            entry["description"] = lec["description"]
         planned.append(entry)
 
     # Material on this topic from OTHER courses. The synthesis is supposed to
@@ -652,29 +780,18 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
             continue
         elsewhere.append(hit)
 
-    cross_rows = []
-    for hit in elsewhere:
-        say(f"  also reading: {hit['title']} ({hit['course']})")
-        row = lesson._ingest_one(hit, tier, subject, project)
-        cross_rows.append(row)
-
-    say("Writing the synthesis across everything that covers this...")
-    synthesis = synthesize(subject, planned + cross_rows)
-
     also_covered = []
     seen_courses = set()
-    for row in cross_rows:
-        if row["status"] != "indexed":
-            continue
-        other = course_of(row["url"])
+    for hit in elsewhere:
+        other = course_of(hit["url"])
         if not other or other in seen_courses:
             continue
         seen_courses.add(other)
         also_covered.append({
             "number": course_number(other),
-            "title": row.get("course", ""),
+            "title": hit.get("course", ""),
             "url": f"https://ocw.mit.edu/courses/{other}/",
-            "item": row["title"],
+            "item": hit["title"],
         })
 
     other_courses = {}
@@ -692,14 +809,12 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
         "course": {"slug": slug, "number": number,
                    "title": hits[0]["course"],
                    "url": f"https://ocw.mit.edu/courses/{slug}/"},
-        "synthesis": synthesis,
+        "synthesis": "",
         "lectures": planned,
         # Everything indexed for this lesson beyond the arc. Kept so a
         # retrieved passage from another course can be cited by its title and
         # URL rather than by the filename it happens to have on disk.
-        "sources": [{"file": r.get("file", ""), "title": r.get("title", ""),
-                     "url": r.get("url", ""), "course": r.get("course", "")}
-                    for r in cross_rows if r.get("status") == "indexed"],
+        "sources": [],
         "also_covered": also_covered,
         "assignments": [{"title": a["title"], "url": a["url"]} for a in assignments],
         "exams": [{"title": e["title"], "url": e["url"]} for e in exams],
@@ -809,6 +924,7 @@ def render_answer(syl: dict) -> str:
     if not syl.get("course"):
         return (f"No MIT course was found covering '{syl.get('subject')}'. "
                 "Run a plain /lesson on it to search the wider ladder.")
+    syl = ensure_synthesis(syl)
 
     parts = [f"# {syl['subject']}", ""]
 
@@ -832,6 +948,17 @@ def render_answer(syl: dict) -> str:
         nav.insert(0, "watch — play the recorded lecture here and take the credit")
     parts += ["", " · ".join(w.split(" — ")[0] for w in nav), ""]
     return "\n".join(parts)
+
+
+def render_start(syl: dict) -> str:
+    """The first lesson response: teach now, leave the map one command away."""
+    if not syl.get("course") or not syl.get("lectures"):
+        return render_answer(syl)
+    course = syl["course"]
+    intro = (f"# {syl['subject']}\n\n"
+             f"Home course: **{course['number']} "
+             f"{strip_number_prefix(course['title'])}**\n\n")
+    return intro + teach(syl)
 
 
 # Kept under its old name because three surfaces and the tests call it. What
@@ -869,6 +996,8 @@ def teach(syl: dict, index: int = None) -> str:
 
     i = syl.get("position", 0) if index is None else index
     i = max(0, min(i, len(lectures) - 1))
+    syl = ensure_indexed(syl, i)
+    lectures = syl.get("lectures") or []
     lec = lectures[i]
 
     header = (f"## {lec['n']}. {lec['title']}\n"
@@ -896,7 +1025,11 @@ def teach(syl: dict, index: int = None) -> str:
         return (f"{header}\nThe local model did not answer, so here is the "
                 f"indexed text as it stands.\n\n{text[:6000]}")
 
-    footer = [f"\nSource: {lec['title']} — {lec['url']}"]
+    source_title = lec.get("source_title") or lec["title"]
+    source_url = lec.get("source_url") or lec["url"]
+    footer = [f"\nSource: {source_title} — {source_url}"]
+    if source_url != lec["url"]:
+        footer.append(f"OCW lecture page: {lec['url']}")
     if syl.get("assignments"):
         nth = min(i, len(syl["assignments"]) - 1)
         assigned = syl["assignments"][nth]
@@ -933,6 +1066,8 @@ def quiz(syl: dict, index: int = None) -> str:
 
     i = syl.get("position", 0) if index is None else index
     i = max(0, min(i, len(lectures) - 1))
+    syl = ensure_indexed(syl, i)
+    lectures = syl.get("lectures") or []
     lec = lectures[i]
 
     parts = [f"## Testing: {lec['title']}", ""]
@@ -972,9 +1107,15 @@ def sources(syl: dict, index: int = None) -> str:
         return "No lectures planned yet."
     i = syl.get("position", 0) if index is None else index
     i = max(0, min(i, len(lectures) - 1))
+    syl = ensure_indexed(syl, i)
+    lectures = syl.get("lectures") or []
     lec = lectures[i]
+    source_url = lec.get("source_url") or lec.get("url")
+    source_title = lec.get("source_title") or lec.get("title")
     return (f"## Sources for: {lec['title']}\n\n"
             f"- OCW page: {lec['url']}\n"
+            + (f"- Indexed source: {source_title} — {source_url}\n"
+               if source_url and source_url != lec.get("url") else "")
             + (f"- YouTube: {lec['youtube_url']}\n" if lec.get("youtube_url") else "")
             +
             f"- Course: {syl['course']['number']} {syl['course']['title']} — "
@@ -1035,6 +1176,9 @@ def _passages(syl: dict, query: str, n: int = 4) -> list:
     inside a lesson: they are asking about the thing in front of them.
     """
     import rag
+
+    if syl.get("lectures"):
+        syl = ensure_indexed(syl)
 
     out = []
     try:
