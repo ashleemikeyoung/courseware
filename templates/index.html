@@ -153,11 +153,11 @@ button,input,textarea,select{font:inherit;color:inherit}
 /* --- chrome ------------------------------------------------------------- */
 .rail{
   display:flex;align-items:stretch;gap:0;flex-wrap:wrap;
-  border-bottom:1px solid var(--rule);background:var(--paper);
+  background:var(--paper);
   position:sticky;top:0;z-index:40;
 }
 .brand{
-  padding:9px 18px;border-right:1px solid var(--rule);
+  padding:9px 18px;
   display:flex;align-items:center;gap:11px;white-space:nowrap;
 }
 /* Three recoloured copies, one shown per theme. Swapping in CSS rather than
@@ -189,11 +189,10 @@ button,input,textarea,select{font:inherit;color:inherit}
 }
 nav{
   display:flex;flex:1 0 100%;order:10;align-items:stretch;overflow:visible;
-  border-top:1px solid var(--rule-soft);
 }
 nav button{
   flex:0 0 auto;
-  background:none;border:0;border-right:1px solid var(--rule-soft);
+  background:none;border:0;
   padding:9px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;
   letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint);
   white-space:nowrap;transition:color .12s,background .12s;
@@ -218,7 +217,7 @@ nav button[data-tab="ask"][aria-selected="true"]{
 }
 nav button:focus-visible,.btn:focus-visible,.cite:focus-visible{
   outline:2px solid var(--blue);outline-offset:1px}
-.projpick{display:flex;align-items:center;border-right:1px solid var(--rule)}
+.projpick{display:flex;align-items:center}
 .projpick select{
   background:none;border:0;padding:11px 10px 11px 16px;cursor:pointer;
   font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--ink);
@@ -226,12 +225,11 @@ nav button:focus-visible,.btn:focus-visible,.cite:focus-visible{
 }
 .projpick select:focus{outline:0;background:var(--paper)}
 .projpick button{
-  background:none;border:0;border-left:1px solid var(--rule-soft);cursor:pointer;
+  background:none;border:0;cursor:pointer;
   padding:11px 13px;font-family:var(--mono);font-size:13px;color:var(--ink-faint);
 }
 .projpick button:hover{color:var(--ink);background:var(--paper)}
-.themes{display:flex;align-items:center;gap:7px;padding:0 15px;
-  border-left:1px solid var(--rule)}
+.themes{display:flex;align-items:center;gap:7px;padding:0 15px}
 .themes button{
   width:17px;height:17px;border-radius:50%;cursor:pointer;padding:0;
   border:1px solid var(--rule);position:relative;
@@ -247,7 +245,7 @@ nav button:focus-visible,.btn:focus-visible,.cite:focus-visible{
 .sw-ocean{background:linear-gradient(135deg,#224fbc 0 50%,#ffffff 50% 100%);border-color:#6f8ee0}
 .statusbit{
   font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;
-  padding:11px 16px;color:var(--ink-faint);border-left:1px solid var(--rule);
+  padding:11px 16px;color:var(--ink-faint);
   display:flex;align-items:center;gap:14px;white-space:nowrap;
 }
 .dot{width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;margin-right:5px}
@@ -828,7 +826,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
    this navigation. */
 .home-layout{display:flex;align-items:stretch;min-height:calc(100vh - 60px)}
 .home-sidebar{
-  width:17rem;flex:0 0 17rem;border-right:1px solid var(--rule);
+  width:17rem;flex:0 0 17rem;
   padding:16px 10px;overflow-y:auto;background:var(--paper);
 }
 .home-main{flex:1;min-width:0}
