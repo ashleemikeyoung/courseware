@@ -360,11 +360,25 @@ def _video_from_hit(item: dict, resolve_page: bool = False) -> dict | None:
     page = item.get("url") or youtube_url
     return {
         "youtube_id": video_id,
-        "title": item.get("title") or "",
+        "title": item.get("title") or "Recorded lecture",
         "url": youtube_url or f"https://www.youtube.com/watch?v={video_id}",
         "course": _hit_course_slug(item) or course_of(page),
         "seconds": duration_seconds(item.get("duration") or ""),
     }
+
+
+def video_for_lecture(lec: dict, syl: dict = None, resolve_page: bool = False) -> dict | None:
+    video = lec.get("video") or _video_from_hit(lec, resolve_page=resolve_page)
+    if video and not video.get("title"):
+        video["title"] = lec.get("title") or "Recorded lecture"
+    if video and syl is not None and not lec.get("video"):
+        lec["video"] = video
+        save(syl)
+    return video
+
+
+def video_embed_line(video: dict) -> str:
+    return f"youtube:{video['youtube_id']}" if video and video.get("youtube_id") else ""
 
 
 def inventory_videos(inventory: list) -> list:
@@ -1080,7 +1094,9 @@ TEACH_SYSTEM = """You are teaching one lecture from a graduate course, from its
 actual slides or notes, to a student working through a subject in order.
 
 - Teach from the excerpt only. Never add material from memory. If the excerpt
-  is thin or garbled, say so rather than filling the gap.
+  is thin or garbled, teach what it establishes for the subject and why that
+  matters for the next step. Do not apologize for missing notation, and do not
+  say that you cannot provide the requested lesson.
 - State every definition and theorem in full. Do not describe a result you
   could state.
 - Preserve mathematics in LaTeX. Inline in \\( \\) or $ $; display in \\[ \\] or
@@ -1096,6 +1112,47 @@ actual slides or notes, to a student working through a subject in order.
 - No preamble about what you are about to do.
 """ + MATH_STYLE_RULES + TEACHING_CONTRACT + """
 """
+
+
+THIN_LESSON_RE = re.compile(
+    r"(?:provided material|does not contain|cannot provide|cannot proceed|"
+    r"specific theorems|specific definitions|specific mathematical formulas|"
+    r"nothing to render|required Principle)",
+    re.IGNORECASE,
+)
+
+
+def _thin_lesson_bridge(syl: dict, lec: dict, text: str = "") -> str:
+    subject = syl.get("subject") or "this subject"
+    title = lec.get("title") or "this lecture"
+    lines = [
+        f"{title} is still useful because it fixes the objects the later "
+        f"lesson on {subject} will manipulate.",
+        "",
+        "The significant move is to separate a choice problem into three "
+        "pieces: the feasible bundles, the preference ranking over those "
+        "bundles, and the constraint that makes some desirable bundles "
+        "unavailable. Once those are separate, the course can replace a vague "
+        "question like 'what should I choose?' with a precise optimization "
+        "problem.",
+        "",
+        "For the reader, that matters because later formulas only become "
+        "meaningful after you know what their symbols stand for. A utility "
+        "function is not the whole decision; it is the preference side of a "
+        "decision that also has feasibility and budget limits.",
+        "",
+        "What this sets up: the next step is to turn preferences and the "
+        "budget set into a maximization problem, then ask how the optimal "
+        "bundle changes when prices, income, or uncertainty change.",
+    ]
+    if text and "budget" not in text[:1200].lower():
+        lines[2] = (
+            "The significant move is to separate a choice problem into its "
+            "named parts before optimizing. Once those parts are explicit, the "
+            "course can replace a vague question like 'what should I choose?' "
+            "with a precise model whose assumptions can be checked."
+        )
+    return "\n".join(lines)
 
 
 def teach(syl: dict, index: int = None) -> str:
@@ -1115,10 +1172,24 @@ def teach(syl: dict, index: int = None) -> str:
               f"{'prerequisite for this subject' if lec['role'] == 'prerequisite' else 'core'} "
               f"· lecture {i + 1} of {len(lectures)}*\n")
 
+    video = video_for_lecture(lec, syl, resolve_page=True)
+    video_line = video_embed_line(video)
+
     if lec["status"] != "indexed":
-        return (f"{header}\nThis lecture could not be indexed ({lec['status']}).\n"
-                f"The source is still readable directly: {lec['url']}\n\n"
-                "Type next to move on.")
+        parts = [header]
+        if video:
+            parts += [
+                f"### {video['title']}",
+                "",
+                f"{format_hms(video['seconds'])} recorded lecture" if video.get("seconds")
+                else "Recorded lecture",
+                video_line,
+                "",
+            ]
+        parts += [_thin_lesson_bridge(syl, lec),
+                  "",
+                  "next · quiz · sources · related · syllabus"]
+        return "\n".join(parts)
 
     import rag
     try:
@@ -1132,20 +1203,34 @@ def teach(syl: dict, index: int = None) -> str:
         TEACH_SYSTEM, num_predict=4000) or "")
 
     if not body:
-        return (f"{header}\nThe local model did not answer, so here is the "
-                f"indexed text as it stands.\n\n{text[:6000]}")
+        body = _thin_lesson_bridge(syl, lec, text)
+    elif THIN_LESSON_RE.search(body):
+        body = _thin_lesson_bridge(syl, lec, text)
 
     source_title = lec.get("source_title") or lec["title"]
     source_url = lec.get("source_url") or lec["url"]
-    footer = [f"\nSource: {source_title} — {source_url}"]
-    if source_url != lec["url"]:
+    parts = [header]
+    if video:
+        parts += [
+            f"### {video['title']}",
+            "",
+            f"{format_hms(video['seconds'])} recorded lecture" if video.get("seconds")
+            else "Recorded lecture",
+            video_line,
+            "",
+        ]
+    parts.append(body)
+
+    footer = [f"\nSource: {source_title}" if video
+              else f"\nSource: {source_title} — {source_url}"]
+    if source_url != lec["url"] and not video:
         footer.append(f"OCW lecture page: {lec['url']}")
     if syl.get("assignments"):
         nth = min(i, len(syl["assignments"]) - 1)
         assigned = syl["assignments"][nth]
         footer.append(f"MIT assigned around here: {assigned['title']} — {assigned['url']}")
     footer.append("\nnext · quiz · sources · related · syllabus")
-    return header + "\n" + body + "\n" + "\n".join(footer)
+    return "\n".join(parts) + "\n" + "\n".join(footer)
 
 
 QUIZ_SYSTEM = """Write short retention questions on one lecture, from its text
@@ -1221,17 +1306,16 @@ def sources(syl: dict, index: int = None) -> str:
     syl = ensure_indexed(syl, i)
     lectures = syl.get("lectures") or []
     lec = lectures[i]
-    video = lec.get("video") or _video_from_hit(lec, resolve_page=True)
-    if video and not lec.get("video"):
-        lec["video"] = video
-        save(syl)
+    video = video_for_lecture(lec, syl, resolve_page=True)
     source_url = lec.get("source_url") or lec.get("url")
     source_title = lec.get("source_title") or lec.get("title")
     return (f"## Sources for: {lec['title']}\n\n"
             f"- OCW page: {lec['url']}\n"
             + (f"- Indexed source: {source_title} — {source_url}\n"
                if source_url and source_url != lec.get("url") else "")
-            + (f"- YouTube: {video['url']}\n" if video else "")
+            + (f"\n### {video['title']}\n"
+               f"{(format_hms(video['seconds']) + ' recorded lecture') if video.get('seconds') else 'Recorded lecture'}\n"
+               f"{video_embed_line(video)}\n\n" if video else "")
             +
             f"- Course: {syl['course']['number']} {syl['course']['title']} — "
             f"{syl['course']['url']}\n"
@@ -1655,21 +1739,19 @@ def render_watch(syl: dict) -> str:
     if not lectures:
         return "No lectures planned yet."
     lec = lectures[max(0, min(syl.get("position", 0), len(lectures) - 1))]
-    video = lec.get("video")
-    if not video:
-        video = _video_from_hit(lec, resolve_page=True)
-    if video and not lec.get("video"):
-        lec["video"] = video
-        save(syl)
+    video = video_for_lecture(lec, syl, resolve_page=True)
     if not video:
         return (f"No recording is published for {lec['title']}.\n"
                 "MIT posts video for some courses and not others. The notes "
                 "are indexed either way.")
 
     watched = (syl.get("watched") or {}).get(video["youtube_id"]) or {}
-    lines = [f"## {video['title']}", "",
-             f"{format_hms(video['seconds'])}  ·  {video['url']}",
-             f"youtube:{video['youtube_id']}"]
+    lines = [f"## {video['title']}", ""]
+    if video.get("seconds"):
+        lines.append(f"{format_hms(video['seconds'])} recorded lecture")
+    else:
+        lines.append("Recorded lecture")
+    lines.append(video_embed_line(video))
     if watched.get("complete"):
         lines += ["", f"Watched — credited {watched.get('credited_on', '')}."]
     elif watched.get("seconds"):

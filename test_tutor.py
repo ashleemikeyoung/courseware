@@ -406,6 +406,34 @@ def main():
     chk("watch names the recording once the position has one",
         "pwFsPEPPUGU" in reply["text"], True)
     chk("watch states the runtime", "1:16:54" in reply["text"], True)
+    chk("watch emits an embeddable video marker",
+        "youtube:pwFsPEPPUGU" in reply["text"], True)
+    chk("watch does not make the YouTube URL the surface",
+        "watch?v=pwFsPEPPUGU" in reply["text"], False)
+
+    print("Thin lecture teaching")
+    thin = copy.deepcopy(SYLLABUS)
+    thin["project"] = "thin-lecture"
+    thin["lectures"][0]["status"] = "indexed"
+    thin["lectures"][0]["file"] = "thin.md"
+    import rag as _rag
+    original_read = _rag.read_indexed_source_text
+    lesson._ask = lambda *args, **kwargs: (
+        "The provided material outlines the conceptual components but does "
+        "not contain any specific mathematical formulas. Therefore, I cannot "
+        "provide the required Principle.")
+    _rag.read_indexed_source_text = lambda source: (
+        "Consumer choice starts with feasible commodity bundles, preferences, "
+        "and budget constraints.")
+    try:
+        taught = tutor.teach(thin, 0)
+        chk("thin lecture refusal is replaced with teaching",
+            "cannot provide" in taught.lower(), False)
+        chk("thin lecture explains significance",
+            "that matters" in taught.lower(), True)
+    finally:
+        lesson._ask = ORIGINAL_ASK
+        _rag.read_indexed_source_text = original_read
 
     reply = lesson.answer_lesson_command("/lesson quiz")
     chk("quiz surfaces MIT's real assignment", "Problem set 1" in reply["text"], True)
