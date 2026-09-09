@@ -56,6 +56,7 @@ from pathlib import Path
 import mathtext
 import projects
 import lesson
+import lesson_catalog
 
 
 # ---------------------------------------------------------------------------
@@ -833,8 +834,19 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
         if on_progress:
             on_progress(message)
 
+    existing = load(project)
+    if (existing.get("subject") == subject and existing.get("course")
+            and existing.get("lectures")):
+        say("Loaded the saved lesson plan.")
+        return existing
+
     say(f"Finding the MIT course that owns '{subject}'...")
-    hits = lesson._mit_files(subject, limit=40)
+    hits = lesson_catalog.cached_mit_files(subject, limit=40)
+    if hits:
+        say("  found in the local lesson catalog")
+    else:
+        hits = lesson._mit_files(subject, limit=40)
+        lesson_catalog.remember_mit_files(subject, hits)
     if not hits:
         return {"subject": subject, "project": project, "course": None,
                 "lectures": [], "assignments": [], "exams": [], "related": [],
@@ -844,7 +856,17 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
     number = course_number(slug)
     say(f"Home course: {number}. Reading its full file list...")
 
-    inventory = _merge_course_hits(_course_inventory(slug), hits, slug)
+    inventory_subject = course_number(slug)
+    inventory = lesson_catalog.cached_mit_files(inventory_subject, limit=200)
+    if inventory:
+        say("  course file list loaded from the local lesson catalog")
+        inventory = [dict(f, kind=classify(f.get("title", ""), f.get("url", "")),
+                          seq=sequence_of(f.get("title", ""), f.get("url", "")))
+                     for f in inventory if _hit_course_slug(f) == slug]
+    else:
+        inventory = _course_inventory(slug)
+        lesson_catalog.remember_mit_files(inventory_subject, inventory)
+    inventory = _merge_course_hits(inventory, hits, slug)
     lectures = [f for f in inventory if f["kind"] == "lecture"]
     assignments = [f for f in inventory if f["kind"] in {"assignment", "solution"}]
     exams = [f for f in inventory if f["kind"] == "exam"]
@@ -1106,6 +1128,11 @@ actual slides or notes, to a student working through a subject in order.
   \\mathbb{E}[X] or E[X] with square brackets for expectation, never E(X);
   \\operatorname{Var}(X) or \\sigma^2 for variance, never V(X); and always give a
   sum its index, \\sum_i p_i x_i or \\sum_{i=1}^{n} p_i x_i, never a bare \\sum.
+- Do not invent compressed labels such as Bfeasible, Bpreferences, or Bbudget.
+  Use words, or real LaTeX such as \\(\mathcal{B}_{\text{feasible}}\\).
+- Write money in prose as $10, $1, or $0.50. Only put dollar amounts inside a
+  math span when they are part of an equation, and then escape the currency
+  mark as \\$.
 - Open with one sentence on what this lecture establishes and why it comes
   where it does in the sequence.
 - Close with "What this sets up:" and one or two sentences pointing forward.

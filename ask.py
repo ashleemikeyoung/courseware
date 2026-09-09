@@ -38,6 +38,7 @@ from writer import (
 # declaring its own). Callers can still override with an explicit model.
 from config import ASK_MODEL, GOOGLE_API_KEY, GOOGLE_SEARCH_MODEL
 import coder
+import lesson_catalog
 import projects
 import quality
 import redactor
@@ -3509,6 +3510,7 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
             ])
 
     in_lesson_mode = lesson_mode_active(messages[:-1])
+    lesson_catalog.observe_chat_subject(last_user, lesson_mode=in_lesson_mode)
     if is_lesson_mode_exit(last_user):
         return _quality_finish(
             lesson_mode_exit_response(), last_user, plan, project=scope,

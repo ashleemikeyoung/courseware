@@ -45,6 +45,10 @@ EQUATION_MARKUP_RE = re.compile(r"[=<>+\-−*/×⋅·]|\([^)\n]+\)|\[[^\]\n]+\]"
 # allowing it to means one unmatched dollar sign eats the rest of the answer.
 INLINE_DOLLAR_RE = re.compile(r"(?<![\\$])\$(?!\$)((?:\\\$|[^\n$]){1,200}?)(?<!\\)\$(?!\$)")
 DISPLAY_DOLLAR_RE = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
+WRAPPED_MONEY_RE = re.compile(
+    r"(?<!\\)\$\\+\$(\d+(?:\.\d+)?(?:\s+(?:million|billion))?)\$(?!\$)",
+    re.IGNORECASE,
+)
 IDENT_RE = r"[A-Za-z][A-Za-z0-9_]*"
 BARE_EQUATION_RE = re.compile(
     r"(?<![\\\w$])"
@@ -54,6 +58,13 @@ BARE_EQUATION_RE = re.compile(
     r"\d+(?:\.\d+)?|" + IDENT_RE + r"(?:\(" + IDENT_RE + r"\))?))*"
     r")"
     r"(?![\w$])")
+BARE_INEQUALITY_RE = re.compile(
+    r"(?<![\\\w$])"
+    r"((?:\d+(?:\.\d+)?" + IDENT_RE + r"|" + IDENT_RE + r"|\d+(?:\.\d+)?)"
+    r"(?:\s*[+*/-]\s*(?:\d+(?:\.\d+)?" + IDENT_RE + r"|" + IDENT_RE + r"|\d+(?:\.\d+)?))+"
+    r"\s*(?:<=|>=|≤|≥|<|>)\s*\d+(?:\.\d+)?)"
+    r"(?![\w$])")
+BAD_SET_LABEL_RE = re.compile(r"\(?\bB(feasible|preferences|budget)\b\)?")
 MATH_SPAN_RE = re.compile(r"(\\\(.+?\\\)|\\\[.+?\\\])", re.DOTALL)
 
 MAX_INLINE = 200
@@ -148,6 +159,10 @@ def wrap_bare_equations(text: str) -> str:
     for i, part in enumerate(parts):
         if not part or MATH_SPAN_RE.fullmatch(part):
             continue
+        part = BAD_SET_LABEL_RE.sub(
+            lambda m: r"\(\mathcal{B}_{\text{" + m.group(1) + r"}}\)",
+            part)
+        part = BARE_INEQUALITY_RE.sub(lambda m: f"\\({m.group(1)}\\)", part)
         parts[i] = BARE_EQUATION_RE.sub(lambda m: f"\\({m.group(1)}\\)", part)
     return "".join(parts)
 
@@ -188,6 +203,8 @@ def looks_like_math(body: str) -> bool:
     if len(body) > MAX_BARE:
         return False
     words = WORD_RE.findall(body)
+    if re.fullmatch(r"[A-Z]", body):
+        return True
     if body[0].isdigit() or body[0] in ".,":
         return bool(EQUATION_MARKUP_RE.search(body)
                     and not any(w.lower() in PROSE_WORDS for w in words))
@@ -210,6 +227,7 @@ def normalize(text: str) -> str:
     if "$" not in text:
         return wrap_bare_equations(text)
 
+    text = WRAPPED_MONEY_RE.sub(lambda m: f"${m.group(1)}", text)
     text = DISPLAY_DOLLAR_RE.sub(lambda m: f"\\[{m.group(1)}\\]", text)
     text = INLINE_DOLLAR_RE.sub(
         lambda m: f"\\({m.group(1)}\\)" if looks_like_math(m.group(1))

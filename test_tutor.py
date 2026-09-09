@@ -267,6 +267,15 @@ def main():
     tutor.set_current("expected-utility")
     chk("syllabus round-trips", tutor.load("expected-utility")["subject"],
         "expected utility")
+    original_mit_files = lesson._mit_files
+    lesson._mit_files = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("saved lesson plan should avoid MIT search"))
+    try:
+        reused = tutor.plan("expected utility", project="expected-utility")
+        chk("a repeated subject reuses its saved lesson plan",
+            reused["course"]["number"], "14.121")
+    finally:
+        lesson._mit_files = original_mit_files
     chk("pointer resolves", tutor.get_current(), "expected-utility")
     tutor._pointer_path().unlink()
     chk("a lost pointer falls back to the most recent syllabus",

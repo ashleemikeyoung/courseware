@@ -58,6 +58,9 @@ def main():
         "the utility \\(u\\) is concave")
     chk("a CDF", mathtext.normalize("lottery $F$ dominates"),
         "lottery \\(F\\) dominates")
+    chk("uppercase commodity label",
+        mathtext.normalize("apples ($A$) and bananas (B)."),
+        "apples (\\(A\\)) and bananas (B).")
     chk("single-letter equation variable",
         mathtext.normalize("Here, $a=2$ and b=3."),
         "Here, \\(a=2\\) and \\(b=3\\).")
@@ -67,6 +70,9 @@ def main():
     chk("bare numbered variable assignment",
         mathtext.normalize("buy x1=3 apples"),
         "buy \\(x1=3\\) apples")
+    chk("malformed bundle labels are repaired",
+        mathtext.normalize("Feasible Bundles (Bfeasible), Preferences (Bpreferences), Budget Constraint (Bbudget)"),
+        r"Feasible Bundles \(\mathcal{B}_{\text{feasible}}\), Preferences \(\mathcal{B}_{\text{preferences}}\), Budget Constraint \(\mathcal{B}_{\text{budget}}\)")
     chk("a clause between two prices is still not maths",
         mathtext.normalize("worth $5 and worth $3"), "worth $5 and worth $3")
     chk("a long symbol run is not maths",
@@ -85,6 +91,12 @@ def main():
     chk("budget arithmetic with escaped currency renders as one formula",
         mathtext.normalize(r"remaining is $5.00 - 3.00 = \$2.00$."),
         r"remaining is \(5.00 - 3.00 = \$2.00\).")
+    chk("model-wrapped prose money becomes plain money",
+        mathtext.normalize(r"has $\$10$, apples cost $\$1$ each"),
+        "has $10, apples cost $1 each")
+    chk("bare budget inequality is wrapped",
+        mathtext.normalize("The budget constraint is 1A+2B≤10."),
+        r"The budget constraint is \(1A+2B≤10\).")
     chk("display dollars become bracket display",
         mathtext.normalize(r"$$P_W(\pi) = \omega(\pi) u(x)$$"),
         r"\[P_W(\pi) = \omega(\pi) u(x)\]")
