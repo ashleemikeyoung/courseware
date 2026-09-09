@@ -1430,6 +1430,7 @@ def _quality_finish(result: dict, question: str, plan: dict, project: str = None
                     analysis: dict = None) -> dict:
     evidence = evidence or []
     metrics = dict(result.get("metrics") or {})
+    effective_project = metrics.get("project") or project
     sources = sorted({
         ev.source for ev in evidence
         if getattr(ev, "source", None) and ev.source != "document-index"
@@ -1471,7 +1472,7 @@ def _quality_finish(result: dict, question: str, plan: dict, project: str = None
     control["bug_types"] = bug_types
     try:
         record_query_quality(
-            project=project,
+            project=effective_project,
             question=question,
             intent=plan.get("intent"),
             define=plan.get("define"),
@@ -1491,6 +1492,9 @@ def _quality_finish(result: dict, question: str, plan: dict, project: str = None
         "control": control,
     }
     result["metrics"] = metrics
+    if effective_project and (effective_project != project
+                              or metrics.get("route") == "lesson_command"):
+        result["project"] = effective_project
     return result
 
 
@@ -3523,8 +3527,9 @@ def ask(messages: list, model: str = None, project: str = None, ground: bool = T
         lesson_mode_question(last_user) if in_lesson_mode else last_user,
         project=scope, on_progress=on_stage)
     if lesson_action:
+        lesson_project = (lesson_action.get("metrics") or {}).get("project") or scope
         return _quality_finish(
-            lesson_action, last_user, plan, project=scope,
+            lesson_action, last_user, plan, project=lesson_project,
             improvements=[
                 "answered_in_lesson_mode" if in_lesson_mode
                 else "answered_explicit_lesson_command"

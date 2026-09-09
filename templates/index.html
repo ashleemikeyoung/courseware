@@ -3887,6 +3887,8 @@ async function sendAsk(){
     pending.grounded = !!ev.grounded;
     Object.assign(STATE.evidence, ev.evidence || {});
     renderChat();
+    if (ev.project && ev.project !== STATE.project)
+      await adoptProjectForCurrentChat(ev.project);
     saveAskConversation();
   } catch(err){
     if (err === JOB_STOPPED){
@@ -4695,6 +4697,22 @@ function localStorage_get(){ try { return window.localStorage.getItem("proj"); }
   catch(e){ return null; } }
 function localStorage_set(v){ try { window.localStorage.setItem("proj", v); }
   catch(e){} }
+
+async function adoptProjectForCurrentChat(name){
+  if (!name || name === STATE.project) return;
+  await loadProjects(name);
+  STATE.project = name;
+  localStorage_set(name);
+  const sel = $("#projSel");
+  if (sel) sel.value = name;
+  STATE.evidence = {};
+  $("#chatGlosses").innerHTML = "";
+  await loadStatus();
+  await loadAskCommandCriteria();
+  await loadAskConversationList();
+  renderSidebarProjects();
+  toast(`Lesson filed under ${name}`);
+}
 
 async function switchProject(name){
   if (STATE.home && STATE.home.view !== "project-detail")
