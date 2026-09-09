@@ -50,6 +50,7 @@ import json
 import re
 import urllib.parse
 from datetime import date
+from html import unescape
 from pathlib import Path
 
 import mathtext
@@ -267,6 +268,56 @@ def format_hms(seconds: int) -> str:
 
 
 YT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+YT_URL_RE = re.compile(
+    r"(?:https?:)?//(?:www\.)?"
+    r"(?:youtube(?:-nocookie)?\.com/(?:embed/|watch\?v=)|youtu\.be/)"
+    r"([A-Za-z0-9_-]{11})",
+    re.IGNORECASE,
+)
+YT_JSON_RE = re.compile(
+    r'"(?:youtube_id|youtubeId|youTubeId)"\s*:\s*"([A-Za-z0-9_-]{11})"',
+    re.IGNORECASE,
+)
+
+
+def _youtube_id_from_url(url: str) -> str:
+    if not url:
+        return ""
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.netloc or "").lower()
+    if host.endswith("youtu.be"):
+        video_id = parsed.path.strip("/").split("/")[0]
+        return video_id if YT_ID_RE.match(video_id or "") else ""
+    if "youtube" in host:
+        if parsed.path.startswith("/embed/"):
+            video_id = parsed.path.split("/embed/", 1)[1].split("/", 1)[0]
+            return video_id if YT_ID_RE.match(video_id or "") else ""
+        video_id = urllib.parse.parse_qs(parsed.query).get("v", [""])[0]
+        return video_id if YT_ID_RE.match(video_id or "") else ""
+    return ""
+
+
+def youtube_id_from_ocw_page(url: str) -> str:
+    """
+    Read an OCW lecture page and pull the embedded YouTube id, if MIT exposes one.
+
+    Some OCW records do not carry youtube_id in the API result even though the
+    page itself embeds a recording. Fetching only MIT-owned pages keeps this
+    deterministic and avoids guessing through a general YouTube search.
+    """
+    if not lesson._host_allowed(url or "", ["ocw.mit.edu"]):
+        return ""
+    try:
+        text = lesson._fetch(url, timeout=20).decode("utf-8", "replace")
+    except Exception:
+        return ""
+
+    text = unescape(text).replace("\\/", "/")
+    for pattern in (YT_URL_RE, YT_JSON_RE):
+        match = pattern.search(text)
+        if match and YT_ID_RE.match(match.group(1)):
+            return match.group(1)
+    return ""
 
 
 def topic_videos(subject: str, limit: int = 12) -> list:
@@ -281,16 +332,49 @@ def topic_videos(subject: str, limit: int = 12) -> list:
     out = []
     for item in payload.get("results") or []:
         video_id = item.get("youtube_id") or item.get("readable_id") or ""
+        youtube_url = item.get("youtube_url") or ""
+        if not YT_ID_RE.match(video_id or ""):
+            video_id = _youtube_id_from_url(youtube_url)
         page = item.get("url") or ""
         if not YT_ID_RE.match(video_id or ""):
             continue
         out.append({
             "youtube_id": video_id,
             "title": item.get("title") or "",
-            "url": page,
+            "url": youtube_url or f"https://www.youtube.com/watch?v={video_id}",
             "course": course_of(page),
             "seconds": duration_seconds(item.get("duration") or ""),
         })
+    return out
+
+
+def _video_from_hit(item: dict, resolve_page: bool = False) -> dict | None:
+    video_id = item.get("youtube_id") or item.get("readable_id") or ""
+    youtube_url = item.get("youtube_url") or ""
+    if not YT_ID_RE.match(video_id or ""):
+        video_id = _youtube_id_from_url(youtube_url)
+    if not YT_ID_RE.match(video_id or "") and resolve_page:
+        video_id = youtube_id_from_ocw_page(item.get("url") or "")
+    if not YT_ID_RE.match(video_id or ""):
+        return None
+    page = item.get("url") or youtube_url
+    return {
+        "youtube_id": video_id,
+        "title": item.get("title") or "",
+        "url": youtube_url or f"https://www.youtube.com/watch?v={video_id}",
+        "course": _hit_course_slug(item) or course_of(page),
+        "seconds": duration_seconds(item.get("duration") or ""),
+    }
+
+
+def inventory_videos(inventory: list) -> list:
+    out, seen = [], set()
+    for item in inventory or []:
+        video = _video_from_hit(item)
+        if not video or video["youtube_id"] in seen:
+            continue
+        seen.add(video["youtube_id"])
+        out.append(video)
     return out
 
 
@@ -319,6 +403,10 @@ def attach_videos(lectures: list, videos: list) -> list:
     studied.
     """
     for lecture in lectures:
+        direct = _video_from_hit(lecture)
+        if direct:
+            lecture["video"] = direct
+            continue
         slug = course_of(lecture["url"])
         tokens = _title_tokens(lecture["title"])
         best, best_score = None, 0
@@ -753,7 +841,13 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
     say(f"Teaching arc: {len(arc)} lectures "
         f"({sum(1 for a in arc if a['role'] == 'prerequisite')} as prerequisites)")
 
-    videos = topic_videos(subject)
+    videos = inventory_videos(inventory)
+    seen_video_ids = {v["youtube_id"] for v in videos}
+    for video in topic_videos(subject):
+        if video["youtube_id"] in seen_video_ids:
+            continue
+        videos.append(video)
+        seen_video_ids.add(video["youtube_id"])
     if videos:
         say(f"  {len(videos)} recorded lectures found")
     arc = attach_videos(arc, videos)
@@ -1127,13 +1221,17 @@ def sources(syl: dict, index: int = None) -> str:
     syl = ensure_indexed(syl, i)
     lectures = syl.get("lectures") or []
     lec = lectures[i]
+    video = lec.get("video") or _video_from_hit(lec, resolve_page=True)
+    if video and not lec.get("video"):
+        lec["video"] = video
+        save(syl)
     source_url = lec.get("source_url") or lec.get("url")
     source_title = lec.get("source_title") or lec.get("title")
     return (f"## Sources for: {lec['title']}\n\n"
             f"- OCW page: {lec['url']}\n"
             + (f"- Indexed source: {source_title} — {source_url}\n"
                if source_url and source_url != lec.get("url") else "")
-            + (f"- YouTube: {lec['youtube_url']}\n" if lec.get("youtube_url") else "")
+            + (f"- YouTube: {video['url']}\n" if video else "")
             +
             f"- Course: {syl['course']['number']} {syl['course']['title']} — "
             f"{syl['course']['url']}\n"
@@ -1559,6 +1657,11 @@ def render_watch(syl: dict) -> str:
     lec = lectures[max(0, min(syl.get("position", 0), len(lectures) - 1))]
     video = lec.get("video")
     if not video:
+        video = _video_from_hit(lec, resolve_page=True)
+    if video and not lec.get("video"):
+        lec["video"] = video
+        save(syl)
+    if not video:
         return (f"No recording is published for {lec['title']}.\n"
                 "MIT posts video for some courses and not others. The notes "
                 "are indexed either way.")
@@ -1599,7 +1702,14 @@ def set_current(project: str) -> None:
         pass
 
 
-def get_current() -> str:
+def clear_current() -> None:
+    try:
+        _pointer_path().write_text("", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def get_current(use_fallback: bool = True) -> str:
     """
     The open lesson: the pointer file if it is readable and still valid,
     otherwise the most recently written syllabus.
@@ -1617,6 +1727,9 @@ def get_current() -> str:
     except Exception:
         pass
 
+    if not use_fallback:
+        return ""
+
     try:
         found = sorted(Path(projects.PROJECTS_ROOT).glob("*/syllabus.json"),
                        key=lambda f: f.stat().st_mtime, reverse=True)
@@ -1625,6 +1738,6 @@ def get_current() -> str:
     return found[0].parent.name if found else ""
 
 
-def current_syllabus() -> dict:
-    name = get_current()
+def current_syllabus(use_fallback: bool = True) -> dict:
+    name = get_current(use_fallback=use_fallback)
     return load(name) if name else {}

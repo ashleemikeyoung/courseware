@@ -32,6 +32,7 @@ import lesson      # noqa: E402
 import tutor       # noqa: E402
 
 ORIGINAL_ASK = lesson._ask
+ORIGINAL_FETCH = lesson._fetch
 
 
 _failures = 0
@@ -188,6 +189,39 @@ def main():
     matched = tutor.attach_videos([dict(l) for l in lectures], videos)
     chk("the matching recording wins over another from the same course",
         matched[0]["video"]["youtube_id"], "aaaaaaaaaaa")
+    from_inventory = tutor.inventory_videos([{
+        "title": "Lecture 2: Consumer Choice",
+        "url": "https://ocw.mit.edu/courses/14-04-x/resources/lec-2/",
+        "run_slug": "14-04-x",
+        "youtube_id": "bbbbbbbbbbb",
+        "duration": "PT45M03S",
+    }])
+    chk("course inventory exposes MIT YouTube ids",
+        from_inventory[0]["youtube_id"], "bbbbbbbbbbb")
+    direct = tutor.attach_videos([{
+        "title": "Lecture 2: Consumer Choice",
+        "url": "https://ocw.mit.edu/courses/14-04-x/resources/lec-2/",
+        "youtube_id": "ccccccccccc",
+    }], [])
+    chk("a lecture's own YouTube id is enough for watch",
+        direct[0]["video"]["youtube_id"], "ccccccccccc")
+    lesson._fetch = lambda *args, **kwargs: (
+        b'<iframe src="https://www.youtube.com/embed/ddddddddddd"></iframe>')
+    chk("OCW lecture pages expose embedded YouTube ids",
+        tutor.youtube_id_from_ocw_page(
+            "https://ocw.mit.edu/courses/14-04-x/resources/lec-2/"),
+        "ddddddddddd")
+    chk("non-OCW pages are not fetched for video ids",
+        tutor.youtube_id_from_ocw_page(
+            "https://example.com/courses/14-04-x/resources/lec-2/"),
+        "")
+    page_video = tutor._video_from_hit({
+        "title": "Lecture 2: Consumer Choice",
+        "url": "https://ocw.mit.edu/courses/14-04-x/resources/lec-2/",
+    }, resolve_page=True)
+    chk("lecture page fallback creates a watchable YouTube link",
+        page_video["url"], "https://www.youtube.com/watch?v=ddddddddddd")
+    lesson._fetch = ORIGINAL_FETCH
     weak = tutor.attach_videos(
         [{"title": "Stochastic Dominance",
           "url": "https://ocw.mit.edu/courses/99-999-x/resources/x/"}], videos)
@@ -339,9 +373,13 @@ def main():
         tutor.route(OPEN, "stochastic dominance")[1], "stochastic dominance")
 
     print("Navigation, through lesson.py's Ask entry point")
-    chk("a nav word with nothing open is answered, not crashed",
-        lesson.answer_lesson_command("/lesson next")["metrics"]["found"] is False
-        or tutor.get_current() != "", True)
+    tutor.save(dict(SYLLABUS))
+    tutor.set_current("expected-utility")
+    lesson.answer_lesson_command("/lesson")
+    reply = lesson.answer_lesson_command("/lesson next")
+    chk("bare lesson entry clears stale active lessons",
+        "No lesson is open yet" in reply["text"], True)
+
     tutor.save(dict(SYLLABUS))
     tutor.set_current("expected-utility")
 

@@ -1024,19 +1024,14 @@ def lesson_mode_entry_response() -> dict:
     return {
         "text": (
             "Lesson mode is on. Send a subject on its own, without typing "
-            "`/lesson` each time, and I will build a grounded corpus for it "
-            "from open courseware and draft an explainer.\n\n"
+            "`/lesson` each time, and I will open the course material that "
+            "teaches it.\n\n"
             "Leading with MIT OpenCourseWare, then peer university "
             "courseware, open textbooks, and finally arXiv and DOAJ when MIT "
             "is thin. Each subject becomes its own indexed project, so it "
             "stays searchable afterwards.\n\n"
-            "Expect a few minutes per subject: real documents get fetched and "
-            "extracted before anything is written.\n\n"
-            "While a lesson is open: `next` walks the lectures, `example` "
-            "works one through and takes a variation (`example non-linear "
-            "utility`), `quiz` tests you, `sources` shows the OCW pages, "
-            "`related` branches. Or ask a question in plain words and it is "
-            "answered from the lesson's own indexed material.\n\n"
+            "Once a subject is open, I will show the lesson commands that make "
+            "sense for that subject.\n\n"
             "Use `/lesson off` or `/exit lesson` to leave lesson mode."
         ),
         "evidence": {}, "grounded": False, "passages_offered": 0,
@@ -1125,11 +1120,13 @@ def answer_lesson_command(question: str, project: str = None,
 
     body = lesson_command_query(question)
     if not body:
+        import tutor
+        tutor.clear_current()
         return lesson_mode_entry_response()
 
     import tutor
 
-    syllabus = tutor.current_syllabus()
+    syllabus = tutor.current_syllabus(use_fallback=False)
     kind, payload = tutor.route(syllabus, body)
 
     if kind in {"nav", "example", "question"} and not syllabus:
