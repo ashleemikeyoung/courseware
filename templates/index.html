@@ -1826,7 +1826,7 @@ function mdToHtml(md, opts = {}){
   const showCitations = opts.showCitations !== false;
   if (!showCitations) md = stripHiddenCitations(md);
   const lines = md.split("\n"); let out = [], list = null, code = null;
-  let scripture = null;
+  let scripture = null, math = null;
   const inline = t => esc(t)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
@@ -1837,6 +1837,17 @@ function mdToHtml(md, opts = {}){
     .replace(/\[([\w-]*C\d+)\]/g, (m, c) => showCitations ? citeHtml(c) : "");
   const close = () => { if (list){ out.push(`</${list}>`); list = null; } };
   for (const raw of lines){
+    if (math){
+      const end = raw.match(/^(.*?)\\+\]\s*$/);
+      if (end){
+        if (end[1]) math.lines.push(end[1]);
+        out.push(mathBlockHtml(math.lines.join("\n")));
+        math = null;
+      } else {
+        math.lines.push(raw);
+      }
+      continue;
+    }
     // A [SCRIPTURE ref="..." translation="..." lang="he|grc"] ... [/SCRIPTURE]
     // block is its own mini-format, not markdown -- see ask.py's "Scripture
     // display convention" for why: a verse quotation needs English on top
@@ -1880,6 +1891,14 @@ function mdToHtml(md, opts = {}){
       continue;
     }
     if (code){ code.lines.push(raw); continue; }
+    const mathStart = raw.match(/^\s*\\+\[\s*(.*)$/);
+    if (mathStart){
+      close();
+      const sameLine = mathStart[1].match(/^(.*?)\\+\]\s*$/);
+      if (sameLine) out.push(mathBlockHtml(sameLine[1]));
+      else math = {lines: mathStart[1] ? [mathStart[1]] : []};
+      continue;
+    }
     const l = raw.trim();
     if (!l) { close(); continue; }
     let m;
@@ -1903,6 +1922,7 @@ function mdToHtml(md, opts = {}){
     } else { close(); out.push(`<p>${inline(l)}</p>`); }
   }
   if (scripture) out.push(scriptureBlockHtml(scripture));
+  if (math) out.push(mathBlockHtml(math.lines.join("\n")));
   if (code) out.push(codeBlockHtml(code.lang, code.lines.join("\n")));
   close(); return out.join("");
 }
