@@ -43,14 +43,15 @@ EQUATION_MARKUP_RE = re.compile(r"[=<>+\-−*/×⋅·]|\([^)\n]+\)|\[[^\]\n]+\]"
 
 # Deliberately not DOTALL: real inline maths does not span a paragraph, and
 # allowing it to means one unmatched dollar sign eats the rest of the answer.
-INLINE_DOLLAR_RE = re.compile(r"(?<!\$)\$(?!\$)([^\n$]{1,200}?)\$(?!\$)")
+INLINE_DOLLAR_RE = re.compile(r"(?<![\\$])\$(?!\$)((?:\\\$|[^\n$]){1,200}?)(?<!\\)\$(?!\$)")
 DISPLAY_DOLLAR_RE = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
+IDENT_RE = r"[A-Za-z][A-Za-z0-9_]*"
 BARE_EQUATION_RE = re.compile(
     r"(?<![\\\w$])"
-    r"([A-Za-z](?:\([A-Za-z][A-Za-z0-9_]*\))?\s*=\s*"
+    r"(" + IDENT_RE + r"(?:\(" + IDENT_RE + r"\))?\s*=\s*"
     r"[-+]?\d+(?:\.\d+)?(?:\s*[+*/-]\s*"
-    r"(?:\d+(?:\.\d+)?[A-Za-z](?:\([A-Za-z][A-Za-z0-9_]*\))?|"
-    r"\d+(?:\.\d+)?|[A-Za-z](?:\([A-Za-z][A-Za-z0-9_]*\))?))*"
+    r"(?:\d+(?:\.\d+)?" + IDENT_RE + r"(?:\(" + IDENT_RE + r"\))?|"
+    r"\d+(?:\.\d+)?|" + IDENT_RE + r"(?:\(" + IDENT_RE + r"\))?))*"
     r")"
     r"(?![\w$])")
 MATH_SPAN_RE = re.compile(r"(\\\(.+?\\\)|\\\[.+?\\\])", re.DOTALL)
@@ -186,10 +187,11 @@ def looks_like_math(body: str) -> bool:
 
     if len(body) > MAX_BARE:
         return False
-    if body[0].isdigit() or body[0] in ".,":
-        return False
-
     words = WORD_RE.findall(body)
+    if body[0].isdigit() or body[0] in ".,":
+        return bool(EQUATION_MARKUP_RE.search(body)
+                    and not any(w.lower() in PROSE_WORDS for w in words))
+
     if not words:
         return False
     if EQUATION_MARKUP_RE.search(body) and all(len(w) <= 2 for w in words):

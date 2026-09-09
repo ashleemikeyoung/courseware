@@ -64,6 +64,9 @@ def main():
     chk("bare function assignment",
         mathtext.normalize("The new utility function is v(c)=2+3u(c)."),
         "The new utility function is \\(v(c)=2+3u(c)\\).")
+    chk("bare numbered variable assignment",
+        mathtext.normalize("buy x1=3 apples"),
+        "buy \\(x1=3\\) apples")
     chk("a clause between two prices is still not maths",
         mathtext.normalize("worth $5 and worth $3"), "worth $5 and worth $3")
     chk("a long symbol run is not maths",
@@ -76,6 +79,12 @@ def main():
     chk("subscripts make it maths",
         mathtext.normalize(r"$E[U(X)] = \sum p_i u(x_i)$"),
         r"\(E[U(X)] = \sum p_i u(x_i)\)")
+    chk("escaped currency can appear inside a formula",
+        mathtext.normalize(r"the cost is $1.00 \times 3 = \$3.00$."),
+        r"the cost is \(1.00 \times 3 = \$3.00\).")
+    chk("budget arithmetic with escaped currency renders as one formula",
+        mathtext.normalize(r"remaining is $5.00 - 3.00 = \$2.00$."),
+        r"remaining is \(5.00 - 3.00 = \$2.00\).")
     chk("display dollars become bracket display",
         mathtext.normalize(r"$$P_W(\pi) = \omega(\pi) u(x)$$"),
         r"\[P_W(\pi) = \omega(\pi) u(x)\]")
