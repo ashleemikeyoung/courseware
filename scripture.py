@@ -1189,6 +1189,10 @@ def _cantillation_evidence(question: str, registry: CitationRegistry) -> list:
             "בְּרֵאשִׁית and הַשָּׁמַיִם. It does not make the waw before "
             "אֵת הָאָרֶץ disjunctive."
         ),
+        (
+            "Because בְּרֵאשִׁ֖ית is marked with a disjunctive accent, this app "
+            "treats it in Genesis 1:1 as absolute rather than construct."
+        ),
     ]
     return [registry.register(source_url, -25, -25, "\n".join(details))]
 

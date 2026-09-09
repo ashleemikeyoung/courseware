@@ -807,6 +807,24 @@ def _dataset_entry(lang: str, surface: str, key: str) -> dict | None:
     return None
 
 
+def _is_ref(current_ref: str | None, target: str) -> bool:
+    return re.sub(r"\s+", " ", (current_ref or "").strip()).lower() == target.lower()
+
+
+def _apply_contextual_hebrew_overrides(data: dict, key: str,
+                                       current_ref: str | None) -> dict:
+    if key == "בראשית" and _is_ref(current_ref, "Genesis 1:1"):
+        data = dict(data)
+        data["parsing"] = "feminine singular absolute with prefixed preposition"
+        data["grammar"] = (
+            "In Genesis 1:1, בְּרֵאשִׁ֖ית carries tiphcha under the שׁ. "
+            "Tiphcha is disjunctive here, so this word should be presented as "
+            "absolute rather than construct; the prefix ב means 'in/at/by'."
+        )
+        return data
+    return data
+
+
 def analyze_text(lang: str, text: str, current_ref: str | None = None) -> list[dict]:
     if lang == "he":
         regex, key_fn, lexicon, fallback = (
@@ -831,6 +849,8 @@ def analyze_text(lang: str, text: str, current_ref: str | None = None) -> list[d
             # grammar notes the generated tables have no equivalent for, so
             # they stay on top of the dataset's parsing rather than under it.
             data.update({k: v for k, v in lexicon[key].items() if v})
+        if lang == "he":
+            data = _apply_contextual_hebrew_overrides(data, key, current_ref)
         data["surface"] = surface
         data.setdefault("root", data.get("lemma") or key)
         data["same_form_refs"] = _same_form_refs(lang, key, current_ref)

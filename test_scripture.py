@@ -75,6 +75,9 @@ def test_hebrew_morphology_includes_genesis_particles():
     )
 
     by_surface = {item["surface"]: item for item in items}
+    assert "absolute" in by_surface["בְּרֵאשִׁית"]["parsing"]
+    assert "construct" not in by_surface["בְּרֵאשִׁית"]["parsing"]
+    assert "Tiphcha is disjunctive" in by_surface["בְּרֵאשִׁית"]["grammar"]
     assert by_surface["אֵת"]["part_of_speech"] == "particle"
     assert by_surface["וְאֵת"]["part_of_speech"] == "particle"
     assert "prefixed conjunction" in by_surface["וְאֵת"]["parsing"]
@@ -169,3 +172,4 @@ def test_genesis_tiphcha_question_gets_cantillation_evidence():
         "https://freely-given.org/BibleOriginals/")
     assert "not a waw/conjunction" in evidence[0].text
     assert "בְּרֵאשִׁ֖ית [Tiphcha]" in evidence[0].text
+    assert "absolute rather than construct" in evidence[0].text
