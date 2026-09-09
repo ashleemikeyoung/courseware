@@ -58,6 +58,12 @@ def main():
         "the utility \\(u\\) is concave")
     chk("a CDF", mathtext.normalize("lottery $F$ dominates"),
         "lottery \\(F\\) dominates")
+    chk("single-letter equation variable",
+        mathtext.normalize("Here, $a=2$ and b=3."),
+        "Here, \\(a=2\\) and \\(b=3\\).")
+    chk("bare function assignment",
+        mathtext.normalize("The new utility function is v(c)=2+3u(c)."),
+        "The new utility function is \\(v(c)=2+3u(c)\\).")
     chk("a clause between two prices is still not maths",
         mathtext.normalize("worth $5 and worth $3"), "worth $5 and worth $3")
     chk("a long symbol run is not maths",

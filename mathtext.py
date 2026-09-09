@@ -39,11 +39,21 @@ import re
 # A $-pair is maths only if what it encloses carries one of these. Anything
 # else is money, or prose, or a typo.
 TEX_MARKUP_RE = re.compile(r"\\[A-Za-z]+|[_^]|\\left|\\right")
+EQUATION_MARKUP_RE = re.compile(r"[=<>+\-−*/×⋅·]|\([^)\n]+\)|\[[^\]\n]+\]")
 
 # Deliberately not DOTALL: real inline maths does not span a paragraph, and
 # allowing it to means one unmatched dollar sign eats the rest of the answer.
 INLINE_DOLLAR_RE = re.compile(r"(?<!\$)\$(?!\$)([^\n$]{1,200}?)\$(?!\$)")
 DISPLAY_DOLLAR_RE = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
+BARE_EQUATION_RE = re.compile(
+    r"(?<![\\\w$])"
+    r"([A-Za-z](?:\([A-Za-z][A-Za-z0-9_]*\))?\s*=\s*"
+    r"[-+]?\d+(?:\.\d+)?(?:\s*[+*/-]\s*"
+    r"(?:\d+(?:\.\d+)?[A-Za-z](?:\([A-Za-z][A-Za-z0-9_]*\))?|"
+    r"\d+(?:\.\d+)?|[A-Za-z](?:\([A-Za-z][A-Za-z0-9_]*\))?))*"
+    r")"
+    r"(?![\w$])")
+MATH_SPAN_RE = re.compile(r"(\\\(.+?\\\)|\\\[.+?\\\])", re.DOTALL)
 
 MAX_INLINE = 200
 MATH_ATOM_RE = re.compile(
@@ -122,6 +132,25 @@ def repair_line_broken_math(text: str) -> str:
     return "\n".join(out)
 
 
+def wrap_bare_equations(text: str) -> str:
+    """
+    Wrap short assignment-like formulas the model leaves in prose.
+
+    This is deliberately narrower than a real parser. It catches common
+    teaching fragments such as b=3 and v(c)=2+3u(c), skips existing LaTeX
+    spans, and does not touch dollar amounts because there is no dollar sign
+    in the pattern at all.
+    """
+    if not text:
+        return text or ""
+    parts = MATH_SPAN_RE.split(text)
+    for i, part in enumerate(parts):
+        if not part or MATH_SPAN_RE.fullmatch(part):
+            continue
+        parts[i] = BARE_EQUATION_RE.sub(lambda m: f"\\({m.group(1)}\\)", part)
+    return "".join(parts)
+
+
 def looks_like_math(body: str) -> bool:
     """
     Does the text between two dollar signs actually contain maths?
@@ -163,6 +192,8 @@ def looks_like_math(body: str) -> bool:
     words = WORD_RE.findall(body)
     if not words:
         return False
+    if EQUATION_MARKUP_RE.search(body) and all(len(w) <= 2 for w in words):
+        return True
     return not any(w.lower() in PROSE_WORDS for w in words)
 
 
@@ -175,13 +206,14 @@ def normalize(text: str) -> str:
     """
     text = repair_line_broken_math(text or "")
     if "$" not in text:
-        return text
+        return wrap_bare_equations(text)
 
     text = DISPLAY_DOLLAR_RE.sub(lambda m: f"\\[{m.group(1)}\\]", text)
-    return INLINE_DOLLAR_RE.sub(
+    text = INLINE_DOLLAR_RE.sub(
         lambda m: f"\\({m.group(1)}\\)" if looks_like_math(m.group(1))
         else m.group(0),
         text)
+    return wrap_bare_equations(text)
 
 
 # ---------------------------------------------------------------------------

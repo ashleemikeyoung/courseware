@@ -113,7 +113,8 @@ Math notation rules:
   rendered-looking stack and the plain formula beside it.
 - For a display equation, prefer a fenced block labelled math, with only the
   formula inside the block.
-- Inline examples: \\(E[X]\\), \\(U(W)\\), \\(p_H = 0.5\\). Display examples:
+- Inline examples: \\(E[X]\\), \\(U(W)\\), \\(p_H = 0.5\\), and
+  \\(V(p)=2+3U(p)\\) where \\(a=2\\) and \\(b=3\\). Display examples:
   ```math
   \\mathbb{E}[U(W)] = \\sum_i p_i U(W + x_i)
   ```.
