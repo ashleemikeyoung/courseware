@@ -235,7 +235,10 @@ def main():
         True)
     chk("the subject is the heading",
         answer.startswith("# expected utility"), True)
-    chk("the recording is offered when one exists", "watch" in answer, True)
+    chk("the lesson controls are structured",
+        "[LESSON_ACTIONS watch next example quiz sources related syllabus]" in answer,
+        True)
+    chk("the old inert footer is gone", "next · quiz" in answer, False)
 
     print("Placement is the relevant lectures, not the course")
     placement = tutor.render_placement(SYLLABUS)
@@ -410,6 +413,8 @@ def main():
         tutor.load("expected-utility")["position"], 1)
     chk("next names the lecture it moved to",
         "Expected Utility Theory" in reply["text"], True)
+    chk("next renders structured lesson controls",
+        "[LESSON_ACTIONS next quiz sources related syllabus]" in reply["text"], True)
 
     reply = lesson.answer_lesson_command("/lesson watch")
     chk("watch names the recording once the position has one",

@@ -1006,6 +1006,32 @@ def load(project: str) -> dict:
 # Rendering
 # ---------------------------------------------------------------------------
 
+LESSON_ACTIONS = {
+    "watch": "Watch",
+    "next": "Next",
+    "back": "Back",
+    "repeat": "Repeat",
+    "example": "Example",
+    "quiz": "Quiz",
+    "sources": "Sources",
+    "related": "Related",
+    "syllabus": "Syllabus",
+}
+
+
+def actions_line(*actions: str) -> str:
+    names = []
+    seen = set()
+    for action in actions:
+        key = (action or "").strip().lower()
+        if key in LESSON_ACTIONS and key not in seen:
+            names.append(key)
+            seen.add(key)
+    if not names:
+        return ""
+    return "[LESSON_ACTIONS " + " ".join(names) + "]"
+
+
 def render_placement(syl: dict) -> str:
     """
     Where the subject is taught: the course, and only the lectures that cover
@@ -1086,13 +1112,10 @@ def render_answer(syl: dict) -> str:
         parts += [placement, ""]
 
     videos = [lec for lec in syl.get("lectures", []) if lec.get("video")]
-    nav = ["next — walk the lectures one at a time",
-           "example — work one through, or `example <variation>`",
-           "quiz — MIT's own problem sets and exams, plus recall questions",
-           "sources · related · syllabus"]
+    action_names = ["next", "example", "quiz", "sources", "related", "syllabus"]
     if videos:
-        nav.insert(0, "watch — play the recorded lecture here and take the credit")
-    parts += ["", " · ".join(w.split(" — ")[0] for w in nav), ""]
+        action_names.insert(0, "watch")
+    parts += ["", actions_line(*action_names), ""]
     return "\n".join(parts)
 
 
@@ -1215,7 +1238,7 @@ def teach(syl: dict, index: int = None) -> str:
             ]
         parts += [_thin_lesson_bridge(syl, lec),
                   "",
-                  "next · quiz · sources · related · syllabus"]
+                  actions_line("next", "quiz", "sources", "related", "syllabus")]
         return "\n".join(parts)
 
     import rag
@@ -1256,7 +1279,7 @@ def teach(syl: dict, index: int = None) -> str:
         nth = min(i, len(syl["assignments"]) - 1)
         assigned = syl["assignments"][nth]
         footer.append(f"MIT assigned around here: {assigned['title']} — {assigned['url']}")
-    footer.append("\nnext · quiz · sources · related · syllabus")
+    footer.append("\n" + actions_line("next", "quiz", "sources", "related", "syllabus"))
     return "\n".join(parts) + "\n" + "\n".join(footer)
 
 
@@ -1320,7 +1343,7 @@ def quiz(syl: dict, index: int = None) -> str:
                           "anything that looks off against the source.*", "",
                           generated]
 
-    parts += ["", "next · sources · related · syllabus"]
+    parts += ["", actions_line("next", "sources", "related", "syllabus")]
     return "\n".join(parts)
 
 
@@ -1347,7 +1370,8 @@ def sources(syl: dict, index: int = None) -> str:
             f"- Course: {syl['course']['number']} {syl['course']['title']} — "
             f"{syl['course']['url']}\n"
             f"- Indexed as: `{lec['file'] or '(not indexed)'}`\n"
-            f"- License: CC BY-NC-SA 4.0\n")
+            f"- License: CC BY-NC-SA 4.0\n\n"
+            f"{actions_line('watch', 'next', 'quiz', 'related', 'syllabus') if video else actions_line('next', 'quiz', 'related', 'syllabus')}\n")
 
 
 def related(syl: dict) -> str:
@@ -1369,6 +1393,7 @@ def related(syl: dict) -> str:
         lines.append("")
 
     lines.append("Type any of these as a new subject to start a fresh arc on it.")
+    lines += ["", actions_line("back", "repeat", "next", "quiz", "sources", "syllabus")]
     return "\n".join(lines)
 
 
@@ -1546,7 +1571,7 @@ def example(syl: dict, qualifier: str = "") -> str:
     heading = f"## Worked example: {qualifier}" if qualifier else "## Worked example"
     cites = sorted({_cite_lecture(syl, p["source"]) for p in passages if p["source"]})
     footer = "\n".join(f"Source: {c}" for c in cites[:3])
-    return f"{heading}\n\n{body}\n\n{footer}\n\nexample <variation> · next · quiz · sources"
+    return f"{heading}\n\n{body}\n\n{footer}\n\n{actions_line('example', 'next', 'quiz', 'sources')}"
 
 
 # ---------------------------------------------------------------------------
@@ -1612,7 +1637,7 @@ def answer_question(syl: dict, question: str) -> str:
 
     cites = sorted({_cite_lecture(syl, p["source"]) for p in passages if p["source"]})
     footer = "\n".join(f"Source: {c}" for c in cites[:3])
-    return f"{body}\n\n{footer}\n\nexample · next · quiz · related"
+    return f"{body}\n\n{footer}\n\n{actions_line('example', 'next', 'quiz', 'related')}"
 
 
 # ---------------------------------------------------------------------------

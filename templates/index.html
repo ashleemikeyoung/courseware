@@ -537,6 +537,16 @@ textarea{resize:vertical;min-height:74px}
   font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
   color:var(--ink-faint);
 }
+.lesson-actions{
+  display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 4px;white-space:normal;
+}
+.lesson-action{
+  border:1px solid var(--rule);background:var(--paper-2);color:var(--ink);
+  border-radius:4px;padding:6px 10px;font-size:12px;line-height:1;cursor:pointer;
+}
+.lesson-action:hover,.lesson-action:focus-visible{
+  border-color:var(--ink-soft);background:var(--paper);outline:0;
+}
 .tok-comment{color:var(--ink-faint);font-style:italic}
 .tok-string{color:var(--green)}
 .tok-keyword{color:var(--blue);font-weight:600}
@@ -1850,7 +1860,8 @@ function mdToHtml(md, opts = {}){
     // Chat markers are prefixed per turn ("t1-C3") so citations from different
     // turns never collide once merged into one evidence map; document markers
     // stay bare ("C3"). Both shapes match here.
-    .replace(/\[([\w-]*C\d+)\]/g, (m, c) => showCitations ? citeHtml(c) : "");
+    .replace(/\[([\w-]*C\d+)\]/g, (m, c) => showCitations ? citeHtml(c) : "")
+    .replace(/\bhttps?:\/\/[^\s<]+/g, url => linkUrlHtml(url));
   const close = () => { if (list){ out.push(`</${list}>`); list = null; } };
   for (const raw of lines){
     if (math){
@@ -1919,6 +1930,19 @@ function mdToHtml(md, opts = {}){
     if (!l) { close(); continue; }
     let m;
     if ((m = l.match(/^youtube:([A-Za-z0-9_-]{11})$/i))) {
+      close();
+      out.push(youtubeBlockHtml(m[1]));
+    }
+    else if ((m = l.match(/^\[LESSON_ACTIONS\s+([a-z\s]+)\]$/i))) {
+      close();
+      out.push(lessonActionsHtml(m[1]));
+    }
+    else if (lessonActionWordsFromText(l).length) {
+      close();
+      out.push(lessonActionsHtml(lessonActionWordsFromText(l).join(" ")));
+    }
+    else if ((m = l.match(/^https:\/\/(?:www\.)?youtube\.com\/watch\?v=([A-Za-z0-9_-]{11})\b/i))
+        || (m = l.match(/^https:\/\/youtu\.be\/([A-Za-z0-9_-]{11})\b/i))) {
       close();
       out.push(youtubeBlockHtml(m[1]));
     }
@@ -2146,6 +2170,57 @@ function youtubeBlockHtml(id){
     `</div>` +
     `<div class="youtube-caption"><span>MIT lecture video</span><span>${esc(videoId)}</span></div>` +
     `</div>`;
+}
+
+function linkUrlHtml(raw){
+  const match = String(raw || "").match(/^(.*?)([).,;:!?]*)$/);
+  const url = match ? match[1] : String(raw || "");
+  const tail = match ? match[2] : "";
+  return `<a href="${escAttr(url)}" target="_blank" rel="noopener">${url}</a>${tail}`;
+}
+
+const LESSON_ACTION_LABELS = {
+  watch: "Watch",
+  next: "Next",
+  back: "Back",
+  repeat: "Repeat",
+  example: "Example",
+  quiz: "Quiz",
+  sources: "Sources",
+  related: "Related",
+  syllabus: "Syllabus",
+};
+
+function lessonActionsHtml(raw){
+  const actions = String(raw || "")
+    .trim()
+    .split(/\s+/)
+    .filter(a => Object.prototype.hasOwnProperty.call(LESSON_ACTION_LABELS, a));
+  if (!actions.length) return "";
+  return `<div class="lesson-actions">` + actions.map(action =>
+    `<button type="button" class="lesson-action" data-lesson-command="${escAttr(action)}">` +
+    `${esc(LESSON_ACTION_LABELS[action])}</button>`
+  ).join("") + `</div>`;
+}
+
+function lessonActionWordsFromText(text){
+  const parts = String(text || "").split(/\s*·\s*/);
+  if (parts.length < 2) return [];
+  const actions = [];
+  for (const part of parts){
+    const word = part.trim().split(/\s+/)[0]?.toLowerCase() || "";
+    if (!Object.prototype.hasOwnProperty.call(LESSON_ACTION_LABELS, word)) return [];
+    actions.push(word);
+  }
+  return actions;
+}
+
+function sendLessonCommand(command){
+  if (!command || STATE.chat.busy) return;
+  const input = $("#askInput");
+  input.value = command;
+  autoResize(input);
+  sendAsk();
 }
 
 function highlightCode(code, lang){
@@ -3835,6 +3910,12 @@ $("#askInput").addEventListener("keydown", e => {
   }
 });
 $("#btnAsk").onclick = () => (STATE.chat.busy ? stopAsk() : sendAsk());
+document.addEventListener("click", e => {
+  const action = e.target.closest("[data-lesson-command]");
+  if (!action) return;
+  e.preventDefault();
+  sendLessonCommand(action.dataset.lessonCommand || "");
+});
 $("#attachmentInput").onchange = uploadAttachments;
 $("#folderInput").onchange = uploadAttachments;
 $("#btnSidebarNewChat").onclick = async () => {
