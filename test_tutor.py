@@ -332,6 +332,37 @@ def main():
     chk("does not list lectures outside the arc",
         "Consumer Theory" in placement, False)
 
+    print("Home course: the course that IS the subject, not one that mentions it")
+    C = lambda slug, n=1: [{"url": f"https://ocw.mit.edu/courses/{slug}/resources/r{i}/"}
+                           for i in range(n)]
+    # The real failure, reproduced: asked for "linear algebra", rank-weighting
+    # picked a finance course carrying a note titled "Linear Algebra" over
+    # 18.06, which is the course and has 34 recorded lectures.
+    la = (C("18-s096-topics-in-mathematics-with-applications-in-finance-fall-2013", 3)
+          + C("18-06sc-linear-algebra-fall-2011", 2)
+          + C("2-086-numerical-computation-for-mechanical-engineers-spring-2013", 2))
+    chk("a title match beats a better-ranked course that only mentions it",
+        tutor._home_course(la, "linear algebra"), "18-06sc-linear-algebra-fall-2011")
+    chk("a course with recorded lectures wins a tie",
+        tutor._home_course(C("18-01-single-variable-calculus-fall-2006", 2)
+                           + C("18-014-calculus-with-theory-fall-2010", 2),
+                           "calculus",
+                           [{"course": "18-014-calculus-with-theory-fall-2010"}]),
+        "18-014-calculus-with-theory-fall-2010")
+    eu = (C("14-121-microeconomic-theory-i-fall-2015", 3)
+          + C("18-s096-topics-in-mathematics-with-applications-in-finance-fall-2013", 2))
+    chk("expected utility still lands on 14.121",
+        tutor._home_course(eu, "expected utility"),
+        "14-121-microeconomic-theory-i-fall-2015")
+    chk("with no subject it falls back to rank alone",
+        tutor._home_course(eu, ""), "14-121-microeconomic-theory-i-fall-2015")
+    chk("no hits is empty, not a crash", tutor._home_course([], "anything"), "")
+    chk("generic words are not a title match",
+        tutor._home_course(C("18-100a-real-analysis-fall-2020", 1)
+                           + C("14-121-microeconomic-theory-i-fall-2015", 3),
+                           "introduction to theory"),
+        "14-121-microeconomic-theory-i-fall-2015")
+
     print("Navigation words")
     chk("next", tutor.navigation_word("next"), "next")
     chk("case and padding ignored", tutor.navigation_word("  Quiz Me "), "quiz")

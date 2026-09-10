@@ -147,6 +147,8 @@ KIND_PATTERNS = [
 
 def classify(title: str, url: str = "") -> str:
     haystack = f"{title or ''} {url or ''}".lower()
+    if "zoomnotes" in haystack:
+        return "reading"
     for kind, pattern in KIND_PATTERNS:
         if re.search(pattern, haystack):
             return kind
@@ -592,21 +594,56 @@ def synthesize(subject: str, rows: list, budget: int = 90000) -> str:
 # Building the syllabus
 # ---------------------------------------------------------------------------
 
-def _home_course(hits: list) -> str:
-    """
-    The course slug that owns the most of the subject's top hits.
+SUBJECT_STOP = {
+    "the", "and", "for", "with", "of", "in", "to", "a", "an", "introduction",
+    "intro", "theory", "topics", "advanced", "basic", "applied",
+}
 
-    Weighted by rank rather than counted flat: the API returns results in
-    relevance order, so a course appearing at positions 2, 3 and 5 is a better
-    home than one appearing at 18, 19 and 20 even though both contribute three
-    files. Without the weighting, a large course that mentions the subject in
-    passing beats the small one that teaches it.
+
+def _subject_tokens(subject: str) -> set:
+    return {w for w in re.findall(r"[a-z]{3,}", (subject or "").lower())} - SUBJECT_STOP
+
+
+def _home_course(hits: list, subject: str = "", videos: list = None) -> str:
     """
+    The course that actually teaches the subject.
+
+    Three signals, and the first one exists because rank alone got this badly
+    wrong. Asked for "linear algebra", rank-weighting picked
+    18.S096 Topics in Mathematics with Applications in Finance -- a finance
+    course that happens to contain a lecture note titled "Linear Algebra" --
+    over 18.06 Linear Algebra, which is the course, has 34 recorded lectures,
+    and is arguably the most famous thing on OCW. Rank measures "which course
+    has files matching these words". It does not measure "which course is
+    about this".
+
+      title match  a course whose own slug carries the subject's words IS the
+                   subject. Weighted heavily, and per matched word, so "linear
+                   algebra" beats a course matching only "algebra".
+      has video    a course with recorded lectures can be taught the way this
+                   tool is supposed to teach: watch, then read, then test. One
+                   without video can only ever be a reading list.
+      rank         the original signal, still the tie-breaker among courses
+                   that are equally about the subject.
+
+    Rank is deliberately the weakest of the three now. It is the only one of
+    the three that can be satisfied by a passing mention.
+    """
+    wanted = _subject_tokens(subject)
+    with_video = {v.get("course") for v in (videos or []) if v.get("course")}
+
     scores = {}
     for rank, hit in enumerate(hits):
         slug = course_of(hit.get("url", ""))
-        if slug:
-            scores[slug] = scores.get(slug, 0) + 1.0 / (rank + 1)
+        if not slug:
+            continue
+        if slug not in scores:
+            slug_words = set(re.findall(r"[a-z]{3,}", slug.lower()))
+            scores[slug] = 3.0 * len(wanted & slug_words)
+            if slug in with_video:
+                scores[slug] += 2.0
+        scores[slug] += 1.0 / (rank + 1)
+
     return max(scores, key=scores.get) if scores else ""
 
 
@@ -634,6 +671,126 @@ def _course_inventory(slug: str, limit: int = 200) -> list:
         f["seq"] = sequence_of(f["title"], f["url"])
         out.append(f)
     out.sort(key=lambda f: (f["seq"], f["title"]))
+    if len([f for f in out if f.get("kind") == "lecture"]) < 3:
+        page_inventory = _course_page_inventory(slug, limit=limit)
+        if page_inventory:
+            return page_inventory
+    return out
+
+
+COURSE_PAGE_RE = re.compile(r'href=["\']([^"\']*/pages/[^"\']+)["\']', re.I)
+HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _course_metadata(slug: str) -> dict:
+    if not slug:
+        return {}
+    try:
+        return lesson._fetch_json(
+            f"https://ocw.mit.edu/courses/{slug.rstrip('/')}/data.json")
+    except Exception:
+        return {}
+
+
+def _plain_html(text: str) -> str:
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text or "")
+    text = re.sub(r"(?i)</(?:p|li|h[1-6]|tr|table|ul|ol)>", "\n", text)
+    text = HTML_TAG_RE.sub(" ", text)
+    text = unescape(text)
+    return re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]+", " ", text)).strip()
+
+
+def _page_kind(title: str, url: str, content: str) -> str:
+    haystack = f"{title or ''} {url or ''} {content or ''}".lower()
+    if "lecture video and summary" in haystack or "watch the video lecture" in haystack:
+        return "lecture"
+    if "exam" in haystack and "lecture video" not in haystack:
+        return "exam"
+    if "problem set" in haystack or "problems and solutions" in haystack:
+        return "assignment"
+    return classify(title, url)
+
+
+def _video_resource_url(page_url: str, content: str) -> str:
+    match = re.search(
+        r"Watch the video lecture\s*<a\s+href=[\"']([^\"']+)[\"']",
+        content or "",
+        re.IGNORECASE,
+    )
+    if not match:
+        return ""
+    return urllib.parse.urljoin(page_url, unescape(match.group(1)))
+
+
+def _course_page_inventory(slug: str, limit: int = 200) -> list:
+    """
+    OCW Scholar courses, especially 18.06SC, organize lessons as course pages.
+
+    The search endpoint often returns only a summary PDF for these courses,
+    which is technically a hit but pedagogically useless as a course arc. The
+    course page lists the actual sessions, and each session's data.json carries
+    the written overview, video link, summary note link, readings, and problem
+    references. That is the material /lesson should teach from.
+    """
+    course_url = f"https://ocw.mit.edu/courses/{slug.rstrip('/')}/"
+    try:
+        html = lesson._fetch(course_url, timeout=20).decode("utf-8", "replace")
+    except Exception:
+        return []
+
+    seen = set()
+    pages = []
+    skip = (
+        "/pages/syllabus", "/pages/instructor-insights", "/pages/related-resources",
+        "/pages/resource-index", "/pages/final-exam", "/pages/download",
+    )
+    for href in COURSE_PAGE_RE.findall(html):
+        page_url = urllib.parse.urljoin(course_url, unescape(href)).split("#", 1)[0]
+        page_url = page_url.split("?", 1)[0]
+        if page_url in seen or any(s in page_url for s in skip):
+            continue
+        seen.add(page_url)
+        pages.append(page_url.rstrip("/") + "/")
+        if len(pages) >= int(limit or 200):
+            break
+
+    out = []
+    metadata = _course_metadata(slug)
+    course_title = metadata.get("course_title") or metadata.get("title") or ""
+    course_number_value = metadata.get("primary_course_number") or course_number(slug)
+    for seq, page_url in enumerate(pages, start=1):
+        try:
+            data = lesson._fetch_json(page_url + "data.json")
+        except Exception:
+            continue
+        title = data.get("title") or page_url.rstrip("/").rsplit("/", 1)[-1].replace("-", " ")
+        content = data.get("content") or data.get("description") or ""
+        kind = _page_kind(title, page_url, content)
+        if kind not in {"lecture", "assignment", "exam"}:
+            continue
+        item = {
+            "title": title,
+            "url": page_url,
+            "course": f"{course_number_value} {course_title}".strip(),
+            "course_url": course_url,
+            "ext": "",
+            "origin": f"MIT OpenCourseWare · {slug}",
+            "description": _plain_html(data.get("description") or "")[:500],
+            "content_type": data.get("content_type") or "",
+            "feature_types": data.get("learning_resource_types") or [],
+            "course_numbers": [course_number_value] if course_number_value else [],
+            "run_slug": slug,
+            "kind": kind,
+            "seq": seq,
+            "inline_text": _plain_html(content),
+        }
+        video_page = _video_resource_url(page_url, content)
+        if video_page:
+            video_id = youtube_id_from_ocw_page(video_page)
+            if video_id:
+                item["youtube_id"] = video_id
+                item["youtube_url"] = f"https://www.youtube.com/watch?v={video_id}"
+        out.append(item)
     return out
 
 
@@ -658,6 +815,42 @@ def _merge_course_hits(inventory: list, hits: list, slug: str) -> list:
         seen.add(f.get("url"))
     out.sort(key=lambda f: (f["seq"], f["title"]))
     return out
+
+
+def _selected_course_title(slug: str, hits: list, inventory: list) -> str:
+    for row in inventory or []:
+        if _hit_course_slug(row) == slug and row.get("course"):
+            return row["course"]
+    for hit in hits or []:
+        if _hit_course_slug(hit) == slug and hit.get("course"):
+            return hit["course"]
+    metadata = _course_metadata(slug)
+    title = metadata.get("course_title") or ""
+    number = metadata.get("primary_course_number") or course_number(slug)
+    return f"{number} {title}".strip() or slug.replace("-", " ").title()
+
+
+def _subject_names_course(subject: str, course: dict) -> bool:
+    wanted = _subject_tokens(subject)
+    if not wanted:
+        return False
+    haystack = " ".join([
+        (course or {}).get("slug", ""),
+        (course or {}).get("title", ""),
+    ]).lower()
+    course_words = set(re.findall(r"[a-z]{3,}", haystack)) - SUBJECT_STOP
+    return wanted <= course_words
+
+
+def _saved_plan_usable(syl: dict) -> bool:
+    if not (syl.get("subject") and syl.get("course") and syl.get("lectures")):
+        return False
+    lectures = syl.get("lectures") or []
+    if _subject_names_course(syl.get("subject", ""), syl.get("course") or {}):
+        lecture_titles = " ".join(lec.get("title", "") for lec in lectures).lower()
+        if len(lectures) < 3 or "zoomnotes" in lecture_titles:
+            return False
+    return True
 
 
 ARC_SYSTEM = """You are selecting which lectures a student needs in order to
@@ -736,6 +929,11 @@ def _select_arc(subject: str, lectures: list, hits: list = None, slug: str = "")
     preserve course order within each group, because the sequence MIT taught
     in is information and reordering it would throw that away.
     """
+    wanted = _subject_tokens(subject)
+    slug_words = set(re.findall(r"[a-z]{3,}", (slug or "").lower())) - SUBJECT_STOP
+    if wanted and wanted <= slug_words:
+        return [dict(lec, role="core") for lec in lectures]
+
     listing = "\n".join(f"{i}. {lec['title']}" for i, lec in enumerate(lectures))
     reply = lesson._ask(
         f"Subject: {subject}\n\nLectures, in course order:\n{listing}",
@@ -921,8 +1119,7 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
             on_progress(message)
 
     existing = load(project)
-    if (existing.get("subject") == subject and existing.get("course")
-            and existing.get("lectures")):
+    if existing.get("subject") == subject and _saved_plan_usable(existing):
         say("Loaded the saved lesson plan.")
         existing = ensure_module_video(existing)
         return existing
@@ -939,7 +1136,13 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
                 "lectures": [], "assignments": [], "exams": [], "related": [],
                 "position": 0, "built": date.today().isoformat()}
 
-    slug = _home_course(hits)
+    # A cheap, dependency-free video probe purely to inform the home-course
+    # choice. The richer topic_video_candidates() below needs `inventory` and
+    # `slug`, both of which depend on the choice being made here, so it cannot
+    # be hoisted -- and an earlier version of this line referenced it anyway
+    # and would have raised NameError on the first real lesson.
+    video_hint = topic_videos(subject)
+    slug = _home_course(hits, subject, video_hint)
     number = course_number(slug)
     say(f"Home course: {number}. Reading its full file list...")
 
@@ -950,6 +1153,11 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
         inventory = [dict(f, kind=classify(f.get("title", ""), f.get("url", "")),
                           seq=sequence_of(f.get("title", ""), f.get("url", "")))
                      for f in inventory if _hit_course_slug(f) == slug]
+        if len([f for f in inventory if f.get("kind") == "lecture"]) < 3:
+            page_inventory = _course_page_inventory(slug)
+            if page_inventory:
+                inventory = page_inventory
+                lesson_catalog.remember_mit_files(inventory_subject, inventory)
     else:
         inventory = _course_inventory(slug)
         lesson_catalog.remember_mit_files(inventory_subject, inventory)
@@ -1035,7 +1243,7 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
         "subject": subject,
         "project": project,
         "course": {"slug": slug, "number": number,
-                   "title": hits[0]["course"],
+                   "title": _selected_course_title(slug, hits, inventory),
                    "url": f"https://ocw.mit.edu/courses/{slug}/"},
         "synthesis": "",
         "lectures": planned,
