@@ -3192,7 +3192,7 @@ function renderChat(){
   // once per render rather than per bubble -- renderMathInElement walks the
   // tree itself and doing it per bubble would walk it n times.
   typesetMath(col);
-  anchorLatestTurn({scroll: true});
+  anchorLatestTurn({scroll: true, pending: STATE.chat.busy});
 }
 
 /* Park the question you just asked at the top of the reading column and let
@@ -3209,6 +3209,9 @@ function anchorLatestTurn(opts){
   const asks = col.querySelectorAll(".chatmsg.user");
   const last = asks[asks.length - 1];
   if (!last) return;
+  const pending = opts && opts.pending
+    ? col.querySelector(".chatmsg.assistant .bubble.pending")
+    : null;
 
   let tail = col.querySelector("#chatTail");
   if (!tail){ tail = document.createElement("div"); tail.id = "chatTail"; }
@@ -3222,7 +3225,12 @@ function anchorLatestTurn(opts){
   tail.style.height = Math.max(0, pane.clientHeight - turnHeight - 28) + "px";
 
   if (!opts || opts.scroll !== false){
-    const target = askTop - paneTop + pane.scrollTop - 12;
+    const focus = pending || last;
+    const focusTop = focus.getBoundingClientRect().top;
+    const offset = pending
+      ? Math.max(16, Math.round(pane.clientHeight * 0.28))
+      : 12;
+    const target = focusTop - paneTop + pane.scrollTop - offset;
     pane.scrollTo({top: Math.max(0, target),
                    behavior: opts && opts.smooth ? "smooth" : "auto"});
   }
@@ -4928,6 +4936,7 @@ if (newChatSidebar) newChatSidebar.onclick = () => $("#btnNewChat").click();
       renderOutline();
     }
     show("ask");
+    focusAskInputSoon();
   }
 })();
 
