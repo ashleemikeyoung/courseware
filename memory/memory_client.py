@@ -331,6 +331,33 @@ def _ensure_lesson_catalog_schema(client):
         CREATE INDEX IF NOT EXISTS idx_lesson_watch_events_project_time
             ON lesson_watch_events(project, recorded_at)
     """)
+    client.execute("""
+        CREATE TABLE IF NOT EXISTS lesson_mit_courses (
+            course_slug   TEXT PRIMARY KEY,
+            course_number TEXT NOT NULL DEFAULT '',
+            title         TEXT NOT NULL DEFAULT '',
+            url           TEXT NOT NULL DEFAULT '',
+            departments   TEXT NOT NULL DEFAULT '[]',
+            topics        TEXT NOT NULL DEFAULT '[]',
+            level         TEXT NOT NULL DEFAULT '',
+            term          TEXT NOT NULL DEFAULT '',
+            payload       TEXT NOT NULL DEFAULT '{}',
+            updated_at    INTEGER NOT NULL
+        )
+    """)
+    client.execute("""
+        CREATE INDEX IF NOT EXISTS idx_lesson_mit_courses_number
+            ON lesson_mit_courses(course_number)
+    """)
+    client.execute("""
+        CREATE TABLE IF NOT EXISTS lesson_catalog_runs (
+            name        TEXT PRIMARY KEY,
+            status      TEXT NOT NULL DEFAULT 'pending',
+            cursor      TEXT NOT NULL DEFAULT '',
+            updated_at  INTEGER NOT NULL,
+            message     TEXT NOT NULL DEFAULT ''
+        )
+    """)
 
 
 def _decode_json_object(raw: str) -> dict:
@@ -521,6 +548,106 @@ def record_lesson_watch(project: str, subject: str, lecture: str, video_id: str,
                 complete_int,
             ],
         )
+    finally:
+        client.close()
+
+
+def remember_lesson_mit_courses(courses: list, course_slug_fn=None) -> int:
+    def text_value(value) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, (str, int, float, bool)):
+            return str(value)
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+    now = int(time.time())
+    count = 0
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        _ensure_lesson_catalog_schema(client)
+        for item in courses or []:
+            url = item.get("url") or ""
+            slug = item.get("readable_id") or item.get("run_slug") or (
+                course_slug_fn(url) if course_slug_fn else "")
+            slug = (slug or "").removeprefix("courses/")
+            if not slug:
+                continue
+            course_numbers = item.get("course_numbers") or item.get("course_number") or []
+            if isinstance(course_numbers, str):
+                course_numbers = [course_numbers]
+            departments = item.get("departments") or item.get("department_name") or []
+            if isinstance(departments, str):
+                departments = [departments]
+            topics = item.get("topics") or item.get("topic_list") or []
+            if isinstance(topics, str):
+                topics = [topics]
+            client.execute(
+                "INSERT INTO lesson_mit_courses "
+                "(course_slug, course_number, title, url, departments, topics, level, term, payload, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(course_slug) DO UPDATE SET "
+                "course_number=excluded.course_number, title=excluded.title, "
+                "url=excluded.url, departments=excluded.departments, topics=excluded.topics, "
+                "level=excluded.level, term=excluded.term, payload=excluded.payload, "
+                "updated_at=excluded.updated_at",
+                [
+                    slug,
+                    ", ".join(text_value(n) for n in course_numbers if n)
+                    or text_value(item.get("course_number")),
+                    text_value(item.get("title")),
+                    text_value(url),
+                    json.dumps(departments, ensure_ascii=False, sort_keys=True),
+                    json.dumps(topics, ensure_ascii=False, sort_keys=True),
+                    text_value(item.get("level")),
+                    text_value(item.get("offered_by") or item.get("semester") or item.get("term")),
+                    json.dumps(item, ensure_ascii=False, sort_keys=True),
+                    now,
+                ],
+            )
+            count += 1
+        return count
+    finally:
+        client.close()
+
+
+def lesson_catalog_run(name: str) -> dict:
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        _ensure_lesson_catalog_schema(client)
+        return _rowdict(client.execute(
+            "SELECT name, status, cursor, updated_at, message "
+            "FROM lesson_catalog_runs WHERE name = ?",
+            [name],
+        )) or {}
+    finally:
+        client.close()
+
+
+def update_lesson_catalog_run(name: str, status: str, cursor: str = "",
+                              message: str = "") -> None:
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        _ensure_lesson_catalog_schema(client)
+        client.execute(
+            "INSERT INTO lesson_catalog_runs "
+            "(name, status, cursor, updated_at, message) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(name) DO UPDATE SET "
+            "status=excluded.status, cursor=excluded.cursor, "
+            "updated_at=excluded.updated_at, message=excluded.message",
+            [name, status or "pending", cursor or "", int(time.time()), message or ""],
+        )
+    finally:
+        client.close()
+
+
+def lesson_catalog_stats() -> dict:
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        _ensure_lesson_catalog_schema(client)
+        courses = client.execute("SELECT count(*) FROM lesson_mit_courses").rows[0][0]
+        files = client.execute("SELECT count(*) FROM lesson_catalog_files").rows[0][0]
+        subjects = client.execute("SELECT count(*) FROM lesson_background_subjects").rows[0][0]
+        return {"courses": courses, "files": files, "subjects": subjects}
     finally:
         client.close()
 

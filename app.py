@@ -85,6 +85,12 @@ try:
 except Exception as _e:
     print(f"  Update tracking unavailable ({_e}). Everything else runs normally.")
 
+try:
+    import lesson_catalog
+    lesson_catalog.start_catalog_refresh(max_pages=4)
+except Exception as _e:
+    print(f"  Lesson catalog prewarm unavailable ({_e}). Everything else runs normally.")
+
 MEMORY_AVAILABLE = False
 try:
     sys.path.insert(0, str(BASE_DIR / "memory"))

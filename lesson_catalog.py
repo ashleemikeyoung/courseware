@@ -22,6 +22,7 @@ STALE_AFTER_SECONDS = 60 * 60 * 24 * 14
 
 _QUEUE = queue.Queue()
 _STARTED = False
+_CATALOG_STARTED = False
 _LOCK = threading.Lock()
 
 
@@ -85,6 +86,74 @@ def prewarm_now(subject: str) -> int:
         inventory = lesson._mit_files(number, limit=200)
         remember_mit_files(number, inventory)
     return len(files)
+
+
+def start_catalog_refresh(max_pages: int = 3) -> None:
+    """
+    Refresh MIT's course map in the background.
+
+    This is intentionally progressive. The goal is for ElRoi to anticipate
+    future lessons without turning app startup into a catalogue migration.
+    Each course number discovered here is queued for the existing subject
+    prewarmer, so course syllabuses/file lists get filled opportunistically.
+    """
+    global _CATALOG_STARTED
+    with _LOCK:
+        if _CATALOG_STARTED:
+            return
+        _CATALOG_STARTED = True
+    threading.Thread(
+        target=_catalog_worker,
+        args=(max(1, int(max_pages or 1)),),
+        daemon=True,
+    ).start()
+
+
+def _catalog_worker(max_pages: int) -> None:
+    try:
+        count = refresh_catalog_now(max_pages=max_pages)
+        memory_client.update_lesson_catalog_run(
+            "mit-ocw-courses", "ready", message=f"{count} courses refreshed")
+    except Exception as exc:
+        memory_client.update_lesson_catalog_run(
+            "mit-ocw-courses", "error", message=f"{type(exc).__name__}: {exc}")
+
+
+def refresh_catalog_now(max_pages: int = 3, page_size: int = 100) -> int:
+    import lesson
+    import tutor
+
+    run = memory_client.lesson_catalog_run("mit-ocw-courses")
+    now = int(time.time())
+    if run and run.get("status") == "ready":
+        age = now - int(run.get("updated_at") or 0)
+        if age < STALE_AFTER_SECONDS:
+            return 0
+
+    memory_client.update_lesson_catalog_run("mit-ocw-courses", "running")
+    total = 0
+    for page in range(max(1, int(max_pages or 1))):
+        offset = page * int(page_size or 100)
+        url = (
+            f"{lesson.MIT_API}/learning_resources_search/?platform=ocw"
+            f"&resource_type=course&limit={int(page_size or 100)}"
+            f"&offset={offset}"
+        )
+        payload = lesson._fetch_json(url)
+        results = payload.get("results") or []
+        if not results:
+            break
+        total += memory_client.remember_lesson_mit_courses(
+            results, course_slug_fn=_course_slug_from_url)
+        for item in results:
+            slug = (item.get("readable_id") or item.get("run_slug") or
+                    _course_slug_from_url(item.get("url") or ""))
+            number = tutor.course_number((slug or "").removeprefix("courses/"))
+            if number:
+                enqueue_subject(number, reason="MIT catalog course inventory")
+        if len(results) < int(page_size or 100):
+            break
+    return total
 
 
 def _start_worker() -> None:

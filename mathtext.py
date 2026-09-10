@@ -49,7 +49,16 @@ WRAPPED_MONEY_RE = re.compile(
     r"(?<!\\)\$\\+\$(\d+(?:\.\d+)?(?:\s+(?:million|billion))?)\$(?!\$)",
     re.IGNORECASE,
 )
+PROSE_MONEY_RE = re.compile(
+    r"(?<!\\)\$(\d+(?:\.\d+)?)\$(\s+(?:million|billion|trillion)\b)",
+    re.IGNORECASE,
+)
+PROSE_PERCENT_RE = re.compile(r"(?<!\\)\$(\d+(?:\.\d+)?)\\%\$(?!\$)")
 IDENT_RE = r"[A-Za-z][A-Za-z0-9_]*"
+TEX_EQUATION_RE = re.compile(
+    r"(?<![\\\w$])"
+    r"((?:\\mathbb\{[A-Za-z]\}|[A-Za-z])[A-Za-z0-9_]*(?:\[[^\]\n]+\]|\([^\)\n]+\))?"
+    r"\s*=\s*[^,.;:\n]*\\[A-Za-z]+[^,.;:\n]*)")
 BARE_EQUATION_RE = re.compile(
     r"(?<![\\\w$])"
     r"(" + IDENT_RE + r"(?:\(" + IDENT_RE + r"\))?\s*=\s*"
@@ -162,6 +171,7 @@ def wrap_bare_equations(text: str) -> str:
         part = BAD_SET_LABEL_RE.sub(
             lambda m: r"\(\mathcal{B}_{\text{" + m.group(1) + r"}}\)",
             part)
+        part = TEX_EQUATION_RE.sub(lambda m: f"\\({m.group(1).strip()}\\)", part)
         part = BARE_INEQUALITY_RE.sub(lambda m: f"\\({m.group(1)}\\)", part)
         parts[i] = BARE_EQUATION_RE.sub(lambda m: f"\\({m.group(1)}\\)", part)
     return "".join(parts)
@@ -228,6 +238,8 @@ def normalize(text: str) -> str:
         return wrap_bare_equations(text)
 
     text = WRAPPED_MONEY_RE.sub(lambda m: f"${m.group(1)}", text)
+    text = PROSE_MONEY_RE.sub(lambda m: f"${m.group(1)}{m.group(2)}", text)
+    text = PROSE_PERCENT_RE.sub(lambda m: f"{m.group(1)}%", text)
     text = DISPLAY_DOLLAR_RE.sub(lambda m: f"\\[{m.group(1)}\\]", text)
     text = INLINE_DOLLAR_RE.sub(
         lambda m: f"\\({m.group(1)}\\)" if looks_like_math(m.group(1))

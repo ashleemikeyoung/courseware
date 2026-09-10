@@ -319,6 +319,30 @@ CREATE TABLE IF NOT EXISTS lesson_watch_events (
 CREATE INDEX IF NOT EXISTS idx_lesson_watch_events_project_time
     ON lesson_watch_events(project, recorded_at);
 
+CREATE TABLE IF NOT EXISTS lesson_mit_courses (
+    course_slug   TEXT PRIMARY KEY,
+    course_number TEXT NOT NULL DEFAULT '',
+    title         TEXT NOT NULL DEFAULT '',
+    url           TEXT NOT NULL DEFAULT '',
+    departments   TEXT NOT NULL DEFAULT '[]',
+    topics        TEXT NOT NULL DEFAULT '[]',
+    level         TEXT NOT NULL DEFAULT '',
+    term          TEXT NOT NULL DEFAULT '',
+    payload       TEXT NOT NULL DEFAULT '{}',
+    updated_at    INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_lesson_mit_courses_number
+    ON lesson_mit_courses(course_number);
+
+CREATE TABLE IF NOT EXISTS lesson_catalog_runs (
+    name        TEXT PRIMARY KEY,
+    status      TEXT NOT NULL DEFAULT 'pending',
+    cursor      TEXT NOT NULL DEFAULT '',
+    updated_at  INTEGER NOT NULL,
+    message     TEXT NOT NULL DEFAULT ''
+);
+
 
 -- ---------------------------------------------------------------------------
 -- Documents -- one row per indexed source, holding an LLM-generated

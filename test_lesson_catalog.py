@@ -32,6 +32,8 @@ class FakeMemoryClient:
         self.files = {}
         self.hits = {}
         self.subjects = {}
+        self.courses = {}
+        self.runs = {}
 
     def cached_lesson_mit_files(self, subject, limit=40):
         urls = self.hits.get(subject, [])[:limit]
@@ -72,6 +74,25 @@ class FakeMemoryClient:
         self.subjects[subject] = {
             "status": "error",
             "updated_at": int(updated_at or time.time()),
+        }
+
+    def remember_lesson_mit_courses(self, courses, course_slug_fn=None):
+        for item in courses or []:
+            url = item.get("url") or ""
+            slug = item.get("readable_id") or item.get("run_slug") or (
+                course_slug_fn(url) if course_slug_fn else "")
+            self.courses[slug.removeprefix("courses/")] = dict(item)
+        return len(courses or [])
+
+    def lesson_catalog_run(self, name):
+        return self.runs.get(name, {})
+
+    def update_lesson_catalog_run(self, name, status, cursor="", message=""):
+        self.runs[name] = {
+            "status": status,
+            "cursor": cursor,
+            "message": message,
+            "updated_at": int(time.time()),
         }
 
 
@@ -148,6 +169,33 @@ def main():
             calls, [("consumer choice", 40), ("14.04", 200)])
     finally:
         lesson._mit_files = original_mit_files
+
+    print("MIT course map refresh")
+    original_fetch_json = lesson._fetch_json
+
+    def fake_fetch_json(url):
+        if "offset=0" in url:
+            return {"results": [{
+                "title": "Principles of Microeconomics",
+                "url": "https://ocw.mit.edu/courses/14-01-x/",
+                "readable_id": "14-01-x",
+                "course_numbers": ["14.01"],
+                "departments": ["Economics"],
+                "topics": ["Microeconomics"],
+            }]}
+        return {"results": []}
+
+    lesson._fetch_json = fake_fetch_json
+    try:
+        refreshed = lesson_catalog.refresh_catalog_now(max_pages=1, page_size=100)
+        chk("catalog refresh stores course rows", refreshed, 1)
+        chk("catalog refresh keeps department metadata",
+            lesson_catalog.memory_client.courses["14-01-x"]["departments"],
+            ["Economics"])
+        chk("catalog refresh queues course inventory",
+            "14.01" in lesson_catalog.memory_client.subjects, True)
+    finally:
+        lesson._fetch_json = original_fetch_json
 
     print()
     if _failures:

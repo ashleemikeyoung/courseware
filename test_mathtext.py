@@ -94,9 +94,18 @@ def main():
     chk("model-wrapped prose money becomes plain money",
         mathtext.normalize(r"has $\$10$, apples cost $\$1$ each"),
         "has $10, apples cost $1 each")
+    chk("model-wrapped million payoff becomes prose money",
+        mathtext.normalize(r"Win $1$ million for sure."),
+        "Win $1 million for sure.")
+    chk("model-wrapped percent becomes prose percent",
+        mathtext.normalize(r"probability $10\%$, nothing with $1\%$."),
+        "probability 10%, nothing with 1%.")
     chk("bare budget inequality is wrapped",
         mathtext.normalize("The budget constraint is 1A+2B≤10."),
         r"The budget constraint is \(1A+2B≤10\).")
+    chk("bare TeX equation is wrapped",
+        mathtext.normalize(r"E[U(W)] = \sum_i p_i u(W + x_i), where p_i is probability."),
+        r"\(E[U(W)] = \sum_i p_i u(W + x_i)\), where p_i is probability.")
     chk("display dollars become bracket display",
         mathtext.normalize(r"$$P_W(\pi) = \omega(\pi) u(x)$$"),
         r"\[P_W(\pi) = \omega(\pi) u(x)\]")
