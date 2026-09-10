@@ -119,6 +119,8 @@ def main():
         "14-121-microeconomic-theory-i-fall-2015")
     chk("course number from slug",
         tutor.course_number("14-121-microeconomic-theory-i-fall-2015"), "14.121")
+    chk("course number from plus-term slug",
+        tutor.course_number("14.121+fall_2015"), "14.121")
     chk("home course is rank-weighted, so two top hits beat three late ones",
         tutor._home_course([
             {"url": "https://ocw.mit.edu/courses/14-121-a/resources/1/"},
@@ -291,6 +293,29 @@ def main():
         len(calls), 1)
     chk("cached lesson body is normalized when rendered",
         "action \\(a\\)" in second, True)
+    stale = copy.deepcopy(with_module_video)
+    stale["project"] = "stale-lecture"
+    stale["lectures"][0]["lesson_body"] = (
+        "Expected Utility Theory is still useful because it fixes the objects "
+        "the later lesson will manipulate.\n\nThe significant move is to "
+        "separate a choice problem into its named parts before optimizing."
+    )
+    stale["lectures"][0]["lesson_body_file"] = stale["lectures"][0]["file"]
+    tutor.save(stale)
+    calls = []
+    lesson._ask = lambda *args, **kwargs: calls.append(args) or (
+        "Expected utility critiques explain independence failures."
+    )
+    _rag_for_start.read_indexed_source_text = lambda source: "Allais paradox and independence."
+    try:
+        refreshed = tutor.render_start(tutor.load("stale-lecture"))
+    finally:
+        lesson._ask = ORIGINAL_ASK
+        _rag_for_start.read_indexed_source_text = original_read_for_cache
+    chk("generic bridge cache is not treated as the written lesson",
+        len(calls), 1)
+    chk("stale cache renders the regenerated written lesson",
+        "independence failures" in refreshed, True)
 
     print("Placement is the relevant lectures, not the course")
     placement = tutor.render_placement(SYLLABUS)

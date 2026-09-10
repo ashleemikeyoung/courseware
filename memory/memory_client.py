@@ -610,6 +610,44 @@ def remember_lesson_mit_courses(courses: list, course_slug_fn=None) -> int:
         client.close()
 
 
+def _decode_json_list(raw: str) -> list:
+    try:
+        value = json.loads(raw or "[]")
+        return value if isinstance(value, list) else []
+    except Exception:
+        return []
+
+
+def list_lesson_mit_courses(limit: int = 0, offset: int = 0,
+                            include_payload: bool = False) -> list:
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        _ensure_lesson_catalog_schema(client)
+        fields = (
+            "course_slug, course_number, title, url, departments, topics, "
+            "level, term, updated_at"
+        )
+        if include_payload:
+            fields += ", payload"
+        sql = (
+            f"SELECT {fields} FROM lesson_mit_courses ORDER BY course_number, title"
+        )
+        params = []
+        if int(limit or 0) > 0:
+            sql += " LIMIT ? OFFSET ?"
+            params = [int(limit), int(offset or 0)]
+        result = client.execute(sql, params)
+        rows = [dict(zip(result.columns, row)) for row in result.rows]
+        for row in rows:
+            row["departments"] = _decode_json_list(row.get("departments"))
+            row["topics"] = _decode_json_list(row.get("topics"))
+            if "payload" in row:
+                row["payload"] = _decode_json_object(row.get("payload"))
+        return rows
+    finally:
+        client.close()
+
+
 def lesson_catalog_run(name: str) -> dict:
     client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
     try:

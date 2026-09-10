@@ -212,7 +212,14 @@ def strip_number_prefix(title: str) -> str:
 
 def course_number(slug: str) -> str:
     """14-121-microeconomic-theory-i-fall-2015 -> 14.121"""
-    parts = (slug or "").split("-")
+    cleaned = (slug or "").removeprefix("courses/").split("+", 1)[0]
+    match = re.match(r"([A-Za-z]*\.?\d+(?:[-.]\d+[A-Za-z]*)?)", cleaned)
+    if match:
+        number = match.group(1)
+        if re.match(r"^\d+[A-Za-z]*-\d", number):
+            number = number.replace("-", ".", 1)
+        return number.upper()
+    parts = cleaned.split("-")
     if len(parts) >= 2 and re.fullmatch(r"\d+[a-z]*", parts[1] or ""):
         return f"{parts[0]}.{parts[1]}".upper()
     return (parts[0] if parts else "").upper()
@@ -1318,6 +1325,24 @@ THIN_LESSON_RE = re.compile(
     re.IGNORECASE,
 )
 
+THIN_BRIDGE_RE = re.compile(
+    r"(?:still useful because it fixes the objects|"
+    r"The significant move is to separate a choice problem|"
+    r"later formulas only become meaningful after you know what their symbols stand for)",
+    re.IGNORECASE,
+)
+
+
+def _cacheable_lesson_body(body: str, lec: dict) -> str:
+    cached = (body or "").strip()
+    if not cached:
+        return ""
+    if lec.get("lesson_body_file") != lec.get("file"):
+        return ""
+    if THIN_LESSON_RE.search(cached) or THIN_BRIDGE_RE.search(cached):
+        return ""
+    return cached
+
 
 def _thin_lesson_bridge(syl: dict, lec: dict, text: str = "") -> str:
     subject = syl.get("subject") or "this subject"
@@ -1388,8 +1413,8 @@ def teach(syl: dict, index: int = None) -> str:
                   actions_line("next", "quiz", "sources", "related", "syllabus")]
         return "\n".join(parts)
 
-    cached_body = (lec.get("lesson_body") or "").strip()
-    if cached_body and lec.get("lesson_body_file") == lec.get("file"):
+    cached_body = _cacheable_lesson_body(lec.get("lesson_body") or "", lec)
+    if cached_body:
         return render_lesson_body(header, lec, syl, mathtext.normalize(cached_body), video)
 
     import rag
@@ -1403,14 +1428,18 @@ def teach(syl: dict, index: int = None) -> str:
         f"Lecture: {lec['title']}\n\n{text[:40000]}",
         TEACH_SYSTEM, num_predict=4000) or "")
 
+    cacheable = True
     if not body:
         body = _thin_lesson_bridge(syl, lec, text)
+        cacheable = False
     elif THIN_LESSON_RE.search(body):
         body = _thin_lesson_bridge(syl, lec, text)
+        cacheable = False
 
-    lec["lesson_body"] = body
-    lec["lesson_body_file"] = lec.get("file", "")
-    save(syl)
+    if cacheable:
+        lec["lesson_body"] = body
+        lec["lesson_body_file"] = lec.get("file", "")
+        save(syl)
     return render_lesson_body(header, lec, syl, body, video)
 
 

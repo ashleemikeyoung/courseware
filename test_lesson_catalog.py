@@ -81,8 +81,19 @@ class FakeMemoryClient:
             url = item.get("url") or ""
             slug = item.get("readable_id") or item.get("run_slug") or (
                 course_slug_fn(url) if course_slug_fn else "")
-            self.courses[slug.removeprefix("courses/")] = dict(item)
+            row = dict(item)
+            numbers = row.get("course_numbers") or row.get("course_number") or []
+            if isinstance(numbers, str):
+                numbers = [numbers]
+            row["course_number"] = ", ".join(numbers)
+            self.courses[slug.removeprefix("courses/")] = row
         return len(courses or [])
+
+    def list_lesson_mit_courses(self, limit=0, offset=0):
+        rows = list(self.courses.values())
+        if limit:
+            rows = rows[int(offset or 0):int(offset or 0) + int(limit)]
+        return rows
 
     def lesson_catalog_run(self, name):
         return self.runs.get(name, {})
@@ -194,6 +205,8 @@ def main():
             ["Economics"])
         chk("catalog refresh queues course inventory",
             "14.01" in lesson_catalog.memory_client.subjects, True)
+        chk("cached course numbers can feed the overnight puller",
+            lesson_catalog.cached_course_numbers(), ["14.01"])
     finally:
         lesson._fetch_json = original_fetch_json
 

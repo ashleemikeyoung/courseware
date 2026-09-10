@@ -119,13 +119,14 @@ def _catalog_worker(max_pages: int) -> None:
             "mit-ocw-courses", "error", message=f"{type(exc).__name__}: {exc}")
 
 
-def refresh_catalog_now(max_pages: int = 0, page_size: int = 100) -> int:
+def refresh_catalog_now(max_pages: int = 0, page_size: int = 100,
+                        force: bool = False) -> int:
     import lesson
     import tutor
 
     run = memory_client.lesson_catalog_run("mit-ocw-courses")
     now = int(time.time())
-    if run and run.get("status") == "ready":
+    if run and run.get("status") == "ready" and not force:
         age = now - int(run.get("updated_at") or 0)
         if age < STALE_AFTER_SECONDS:
             return 0
@@ -158,6 +159,23 @@ def refresh_catalog_now(max_pages: int = 0, page_size: int = 100) -> int:
             break
         page += 1
     return total
+
+
+def cached_course_numbers(limit: int = 0) -> list:
+    import tutor
+
+    rows = memory_client.list_lesson_mit_courses(limit=int(limit or 0))
+    numbers = []
+    seen = set()
+    for row in rows:
+        raw_numbers = row.get("course_number") or tutor.course_number(
+            row.get("course_slug") or "")
+        for number in str(raw_numbers or "").split(","):
+            number = number.strip()
+            if number and number not in seen:
+                seen.add(number)
+                numbers.append(number)
+    return numbers
 
 
 def _start_worker() -> None:
