@@ -4655,11 +4655,27 @@ async function checkUpdateStatus(){
 
 $("#btnApplyUpdate").onclick = async () => {
   if (!confirm("Apply this update and restart the server now?")) return;
+  let applied = null;
   try {
-    await fetch("/api/update/apply", {method:"POST",
+    const res = await fetch("/api/update/apply", {method:"POST",
       headers:{"Content-Type":"application/json"}, body: JSON.stringify({})});
-  } catch(e){}
-  showRestarting();
+    const raw = await res.text();
+    try {
+      applied = raw ? JSON.parse(raw) : {};
+    } catch(e){
+      throw new Error("Update failed. The server returned an HTML error page instead of JSON.");
+    }
+    if (!res.ok) throw new Error(applied?.error || "Update failed");
+  } catch(e){
+    alert(e.message || "Update failed");
+    checkUpdateStatus();
+    return;
+  }
+  if (applied?.restarting){
+    showRestarting();
+  } else {
+    await checkUpdateStatus();
+  }
 };
 
 function showRestarting(){

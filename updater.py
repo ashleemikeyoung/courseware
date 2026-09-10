@@ -53,6 +53,8 @@ static/fonts/*.ttf
 memory/.env
 memory/data/
 memory/keys/
+memory/*.sqlite
+memory/*.sqlite-*
 """
 
 
@@ -80,6 +82,21 @@ RUNTIME_UPDATE_FILES = {
 }
 
 
+def _is_memory_database_file(path: str) -> bool:
+    if not path.startswith("memory/"):
+        return False
+    return (
+        path.endswith(".sqlite")
+        or path.endswith(".sqlite-wal")
+        or path.endswith(".sqlite-shm")
+        or path.endswith(".sqlite-journal")
+        or path.endswith(".db")
+        or path.endswith(".db-wal")
+        or path.endswith(".db-shm")
+        or path.endswith(".db-journal")
+    )
+
+
 def _git(*args, check=True):
     return subprocess.run(
         ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=check,
@@ -105,6 +122,7 @@ def _is_runtime_file(path: str) -> bool:
         or path.endswith(".pyc")
         or path.endswith(".bak")
         or ".bak-" in path
+        or _is_memory_database_file(path)
         or any(path.startswith(prefix) for prefix in RUNTIME_UPDATE_PREFIXES)
     )
 
@@ -176,11 +194,17 @@ def apply_update(message: str = None) -> dict:
     ensure_repo()
     files = pending_files()
     if not files:
-        return current_commit()
+        current = current_commit() or {}
+        current["applied_files"] = []
+        current["remaining_pending_files"] = []
+        return current
     _git("add", "--", *files)
     msg = message or "Update applied"
     _git("commit", "-m", msg)
-    return current_commit()
+    current = current_commit() or {}
+    current["applied_files"] = files
+    current["remaining_pending_files"] = pending_files()
+    return current
 
 
 def history(n: int = 20) -> list:

@@ -1450,9 +1450,24 @@ def api_update_history():
 def api_update_apply():
     body = request.json or {}
     message = (body.get("message") or "").strip() or None
-    result = updater.apply_update(message)
-    _delayed_restart()
-    return jsonify({"applied": result, "restarting": True})
+    try:
+        result = updater.apply_update(message)
+    except Exception as e:
+        return jsonify({
+            "restarting": False,
+            "error": f"Update failed: {e}",
+        }), 500
+    remaining = result.get("remaining_pending_files") or []
+    if remaining:
+        return jsonify({
+            "applied": result,
+            "restarting": False,
+            "error": "Some update files are still pending.",
+        }), 409
+    restarting = bool(result.get("applied_files"))
+    if restarting:
+        _delayed_restart()
+    return jsonify({"applied": result, "restarting": restarting})
 
 
 @app.post("/api/update/rollback")

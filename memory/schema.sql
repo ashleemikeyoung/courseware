@@ -247,6 +247,50 @@ CREATE INDEX IF NOT EXISTS idx_ask_conversation_history_project_time
 
 
 -- ---------------------------------------------------------------------------
+-- Lesson catalog -- durable subject/resource discovery for /lesson.
+--
+-- The app uses this as structured metadata for MIT OCW and video resources:
+-- subject aliases, ranked course files, background prewarm state, and enough
+-- payload to render a fast first lesson screen. Keeping it in libSQL instead
+-- of a sidecar SQLite file lets the catalog federate with the rest of memory
+-- later.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS lesson_catalog_files (
+    url          TEXT PRIMARY KEY,
+    title        TEXT NOT NULL,
+    description  TEXT NOT NULL DEFAULT '',
+    course_slug  TEXT NOT NULL DEFAULT '',
+    kind         TEXT NOT NULL DEFAULT '',
+    seq          INTEGER NOT NULL DEFAULT 999,
+    payload      TEXT NOT NULL,
+    updated_at   INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_lesson_catalog_files_course
+    ON lesson_catalog_files(course_slug, seq);
+
+CREATE TABLE IF NOT EXISTS lesson_subject_hits (
+    subject     TEXT NOT NULL,
+    url         TEXT NOT NULL REFERENCES lesson_catalog_files(url),
+    rank        INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY (subject, url)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lesson_subject_hits_subject
+    ON lesson_subject_hits(subject, rank);
+
+CREATE TABLE IF NOT EXISTS lesson_background_subjects (
+    subject     TEXT PRIMARY KEY,
+    reason      TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'pending',
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    updated_at  INTEGER NOT NULL
+);
+
+
+-- ---------------------------------------------------------------------------
 -- Documents -- one row per indexed source, holding an LLM-generated
 -- synopsis. This is the "context aware storage" piece: as files get
 -- ingested, a synopsis lands here so it can be checked alongside chroma_db's
@@ -519,4 +563,3 @@ CREATE TABLE IF NOT EXISTS response_feedback (
 
 CREATE INDEX IF NOT EXISTS idx_response_feedback_project_rating
     ON response_feedback(project, rating, rated_at);
-

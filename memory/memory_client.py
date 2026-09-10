@@ -29,6 +29,7 @@ worth logging rather than everything being captured by default.
 import json
 import mimetypes
 import socket
+import time
 import uuid
 
 import libsql_client
@@ -250,6 +251,185 @@ def list_all_ask_conversations(limit: int = 50):
             [int(limit or 50)],
         )
         return [dict(zip(result.columns, row)) for row in result.rows]
+    finally:
+        client.close()
+
+
+# ---------------------------------------------------------------------------
+# Lesson catalog -- structured /lesson discovery cache in libSQL.
+# ---------------------------------------------------------------------------
+
+def _ensure_lesson_catalog_schema(client):
+    client.execute("""
+        CREATE TABLE IF NOT EXISTS lesson_catalog_files (
+            url          TEXT PRIMARY KEY,
+            title        TEXT NOT NULL,
+            description  TEXT NOT NULL DEFAULT '',
+            course_slug  TEXT NOT NULL DEFAULT '',
+            kind         TEXT NOT NULL DEFAULT '',
+            seq          INTEGER NOT NULL DEFAULT 999,
+            payload      TEXT NOT NULL,
+            updated_at   INTEGER NOT NULL
+        )
+    """)
+    client.execute("""
+        CREATE INDEX IF NOT EXISTS idx_lesson_catalog_files_course
+            ON lesson_catalog_files(course_slug, seq)
+    """)
+    client.execute("""
+        CREATE TABLE IF NOT EXISTS lesson_subject_hits (
+            subject     TEXT NOT NULL,
+            url         TEXT NOT NULL REFERENCES lesson_catalog_files(url),
+            rank        INTEGER NOT NULL,
+            updated_at  INTEGER NOT NULL,
+            PRIMARY KEY (subject, url)
+        )
+    """)
+    client.execute("""
+        CREATE INDEX IF NOT EXISTS idx_lesson_subject_hits_subject
+            ON lesson_subject_hits(subject, rank)
+    """)
+    client.execute("""
+        CREATE TABLE IF NOT EXISTS lesson_background_subjects (
+            subject     TEXT PRIMARY KEY,
+            reason      TEXT NOT NULL DEFAULT '',
+            status      TEXT NOT NULL DEFAULT 'pending',
+            attempts    INTEGER NOT NULL DEFAULT 0,
+            updated_at  INTEGER NOT NULL
+        )
+    """)
+
+
+def _decode_json_object(raw: str) -> dict:
+    try:
+        value = json.loads(raw or "{}")
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+
+def cached_lesson_mit_files(subject: str, limit: int = 40) -> list:
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        _ensure_lesson_catalog_schema(client)
+        result = client.execute(
+            "SELECT f.payload, h.updated_at "
+            "FROM lesson_subject_hits h "
+            "JOIN lesson_catalog_files f ON f.url = h.url "
+            "WHERE h.subject = ? "
+            "ORDER BY h.rank LIMIT ?",
+            [subject, int(limit or 40)],
+        )
+        return [
+            {"payload": _decode_json_object(row[0]), "updated_at": row[1]}
+            for row in result.rows
+        ]
+    finally:
+        client.close()
+
+
+def remember_lesson_mit_files(subject: str, files: list, course_slug_fn=None) -> None:
+    now = int(time.time())
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        _ensure_lesson_catalog_schema(client)
+        client.execute("DELETE FROM lesson_subject_hits WHERE subject = ?", [subject])
+        for rank, item in enumerate(files or []):
+            url = item.get("url") or ""
+            if not url:
+                continue
+            course_slug = item.get("run_slug") or (
+                course_slug_fn(url) if course_slug_fn else "")
+            client.execute(
+                "INSERT INTO lesson_catalog_files "
+                "(url, title, description, course_slug, kind, seq, payload, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(url) DO UPDATE SET "
+                "title=excluded.title, description=excluded.description, "
+                "course_slug=excluded.course_slug, kind=excluded.kind, "
+                "seq=excluded.seq, payload=excluded.payload, "
+                "updated_at=excluded.updated_at",
+                [
+                    url,
+                    item.get("title") or "",
+                    item.get("description") or "",
+                    course_slug or "",
+                    item.get("kind") or "",
+                    int(item.get("seq") or 999),
+                    json.dumps(item, ensure_ascii=False, sort_keys=True),
+                    now,
+                ],
+            )
+            client.execute(
+                "INSERT INTO lesson_subject_hits (subject, url, rank, updated_at) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(subject, url) DO UPDATE SET "
+                "rank=excluded.rank, updated_at=excluded.updated_at",
+                [subject, url, rank, now],
+            )
+        client.execute(
+            "INSERT INTO lesson_background_subjects "
+            "(subject, reason, status, attempts, updated_at) "
+            "VALUES (?, '', 'ready', 0, ?) "
+            "ON CONFLICT(subject) DO UPDATE SET "
+            "status='ready', updated_at=excluded.updated_at",
+            [subject, now],
+        )
+    finally:
+        client.close()
+
+
+def enqueue_lesson_subject(subject: str, reason: str = "",
+                           stale_after_seconds: int = 0) -> bool:
+    now = int(time.time())
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        _ensure_lesson_catalog_schema(client)
+        row = _rowdict(client.execute(
+            "SELECT status, updated_at FROM lesson_background_subjects "
+            "WHERE subject = ?",
+            [subject],
+        ))
+        if row and row.get("status") in {"ready", "running"}:
+            if now - int(row.get("updated_at") or 0) < int(stale_after_seconds or 0):
+                return False
+        client.execute(
+            "INSERT INTO lesson_background_subjects "
+            "(subject, reason, status, attempts, updated_at) "
+            "VALUES (?, ?, 'pending', 0, ?) "
+            "ON CONFLICT(subject) DO UPDATE SET "
+            "reason=excluded.reason, status='pending', "
+            "updated_at=excluded.updated_at",
+            [subject, reason or "", now],
+        )
+        return True
+    finally:
+        client.close()
+
+
+def mark_lesson_subject_running(subject: str, updated_at: int = None) -> None:
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        _ensure_lesson_catalog_schema(client)
+        client.execute(
+            "UPDATE lesson_background_subjects "
+            "SET status='running', attempts=attempts + 1, updated_at=? "
+            "WHERE subject=?",
+            [int(updated_at or time.time()), subject],
+        )
+    finally:
+        client.close()
+
+
+def mark_lesson_subject_error(subject: str, updated_at: int = None) -> None:
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        _ensure_lesson_catalog_schema(client)
+        client.execute(
+            "UPDATE lesson_background_subjects SET status='error', updated_at=? "
+            "WHERE subject=?",
+            [int(updated_at or time.time()), subject],
+        )
     finally:
         client.close()
 
@@ -1998,4 +2178,3 @@ def response_feedback_counts(project: str = None) -> dict:
         return counts
     finally:
         client.close()
-

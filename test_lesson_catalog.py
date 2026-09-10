@@ -3,13 +3,12 @@ test_lesson_catalog.py — local catalogue cache for lesson planning.
 
     python test_lesson_catalog.py
 
-No network. The database path is redirected to a temp file so the real lesson
-catalogue is untouched.
+No network. A fake memory client is used so the real libSQL catalogue is
+untouched.
 """
 
 import sys
-import tempfile
-from pathlib import Path
+import time
 
 import lesson_catalog
 import lesson
@@ -28,8 +27,58 @@ def chk(label, got, want):
         _failures += 1
 
 
+class FakeMemoryClient:
+    def __init__(self):
+        self.files = {}
+        self.hits = {}
+        self.subjects = {}
+
+    def cached_lesson_mit_files(self, subject, limit=40):
+        urls = self.hits.get(subject, [])[:limit]
+        return [
+            {
+                "payload": self.files[url]["payload"],
+                "updated_at": self.files[url]["updated_at"],
+            }
+            for url in urls
+        ]
+
+    def remember_lesson_mit_files(self, subject, files, course_slug_fn=None):
+        self.hits[subject] = []
+        for item in files or []:
+            url = item.get("url") or ""
+            if not url:
+                continue
+            self.files[url] = {"payload": dict(item), "updated_at": int(time.time())}
+            self.hits[subject].append(url)
+        self.subjects[subject] = {"status": "ready", "updated_at": int(time.time())}
+
+    def enqueue_lesson_subject(self, subject, reason="", stale_after_seconds=0):
+        row = self.subjects.get(subject)
+        now = int(time.time())
+        if row and row.get("status") in {"ready", "running"}:
+            if now - int(row.get("updated_at") or 0) < int(stale_after_seconds or 0):
+                return False
+        self.subjects[subject] = {"status": "pending", "updated_at": now}
+        return True
+
+    def mark_lesson_subject_running(self, subject, updated_at=None):
+        self.subjects[subject] = {
+            "status": "running",
+            "updated_at": int(updated_at or time.time()),
+        }
+
+    def mark_lesson_subject_error(self, subject, updated_at=None):
+        self.subjects[subject] = {
+            "status": "error",
+            "updated_at": int(updated_at or time.time()),
+        }
+
+
 def main():
-    lesson_catalog.DB_PATH = Path(tempfile.mkdtemp(prefix="lesson-catalog-")) / "catalog.sqlite"
+    lesson_catalog.memory_client = FakeMemoryClient()
+    chk("lesson catalog delegates storage to memory client",
+        hasattr(lesson_catalog.memory_client, "cached_lesson_mit_files"), True)
 
     print("MIT record cache")
     rows = [{

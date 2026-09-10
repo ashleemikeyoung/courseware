@@ -19,3 +19,7 @@ backup/
 rag.py.bak-*
 rag.py.current
 static/fonts/*.ttf
+memory/data/
+memory/keys/
+memory/*.sqlite
+memory/*.sqlite-*
