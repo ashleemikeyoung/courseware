@@ -1264,6 +1264,26 @@ def api_ask():
     return jsonify({"job": start_job(work)})
 
 
+@app.post("/api/lesson/watch")
+def api_lesson_watch():
+    body = request.json or {}
+    proj = active(body)
+    video_id = (body.get("video_id") or body.get("videoId") or "").strip()
+    try:
+        import tutor
+        result = tutor.record_watch_progress(
+            proj,
+            video_id,
+            seconds=int(float(body.get("seconds") or 0)),
+            duration=int(float(body.get("duration") or 0)),
+            complete=bool(body.get("complete")),
+        )
+    except Exception as exc:
+        result = {"ok": False, "error": str(exc)}
+    status = 200 if result.get("ok") else 400
+    return jsonify(result), status
+
+
 @app.post("/api/summarize")
 def api_summarize():
     """

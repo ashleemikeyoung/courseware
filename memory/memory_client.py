@@ -298,6 +298,39 @@ def _ensure_lesson_catalog_schema(client):
             updated_at  INTEGER NOT NULL
         )
     """)
+    client.execute("""
+        CREATE TABLE IF NOT EXISTS lesson_video_progress (
+            project      TEXT NOT NULL,
+            video_id     TEXT NOT NULL,
+            subject      TEXT NOT NULL DEFAULT '',
+            lecture      TEXT NOT NULL DEFAULT '',
+            seconds      INTEGER NOT NULL DEFAULT 0,
+            duration     INTEGER NOT NULL DEFAULT 0,
+            complete     INTEGER NOT NULL DEFAULT 0,
+            first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+            last_seen_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            completed_at  TEXT,
+            PRIMARY KEY (project, video_id)
+        )
+    """)
+    client.execute("""
+        CREATE TABLE IF NOT EXISTS lesson_watch_events (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            project     TEXT NOT NULL,
+            subject     TEXT NOT NULL DEFAULT '',
+            lecture     TEXT NOT NULL DEFAULT '',
+            video_id    TEXT NOT NULL,
+            seconds     INTEGER NOT NULL DEFAULT 0,
+            duration    INTEGER NOT NULL DEFAULT 0,
+            complete    INTEGER NOT NULL DEFAULT 0,
+            event_type  TEXT NOT NULL DEFAULT 'progress',
+            recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    client.execute("""
+        CREATE INDEX IF NOT EXISTS idx_lesson_watch_events_project_time
+            ON lesson_watch_events(project, recorded_at)
+    """)
 
 
 def _decode_json_object(raw: str) -> dict:
@@ -429,6 +462,64 @@ def mark_lesson_subject_error(subject: str, updated_at: int = None) -> None:
             "UPDATE lesson_background_subjects SET status='error', updated_at=? "
             "WHERE subject=?",
             [int(updated_at or time.time()), subject],
+        )
+    finally:
+        client.close()
+
+
+def record_lesson_watch(project: str, subject: str, lecture: str, video_id: str,
+                        seconds: int = 0, duration: int = 0,
+                        complete: bool = False,
+                        event_type: str = "progress") -> None:
+    project = (project or "").strip()
+    video_id = (video_id or "").strip()
+    if not project or not video_id:
+        return
+    seconds = max(0, int(seconds or 0))
+    duration = max(0, int(duration or 0))
+    complete_int = 1 if complete else 0
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        _ensure_lesson_catalog_schema(client)
+        client.execute(
+            "INSERT INTO lesson_watch_events "
+            "(project, subject, lecture, video_id, seconds, duration, complete, event_type) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                project,
+                subject or "",
+                lecture or "",
+                video_id,
+                seconds,
+                duration,
+                complete_int,
+                event_type or "progress",
+            ],
+        )
+        client.execute(
+            "INSERT INTO lesson_video_progress "
+            "(project, video_id, subject, lecture, seconds, duration, complete, completed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? THEN datetime('now') ELSE NULL END) "
+            "ON CONFLICT(project, video_id) DO UPDATE SET "
+            "subject=excluded.subject, lecture=excluded.lecture, "
+            "seconds=max(lesson_video_progress.seconds, excluded.seconds), "
+            "duration=max(lesson_video_progress.duration, excluded.duration), "
+            "complete=max(lesson_video_progress.complete, excluded.complete), "
+            "last_seen_at=datetime('now'), "
+            "completed_at=CASE "
+            "WHEN lesson_video_progress.completed_at IS NOT NULL THEN lesson_video_progress.completed_at "
+            "WHEN excluded.complete THEN datetime('now') "
+            "ELSE NULL END",
+            [
+                project,
+                video_id,
+                subject or "",
+                lecture or "",
+                seconds,
+                duration,
+                complete_int,
+                complete_int,
+            ],
         )
     finally:
         client.close()

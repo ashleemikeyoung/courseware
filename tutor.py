@@ -1032,6 +1032,11 @@ def actions_line(*actions: str) -> str:
     return "[LESSON_ACTIONS " + " ".join(names) + "]"
 
 
+def subject_action_line(subject: str) -> str:
+    subject = (subject or "").strip()
+    return f"[LESSON_SUBJECT {subject}]" if subject else ""
+
+
 def render_placement(syl: dict) -> str:
     """
     Where the subject is taught: the course, and only the lectures that cover
@@ -1050,8 +1055,7 @@ def render_placement(syl: dict) -> str:
 
     course = syl["course"]
     lines = ["## Where this is taught", "",
-             f"**{course['number']} {strip_number_prefix(course['title'])}**"
-             f"  ·  {course['url']}", ""]
+             f"**{course['number']} {strip_number_prefix(course['title'])}**", ""]
 
     for lec in syl.get("lectures", []):
         mark = ">" if lec["n"] == syl.get("position", 0) + 1 else " "
@@ -1070,15 +1074,17 @@ def render_placement(syl: dict) -> str:
         if video:
             watched = (syl.get("watched") or {}).get(video["youtube_id"]) or {}
             credit = "  ✓ watched" if watched.get("complete") else ""
-            lines.append(f"      video {format_hms(video['seconds'])}"
-                         f"  ·  {video['url']}{credit}")
+            runtime = format_hms(video.get("seconds") or 0) if video.get("seconds") else "available"
+            lines.append(f"      in-app video {runtime}{credit}")
 
     also = syl.get("also_covered") or []
     if also:
         lines += ["", "Also covered in:"]
         for item in also:
             lines.append(f"  {item['number']}  {strip_number_prefix(item['item'])}")
-            lines.append(f"      {item['url']}")
+            action = subject_action_line(strip_number_prefix(item.get("item") or ""))
+            if action:
+                lines.append(f"      {action}")
 
     return "\n".join(lines)
 
@@ -1357,18 +1363,17 @@ def sources(syl: dict, index: int = None) -> str:
     lectures = syl.get("lectures") or []
     lec = lectures[i]
     video = video_for_lecture(lec, syl, resolve_page=True)
-    source_url = lec.get("source_url") or lec.get("url")
     source_title = lec.get("source_title") or lec.get("title")
     return (f"## Sources for: {lec['title']}\n\n"
-            f"- OCW page: {lec['url']}\n"
-            + (f"- Indexed source: {source_title} — {source_url}\n"
-               if source_url and source_url != lec.get("url") else "")
+            f"- OCW page: {lec.get('title') or 'lecture resource'}\n"
+            + (f"- Indexed source: {source_title}\n"
+               if source_title and source_title != lec.get("title") else "")
             + (f"\n### {video['title']}\n"
                f"{(format_hms(video['seconds']) + ' recorded lecture') if video.get('seconds') else 'Recorded lecture'}\n"
                f"{video_embed_line(video)}\n\n" if video else "")
             +
             f"- Course: {syl['course']['number']} {syl['course']['title']} — "
-            f"{syl['course']['url']}\n"
+            "inside ElRoi\n"
             f"- Indexed as: `{lec['file'] or '(not indexed)'}`\n"
             f"- License: CC BY-NC-SA 4.0\n\n"
             f"{actions_line('watch', 'next', 'quiz', 'related', 'syllabus') if video else actions_line('next', 'quiz', 'related', 'syllabus')}\n")
@@ -1389,10 +1394,12 @@ def related(syl: dict) -> str:
     if courses:
         lines += ["### Courses that also cover this ground", ""]
         for c in courses:
-            lines.append(f"- **{c['number']}** {c['title']} — {c['url']}")
+            subject = f"{c['number']} {strip_number_prefix(c['title'])}"
+            lines.append(f"- **{c['number']}** {strip_number_prefix(c['title'])}")
+            lines.append(subject_action_line(subject))
         lines.append("")
 
-    lines.append("Type any of these as a new subject to start a fresh arc on it.")
+    lines.append("Start any of these inside ElRoi to begin a fresh arc.")
     lines += ["", actions_line("back", "repeat", "next", "quiz", "sources", "syllabus")]
     return "\n".join(lines)
 
@@ -1807,9 +1814,78 @@ def render_watch(syl: dict) -> str:
     if watched.get("complete"):
         lines += ["", f"Watched — credited {watched.get('credited_on', '')}."]
     elif watched.get("seconds"):
-        pct = int(100 * watched["seconds"] / max(1, video["seconds"]))
+        pct = int(100 * watched["seconds"] / max(1, video.get("seconds") or 0))
         lines += ["", f"{pct}% watched so far."]
     return "\n".join(lines)
+
+
+def _lecture_for_video(syl: dict, video_id: str) -> tuple:
+    for i, lec in enumerate(syl.get("lectures") or []):
+        video = video_for_lecture(lec, syl, resolve_page=False)
+        if (video or {}).get("youtube_id") == video_id:
+            return i, lec, video
+    for i, lec in enumerate(syl.get("lectures") or []):
+        video = video_for_lecture(lec, syl, resolve_page=True)
+        if (video or {}).get("youtube_id") == video_id:
+            return i, lec, video
+    return None, {}, {}
+
+
+def record_watch_progress(project: str, video_id: str, seconds: int = 0,
+                          duration: int = 0, complete: bool = False) -> dict:
+    """
+    Record lesson video progress without turning a click into credit.
+
+    The browser sends current-time heartbeats while the framed player is
+    running. Completion is granted only when the player reports the end or a
+    near-end position, and the durable audit row is best-effort so an offline
+    libSQL hiccup never prevents local syllabus progress from being saved.
+    """
+    project = projects.safe(project or "")
+    video_id = (video_id or "").strip()
+    if not project or not re.match(r"^[A-Za-z0-9_-]{11}$", video_id):
+        return {"ok": False, "error": "video_id is required"}
+    syl = load(project)
+    if not syl:
+        return {"ok": False, "error": "lesson not found"}
+
+    seconds = max(0, int(seconds or 0))
+    duration = max(0, int(duration or 0))
+    _, lec, video = _lecture_for_video(syl, video_id)
+    if not video:
+        return {"ok": False, "error": "video not found"}
+
+    known_duration = max(duration, int(video.get("seconds") or 0))
+    near_end = bool(known_duration and seconds >= max(30, int(known_duration * 0.9)))
+    complete = bool(complete or near_end)
+    watched = dict((syl.get("watched") or {}).get(video_id) or {})
+    watched["seconds"] = max(int(watched.get("seconds") or 0), seconds)
+    if known_duration:
+        watched["duration"] = known_duration
+    if complete:
+        watched["complete"] = True
+        watched.setdefault("credited_on", date.today().isoformat())
+    syl.setdefault("watched", {})[video_id] = watched
+    save(syl)
+
+    try:
+        from memory import memory_client
+        memory_client.record_lesson_watch(
+            project=project,
+            subject=syl.get("subject") or "",
+            lecture=lec.get("title") or video.get("title") or "",
+            video_id=video_id,
+            seconds=watched["seconds"],
+            duration=known_duration,
+            complete=complete,
+            event_type="complete" if complete else "progress",
+        )
+    except Exception:
+        pass
+
+    pct = int(100 * watched["seconds"] / max(1, known_duration)) if known_duration else 0
+    return {"ok": True, "seconds": watched["seconds"], "duration": known_duration,
+            "complete": bool(watched.get("complete")), "percent": min(100, pct)}
 
 
 # ---------------------------------------------------------------------------

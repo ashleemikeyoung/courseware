@@ -424,6 +424,17 @@ def main():
         "youtube:pwFsPEPPUGU" in reply["text"], True)
     chk("watch does not make the YouTube URL the surface",
         "watch?v=pwFsPEPPUGU" in reply["text"], False)
+    progress = tutor.record_watch_progress(
+        "expected-utility", "pwFsPEPPUGU", seconds=2300, duration=4614)
+    chk("watch progress records without crediting halfway",
+        progress["complete"], False)
+    progress = tutor.record_watch_progress(
+        "expected-utility", "pwFsPEPPUGU", seconds=4614, duration=4614, complete=True)
+    chk("watch completion credits the module",
+        progress["complete"], True)
+    saved_watch = tutor.load("expected-utility")["watched"]["pwFsPEPPUGU"]
+    chk("watch completion is saved to the syllabus",
+        saved_watch["complete"], True)
 
     print("Thin lecture teaching")
     thin = copy.deepcopy(SYLLABUS)
@@ -456,13 +467,18 @@ def main():
         "actually assigned" in reply["text"], True)
 
     reply = lesson.answer_lesson_command("/lesson sources")
-    chk("sources gives the OCW page", "u2" in reply["text"], True)
+    chk("sources labels the OCW page without making it an exit",
+        "OCW page: Expected Utility Theory" in reply["text"], True)
     chk("sources states the licence", "CC BY-NC-SA" in reply["text"], True)
 
     reply = lesson.answer_lesson_command("/lesson related")
     chk("related offers a sibling course", "14.123" in reply["text"], True)
     chk("related offers the rest of the home course",
         "Consumer Theory" in reply["text"], True)
+    chk("related does not print raw external links",
+        "http" in reply["text"] or "c3" in reply["text"], False)
+    chk("related offers an in-app lesson start",
+        "[LESSON_SUBJECT 14.123 Micro III]" in reply["text"], True)
 
     lesson.answer_lesson_command("/lesson next")
     reply = lesson.answer_lesson_command("/lesson next")

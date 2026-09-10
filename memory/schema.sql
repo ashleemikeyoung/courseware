@@ -289,6 +289,36 @@ CREATE TABLE IF NOT EXISTS lesson_background_subjects (
     updated_at  INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS lesson_video_progress (
+    project      TEXT NOT NULL,
+    video_id     TEXT NOT NULL,
+    subject      TEXT NOT NULL DEFAULT '',
+    lecture      TEXT NOT NULL DEFAULT '',
+    seconds      INTEGER NOT NULL DEFAULT 0,
+    duration     INTEGER NOT NULL DEFAULT 0,
+    complete     INTEGER NOT NULL DEFAULT 0,
+    first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at  TEXT,
+    PRIMARY KEY (project, video_id)
+);
+
+CREATE TABLE IF NOT EXISTS lesson_watch_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project     TEXT NOT NULL,
+    subject     TEXT NOT NULL DEFAULT '',
+    lecture     TEXT NOT NULL DEFAULT '',
+    video_id    TEXT NOT NULL,
+    seconds     INTEGER NOT NULL DEFAULT 0,
+    duration    INTEGER NOT NULL DEFAULT 0,
+    complete    INTEGER NOT NULL DEFAULT 0,
+    event_type  TEXT NOT NULL DEFAULT 'progress',
+    recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_lesson_watch_events_project_time
+    ON lesson_watch_events(project, recorded_at);
+
 
 -- ---------------------------------------------------------------------------
 -- Documents -- one row per indexed source, holding an LLM-generated

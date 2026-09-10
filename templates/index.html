@@ -524,6 +524,10 @@ textarea{resize:vertical;min-height:74px}
 .youtube-block{
   border:1px solid var(--rule);background:var(--paper-2);
   border-radius:2px;margin:1em 0;overflow:hidden;white-space:normal;
+  max-width:760px;
+}
+.youtube-block.wide{
+  max-width:min(1120px, calc(100vw - 4rem));
 }
 .youtube-frame{
   position:relative;width:100%;aspect-ratio:16 / 9;background:#000;
@@ -536,6 +540,24 @@ textarea{resize:vertical;min-height:74px}
   padding:8px 10px;border-top:1px solid var(--rule-soft);
   font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
   color:var(--ink-faint);
+}
+.youtube-caption span:first-child{
+  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.youtube-tools{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.youtube-tool{
+  border:1px solid var(--rule);background:transparent;color:var(--ink-muted);
+  border-radius:3px;padding:3px 7px;font:inherit;letter-spacing:.08em;
+  text-transform:uppercase;cursor:pointer;
+}
+.youtube-tool:hover,.youtube-tool:focus-visible{
+  border-color:var(--ink-soft);color:var(--ink);outline:0;
+}
+.lesson-source-chip{
+  display:inline-flex;align-items:center;max-width:100%;padding:1px 6px;
+  border:1px solid var(--rule);border-radius:3px;color:var(--ink-muted);
+  background:var(--paper-2);font-family:var(--mono);font-size:.72em;
+  vertical-align:baseline;
 }
 .lesson-actions{
   display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 4px;white-space:normal;
@@ -1861,7 +1883,7 @@ function mdToHtml(md, opts = {}){
     // turns never collide once merged into one evidence map; document markers
     // stay bare ("C3"). Both shapes match here.
     .replace(/\[([\w-]*C\d+)\]/g, (m, c) => showCitations ? citeHtml(c) : "")
-    .replace(/\bhttps?:\/\/[^\s<]+/g, url => linkUrlHtml(url));
+    .replace(/\bhttps?:\/\/[^\s<]+/g, url => linkUrlHtml(url, opts));
   const close = () => { if (list){ out.push(`</${list}>`); list = null; } };
   for (const raw of lines){
     if (math){
@@ -1936,6 +1958,10 @@ function mdToHtml(md, opts = {}){
     else if ((m = l.match(/^\[LESSON_ACTIONS\s+([a-z\s]+)\]$/i))) {
       close();
       out.push(lessonActionsHtml(m[1]));
+    }
+    else if ((m = l.match(/^\[LESSON_SUBJECT\s+(.+?)\]$/i))) {
+      close();
+      out.push(lessonSubjectHtml(m[1]));
     }
     else if (lessonActionWordsFromText(l).length) {
       close();
@@ -2161,22 +2187,38 @@ function mathBlockHtml(code){
 function youtubeBlockHtml(id){
   const videoId = String(id || "").trim();
   if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) return "";
-  return `<div class="youtube-block">` +
+  const origin = encodeURIComponent(location.origin);
+  return `<div class="youtube-block" data-video-id="${escAttr(videoId)}">` +
     `<div class="youtube-frame">` +
-    `<iframe src="https://www.youtube-nocookie.com/embed/${escAttr(videoId)}" ` +
+    `<iframe src="https://www.youtube-nocookie.com/embed/${escAttr(videoId)}?enablejsapi=1&origin=${origin}&rel=0" ` +
     `title="MIT lecture video" loading="lazy" ` +
     `allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" ` +
-    `allowfullscreen></iframe>` +
+    `referrerpolicy="strict-origin-when-cross-origin" ` +
+    `sandbox="allow-scripts allow-same-origin allow-presentation" allowfullscreen></iframe>` +
     `</div>` +
-    `<div class="youtube-caption"><span>MIT lecture video</span><span>${esc(videoId)}</span></div>` +
+    `<div class="youtube-caption"><span data-youtube-status>MIT lecture video</span>` +
+    `<span class="youtube-tools"><button type="button" class="youtube-tool" data-youtube-wide>Wider</button>` +
+    `<span>${esc(videoId)}</span></span></div>` +
     `</div>`;
 }
 
-function linkUrlHtml(raw){
+function linkUrlHtml(raw, opts = {}){
   const match = String(raw || "").match(/^(.*?)([).,;:!?]*)$/);
   const url = match ? match[1] : String(raw || "");
   const tail = match ? match[2] : "";
+  if (opts.lockExternalLinks) return lessonSourceChipHtml(url) + esc(tail);
   return `<a href="${escAttr(url)}" target="_blank" rel="noopener">${url}</a>${tail}`;
+}
+
+function lessonSourceChipHtml(url){
+  let label = "source";
+  try {
+    const u = new URL(url);
+    if (/youtube\.com|youtu\.be/.test(u.hostname)) label = "video source";
+    else if (/ocw\.mit\.edu/.test(u.hostname)) label = "MIT OCW source";
+    else label = u.hostname.replace(/^www\./, "");
+  } catch(e) {}
+  return `<span class="lesson-source-chip" title="${escAttr(url)}">${esc(label)}</span>`;
 }
 
 const LESSON_ACTION_LABELS = {
@@ -2203,6 +2245,14 @@ function lessonActionsHtml(raw){
   ).join("") + `</div>`;
 }
 
+function lessonSubjectHtml(raw){
+  const subject = String(raw || "").trim();
+  if (!subject) return "";
+  return `<div class="lesson-actions">` +
+    `<button type="button" class="lesson-action" data-lesson-subject="${escAttr(subject)}">` +
+    `Start ${esc(subject)}</button></div>`;
+}
+
 function lessonActionWordsFromText(text){
   const parts = String(text || "").split(/\s*·\s*/);
   if (parts.length < 2) return [];
@@ -2221,6 +2271,100 @@ function sendLessonCommand(command){
   input.value = command;
   autoResize(input);
   sendAsk();
+}
+
+function sendLessonSubject(subject){
+  subject = String(subject || "").trim();
+  if (!subject || STATE.chat.busy) return;
+  const input = $("#askInput");
+  input.value = `/lesson ${subject}`;
+  autoResize(input);
+  sendAsk();
+}
+
+function isLessonText(text){
+  text = String(text || "");
+  return /\[LESSON_(?:ACTIONS|SUBJECT)\b|^youtube:/m.test(text)
+    || /^#\s+.+/m.test(text) && /Where this is taught|Sources for:|Where to go from|recorded lecture|inside ElRoi/.test(text);
+}
+
+let youtubeApiPromise = null;
+function ensureYouTubeApi(){
+  if (window.YT && window.YT.Player) return Promise.resolve(window.YT);
+  if (youtubeApiPromise) return youtubeApiPromise;
+  youtubeApiPromise = new Promise(resolve => {
+    const previous = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      if (typeof previous === "function") previous();
+      resolve(window.YT);
+    };
+    const script = document.createElement("script");
+    script.src = "https://www.youtube.com/iframe_api";
+    script.async = true;
+    document.head.appendChild(script);
+  });
+  return youtubeApiPromise;
+}
+
+function wireLessonPlayers(root){
+  if (!root) return;
+  root.querySelectorAll(".youtube-block[data-video-id]").forEach(block => {
+    if (block.dataset.bound) return;
+    block.dataset.bound = "1";
+    const iframe = block.querySelector("iframe");
+    if (!iframe) return;
+    iframe.id = iframe.id || `yt-${block.dataset.videoId}-${Math.random().toString(36).slice(2)}`;
+    ensureYouTubeApi().then(YT => {
+      if (!YT || !YT.Player) return;
+      let timer = null;
+      const player = new YT.Player(iframe, {
+        events: {
+          onReady: () => reportLessonWatch(block, player, false),
+          onStateChange: event => {
+            if (event.data === YT.PlayerState.PLAYING) {
+              if (timer) clearInterval(timer);
+              timer = setInterval(() => reportLessonWatch(block, player, false), 5000);
+            } else {
+              if (timer) clearInterval(timer);
+              timer = null;
+              reportLessonWatch(block, player, event.data === YT.PlayerState.ENDED);
+            }
+          },
+        },
+      });
+    }).catch(() => {});
+  });
+}
+
+function reportLessonWatch(block, player, complete){
+  let seconds = 0, duration = 0;
+  try {
+    seconds = Math.floor(player.getCurrentTime() || 0);
+    duration = Math.floor(player.getDuration() || 0);
+  } catch(e) {
+    return;
+  }
+  const now = Date.now();
+  const last = Number(block.dataset.lastProgressSent || 0);
+  const nearEnd = duration && seconds >= Math.max(30, Math.floor(duration * 0.9));
+  complete = Boolean(complete || nearEnd);
+  if (!complete && now - last < 14000) return;
+  block.dataset.lastProgressSent = String(now);
+  const status = block.querySelector("[data-youtube-status]");
+  if (status && duration) {
+    const pct = Math.min(100, Math.floor(seconds * 100 / Math.max(1, duration)));
+    status.textContent = complete ? "MIT lecture video · credited" : `MIT lecture video · ${pct}% watched`;
+  }
+  fetch("/api/lesson/watch", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(withProject({
+      video_id: block.dataset.videoId,
+      seconds,
+      duration,
+      complete,
+    })),
+  }).catch(() => {});
 }
 
 function highlightCode(code, lang){
@@ -3192,6 +3336,7 @@ function renderChat(){
   // once per render rather than per bubble -- renderMathInElement walks the
   // tree itself and doing it per bubble would walk it n times.
   typesetMath(col);
+  wireLessonPlayers(col);
   anchorLatestTurn({scroll: true, pending: STATE.chat.busy});
 }
 
@@ -3464,7 +3609,11 @@ function chatBubble(m, index){
   } else if (m.pending && !(m.content || "").trim()) {
     bubble.innerHTML = runningIndicatorHtml(m.stage, m.startedAt);
   } else {
-    bubble.innerHTML = mdToHtml(m.content || "", {showCitations: STATE.showContext});
+    const lockedLesson = isLessonText(m.content || "") || m.route === "lesson_command";
+    bubble.innerHTML = mdToHtml(m.content || "", {
+      showCitations: STATE.showContext,
+      lockExternalLinks: lockedLesson,
+    });
   }
   if (m.role === "assistant" && m.showAttachments && m.attachments && m.attachments.length)
     bubble.appendChild(renderMailAttachments(m.attachments));
@@ -3844,11 +3993,15 @@ function appendToLastBubble(text){
   const bubble = last && last.querySelector(".bubble");
   if (!bubble) return renderChat();
   bubble.classList.toggle("bibliography", isAnnotatedBibliography(text));
-  bubble.innerHTML = mdToHtml(text || "", {showCitations: STATE.showContext});
+  bubble.innerHTML = mdToHtml(text || "", {
+    showCitations: STATE.showContext,
+    lockExternalLinks: isLessonText(text || ""),
+  });
   // Deliberately NOT typeset here. This runs on every streamed token, and
   // half-arrived math ("\\(u(x") is not valid LaTeX -- rendering it would
   // flash errors through the whole answer as it lands. The final renderChat()
   // typesets once, when the text is complete.
+  wireLessonPlayers(bubble);
   anchorLatestTurn({scroll: false});
 }
 
@@ -3919,10 +4072,26 @@ $("#askInput").addEventListener("keydown", e => {
 });
 $("#btnAsk").onclick = () => (STATE.chat.busy ? stopAsk() : sendAsk());
 document.addEventListener("click", e => {
+  const wide = e.target.closest("[data-youtube-wide]");
+  if (wide) {
+    e.preventDefault();
+    const block = wide.closest(".youtube-block");
+    if (!block) return;
+    const isWide = block.classList.toggle("wide");
+    wide.textContent = isWide ? "Normal" : "Wider";
+    return;
+  }
   const action = e.target.closest("[data-lesson-command]");
-  if (!action) return;
-  e.preventDefault();
-  sendLessonCommand(action.dataset.lessonCommand || "");
+  if (action) {
+    e.preventDefault();
+    sendLessonCommand(action.dataset.lessonCommand || "");
+    return;
+  }
+  const subject = e.target.closest("[data-lesson-subject]");
+  if (subject) {
+    e.preventDefault();
+    sendLessonSubject(subject.dataset.lessonSubject || "");
+  }
 });
 $("#attachmentInput").onchange = uploadAttachments;
 $("#folderInput").onchange = uploadAttachments;
