@@ -342,6 +342,7 @@ def topic_videos(subject: str, limit: int = 12) -> list:
         out.append({
             "youtube_id": video_id,
             "title": item.get("title") or "",
+            "description": item.get("description") or "",
             "url": youtube_url or f"https://www.youtube.com/watch?v={video_id}",
             "course": course_of(page),
             "seconds": duration_seconds(item.get("duration") or ""),
@@ -382,6 +383,15 @@ def video_embed_line(video: dict) -> str:
     return f"youtube:{video['youtube_id']}" if video and video.get("youtube_id") else ""
 
 
+def lesson_video_for_lecture(lec: dict, syl: dict = None,
+                             resolve_page: bool = False) -> dict | None:
+    video = video_for_lecture(lec, syl, resolve_page=resolve_page)
+    if video:
+        return video
+    fallback = (syl or {}).get("module_video") or {}
+    return fallback if fallback.get("youtube_id") else None
+
+
 def inventory_videos(inventory: list) -> list:
     out, seen = [], set()
     for item in inventory or []:
@@ -403,7 +413,78 @@ def _title_tokens(title: str) -> set:
     return {w for w in re.findall(r"[a-z]{3,}", (title or "").lower())} - TITLE_STOP
 
 
-def attach_videos(lectures: list, videos: list) -> list:
+def _video_score(video: dict, lecture: dict = None, subject: str = "",
+                 slug: str = "") -> int:
+    haystack = " ".join([
+        video.get("title") or "",
+        video.get("description") or "",
+        video.get("url") or "",
+    ])
+    score = 0
+    if slug and video.get("course") == slug:
+        score += 2
+    subject_words = _subject_words(subject)
+    if subject_words:
+        score += 2 * len(subject_words & _title_tokens(haystack))
+    if lecture:
+        score += len(_title_tokens(lecture.get("title", "")) & _title_tokens(haystack))
+    return score
+
+
+def _video_from_relevant_hit(hit: dict, subject: str = "",
+                             resolve_page: bool = False) -> dict | None:
+    text = " ".join([
+        hit.get("title") or "",
+        hit.get("description") or "",
+        " ".join(hit.get("feature_types") or []),
+    ])
+    words = _subject_words(subject)
+    feature_text = " ".join(hit.get("feature_types") or []).lower()
+    looks_watchable = (
+        "video" in feature_text
+        or "lecture" in (hit.get("title") or "").lower()
+        or "lecture" in (hit.get("url") or "").lower()
+    )
+    if words and not (words & _title_tokens(text)) and not looks_watchable:
+        return None
+    video = _video_from_hit(hit, resolve_page=resolve_page)
+    if video and not video.get("description"):
+        video["description"] = hit.get("description") or ""
+    return video
+
+
+def topic_video_candidates(subject: str, hits: list = None,
+                           inventory: list = None, slug: str = "") -> list:
+    out, seen = [], set()
+    for video in inventory_videos(inventory or []):
+        if video["youtube_id"] in seen:
+            continue
+        out.append(video)
+        seen.add(video["youtube_id"])
+    for video in topic_videos(subject):
+        if video["youtube_id"] in seen:
+            continue
+        out.append(video)
+        seen.add(video["youtube_id"])
+    for hit in (hits or [])[:12]:
+        video = _video_from_relevant_hit(hit, subject, resolve_page=True)
+        if not video or video["youtube_id"] in seen:
+            continue
+        out.append(video)
+        seen.add(video["youtube_id"])
+    out.sort(key=lambda v: _video_score(v, subject=subject, slug=slug), reverse=True)
+    return out
+
+
+def module_video(subject: str, videos: list, slug: str = "") -> dict | None:
+    scored = [(v, _video_score(v, subject=subject, slug=slug)) for v in videos or []]
+    scored = [(v, score) for v, score in scored if score >= max(2, len(_subject_words(subject)))]
+    if not scored:
+        return None
+    return dict(max(scored, key=lambda item: item[1])[0])
+
+
+def attach_videos(lectures: list, videos: list, subject: str = "") -> list:
     """
     Pair each lecture with its recording, when there is one.
 
@@ -423,11 +504,9 @@ def attach_videos(lectures: list, videos: list) -> list:
             lecture["video"] = direct
             continue
         slug = course_of(lecture["url"])
-        tokens = _title_tokens(lecture["title"])
         best, best_score = None, 0
         for video in videos:
-            score = 2 if (video["course"] and video["course"] == slug) else 0
-            score += len(tokens & _title_tokens(video["title"]))
+            score = _video_score(video, lecture, subject=subject, slug=slug)
             if score > best_score:
                 best, best_score = video, score
         if best and best_score >= 3:
@@ -838,6 +917,7 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
     if (existing.get("subject") == subject and existing.get("course")
             and existing.get("lectures")):
         say("Loaded the saved lesson plan.")
+        existing = ensure_module_video(existing)
         return existing
 
     say(f"Finding the MIT course that owns '{subject}'...")
@@ -877,16 +957,11 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
     say(f"Teaching arc: {len(arc)} lectures "
         f"({sum(1 for a in arc if a['role'] == 'prerequisite')} as prerequisites)")
 
-    videos = inventory_videos(inventory)
-    seen_video_ids = {v["youtube_id"] for v in videos}
-    for video in topic_videos(subject):
-        if video["youtube_id"] in seen_video_ids:
-            continue
-        videos.append(video)
-        seen_video_ids.add(video["youtube_id"])
+    videos = topic_video_candidates(subject, hits=hits, inventory=inventory, slug=slug)
     if videos:
         say(f"  {len(videos)} recorded lectures found")
-    arc = attach_videos(arc, videos)
+    arc = attach_videos(arc, videos, subject=subject)
+    fallback_video = module_video(subject, videos, slug=slug)
 
     planned = []
     for i, lec in enumerate(arc, 1):
@@ -957,6 +1032,7 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
                    "url": f"https://ocw.mit.edu/courses/{slug}/"},
         "synthesis": "",
         "lectures": planned,
+        "module_video": fallback_video or {},
         # Everything indexed for this lesson beyond the arc. Kept so a
         # retrieved passage from another course can be cited by its title and
         # URL rather than by the filename it happens to have on disk.
@@ -1000,6 +1076,33 @@ def load(project: str) -> dict:
         return json.loads(target.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+
+def ensure_module_video(syl: dict) -> dict:
+    if not syl or syl.get("module_video") or any(
+            (lec.get("video") or {}).get("youtube_id")
+            for lec in syl.get("lectures") or []):
+        return syl
+    if syl.get("module_video_checked"):
+        return syl
+    subject = syl.get("subject") or ""
+    slug = (syl.get("course") or {}).get("slug") or ""
+    try:
+        hits = lesson_catalog.cached_mit_files(subject, limit=40)
+        if not hits:
+            hits = lesson._mit_files(subject, limit=40)
+            lesson_catalog.remember_mit_files(subject, hits)
+        inventory_subject = course_number(slug)
+        inventory = lesson_catalog.cached_mit_files(inventory_subject, limit=200)
+        videos = topic_video_candidates(subject, hits=hits, inventory=inventory, slug=slug)
+        fallback = module_video(subject, videos, slug=slug)
+    except Exception:
+        fallback = None
+    if fallback:
+        syl["module_video"] = fallback
+    syl["module_video_checked"] = date.today().isoformat()
+    save(syl)
+    return syl
 
 
 # ---------------------------------------------------------------------------
@@ -1056,6 +1159,14 @@ def render_placement(syl: dict) -> str:
     course = syl["course"]
     lines = ["## Where this is taught", "",
              f"**{course['number']} {strip_number_prefix(course['title'])}**", ""]
+    fallback_video = syl.get("module_video") or {}
+    if fallback_video.get("youtube_id") and not any(
+            (lec.get("video") or {}).get("youtube_id")
+            for lec in syl.get("lectures", [])):
+        title = fallback_video.get("title") or "Recorded lecture"
+        runtime = (format_hms(fallback_video.get("seconds") or 0)
+                   if fallback_video.get("seconds") else "available")
+        lines += [f"Module video: {title} ({runtime})", ""]
 
     for lec in syl.get("lectures", []):
         mark = ">" if lec["n"] == syl.get("position", 0) + 1 else " "
@@ -1119,7 +1230,7 @@ def render_answer(syl: dict) -> str:
 
     videos = [lec for lec in syl.get("lectures", []) if lec.get("video")]
     action_names = ["next", "example", "quiz", "sources", "related", "syllabus"]
-    if videos:
+    if videos or (syl.get("module_video") or {}).get("youtube_id"):
         action_names.insert(0, "watch")
     parts += ["", actions_line(*action_names), ""]
     return "\n".join(parts)
@@ -1228,7 +1339,7 @@ def teach(syl: dict, index: int = None) -> str:
               f"{'prerequisite for this subject' if lec['role'] == 'prerequisite' else 'core'} "
               f"· lecture {i + 1} of {len(lectures)}*\n")
 
-    video = video_for_lecture(lec, syl, resolve_page=True)
+    video = lesson_video_for_lecture(lec, syl, resolve_page=True)
     video_line = video_embed_line(video)
 
     if lec["status"] != "indexed":
@@ -1362,7 +1473,7 @@ def sources(syl: dict, index: int = None) -> str:
     syl = ensure_indexed(syl, i)
     lectures = syl.get("lectures") or []
     lec = lectures[i]
-    video = video_for_lecture(lec, syl, resolve_page=True)
+    video = lesson_video_for_lecture(lec, syl, resolve_page=True)
     source_title = lec.get("source_title") or lec.get("title")
     return (f"## Sources for: {lec['title']}\n\n"
             f"- OCW page: {lec.get('title') or 'lecture resource'}\n"
@@ -1798,7 +1909,7 @@ def render_watch(syl: dict) -> str:
     if not lectures:
         return "No lectures planned yet."
     lec = lectures[max(0, min(syl.get("position", 0), len(lectures) - 1))]
-    video = video_for_lecture(lec, syl, resolve_page=True)
+    video = lesson_video_for_lecture(lec, syl, resolve_page=True)
     if not video:
         return (f"No recording is published for {lec['title']}.\n"
                 "MIT posts video for some courses and not others. The notes "
@@ -1828,6 +1939,11 @@ def _lecture_for_video(syl: dict, video_id: str) -> tuple:
         video = video_for_lecture(lec, syl, resolve_page=True)
         if (video or {}).get("youtube_id") == video_id:
             return i, lec, video
+    fallback = syl.get("module_video") or {}
+    if fallback.get("youtube_id") == video_id:
+        lectures = syl.get("lectures") or [{}]
+        index = max(0, min(syl.get("position", 0), len(lectures) - 1))
+        return index, lectures[index], fallback
     return None, {}, {}
 
 
@@ -1950,4 +2066,4 @@ def get_current(use_fallback: bool = True) -> str:
 
 def current_syllabus(use_fallback: bool = True) -> dict:
     name = get_current(use_fallback=use_fallback)
-    return load(name) if name else {}
+    return ensure_module_video(load(name)) if name else {}

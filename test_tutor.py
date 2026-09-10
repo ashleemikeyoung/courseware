@@ -227,6 +227,19 @@ def main():
           "url": "https://ocw.mit.edu/courses/99-999-x/resources/x/"}], videos)
     chk("a weak match is left unpaired rather than guessed",
         "video" in weak[0], False)
+    cross_course = tutor.attach_videos([{
+        "title": "Expected Utility Theory - Lecture Slides",
+        "url": "https://ocw.mit.edu/courses/14-121-x/resources/lec8/",
+    }], [{
+        "youtube_id": "qwNTv1tjKbA",
+        "title": "Lec 20: Uncertainty",
+        "description": "risk aversion and expected utility theory",
+        "url": "https://www.youtube.com/watch?v=qwNTv1tjKbA",
+        "course": "14-01-x",
+        "seconds": 2850,
+    }], subject="expected utility")
+    chk("a subject-matched MIT video can support a notes-only lecture",
+        cross_course[0]["video"]["youtube_id"], "qwNTv1tjKbA")
 
     print("Leading with the answer")
     answer = tutor.render_answer(SYLLABUS)
@@ -239,6 +252,26 @@ def main():
         "[LESSON_ACTIONS watch next example quiz sources related syllabus]" in answer,
         True)
     chk("the old inert footer is gone", "next · quiz" in answer, False)
+    with_module_video = copy.deepcopy(SYLLABUS)
+    with_module_video["lectures"][0]["status"] = "indexed"
+    with_module_video["lectures"][0]["file"] = "thin.md"
+    with_module_video["lectures"][1].pop("video", None)
+    with_module_video["module_video"] = {
+        "youtube_id": "qwNTv1tjKbA",
+        "title": "Lec 20: Uncertainty",
+        "seconds": 2850,
+    }
+    import rag as _rag_for_start
+    original_read_for_start = _rag_for_start.read_indexed_source_text
+    lesson._ask = lambda *args, **kwargs: "Expected utility weighs outcomes by probability."
+    _rag_for_start.read_indexed_source_text = lambda source: "Expected utility theory."
+    try:
+        start = tutor.render_start(with_module_video)
+    finally:
+        lesson._ask = ORIGINAL_ASK
+        _rag_for_start.read_indexed_source_text = original_read_for_start
+    chk("the first lesson screen embeds the module video",
+        "youtube:qwNTv1tjKbA" in start, True)
 
     print("Placement is the relevant lectures, not the course")
     placement = tutor.render_placement(SYLLABUS)
