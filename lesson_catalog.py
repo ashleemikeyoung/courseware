@@ -88,7 +88,7 @@ def prewarm_now(subject: str) -> int:
     return len(files)
 
 
-def start_catalog_refresh(max_pages: int = 3) -> None:
+def start_catalog_refresh(max_pages: int = 0) -> None:
     """
     Refresh MIT's course map in the background.
 
@@ -104,7 +104,7 @@ def start_catalog_refresh(max_pages: int = 3) -> None:
         _CATALOG_STARTED = True
     threading.Thread(
         target=_catalog_worker,
-        args=(max(1, int(max_pages or 1)),),
+        args=(max(0, int(max_pages or 0)),),
         daemon=True,
     ).start()
 
@@ -119,7 +119,7 @@ def _catalog_worker(max_pages: int) -> None:
             "mit-ocw-courses", "error", message=f"{type(exc).__name__}: {exc}")
 
 
-def refresh_catalog_now(max_pages: int = 3, page_size: int = 100) -> int:
+def refresh_catalog_now(max_pages: int = 0, page_size: int = 100) -> int:
     import lesson
     import tutor
 
@@ -132,7 +132,10 @@ def refresh_catalog_now(max_pages: int = 3, page_size: int = 100) -> int:
 
     memory_client.update_lesson_catalog_run("mit-ocw-courses", "running")
     total = 0
-    for page in range(max(1, int(max_pages or 1))):
+    page = 0
+    while True:
+        if max_pages and page >= int(max_pages):
+            break
         offset = page * int(page_size or 100)
         url = (
             f"{lesson.MIT_API}/learning_resources_search/?platform=ocw"
@@ -153,6 +156,7 @@ def refresh_catalog_now(max_pages: int = 3, page_size: int = 100) -> int:
                 enqueue_subject(number, reason="MIT catalog course inventory")
         if len(results) < int(page_size or 100):
             break
+        page += 1
     return total
 
 

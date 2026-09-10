@@ -53,6 +53,9 @@ PROSE_MONEY_RE = re.compile(
     r"(?<!\\)\$(\d+(?:\.\d+)?)\$(\s+(?:million|billion|trillion)\b)",
     re.IGNORECASE,
 )
+PROSE_STANDALONE_MONEY_RE = re.compile(
+    r"(?<!\\)\$(\d+(?:\.\d+)?)\$(?=\s*(?:[.,;:]|\)|$))"
+)
 PROSE_PERCENT_RE = re.compile(r"(?<!\\)\$(\d+(?:\.\d+)?)\\%\$(?!\$)")
 IDENT_RE = r"[A-Za-z][A-Za-z0-9_]*"
 TEX_EQUATION_RE = re.compile(
@@ -213,7 +216,7 @@ def looks_like_math(body: str) -> bool:
     if len(body) > MAX_BARE:
         return False
     words = WORD_RE.findall(body)
-    if re.fullmatch(r"[A-Z]", body):
+    if re.fullmatch(r"[A-Za-z]", body):
         return True
     if body[0].isdigit() or body[0] in ".,":
         return bool(EQUATION_MARKUP_RE.search(body)
@@ -239,6 +242,7 @@ def normalize(text: str) -> str:
 
     text = WRAPPED_MONEY_RE.sub(lambda m: f"${m.group(1)}", text)
     text = PROSE_MONEY_RE.sub(lambda m: f"${m.group(1)}{m.group(2)}", text)
+    text = PROSE_STANDALONE_MONEY_RE.sub(lambda m: f"${m.group(1)}", text)
     text = PROSE_PERCENT_RE.sub(lambda m: f"{m.group(1)}%", text)
     text = DISPLAY_DOLLAR_RE.sub(lambda m: f"\\[{m.group(1)}\\]", text)
     text = INLINE_DOLLAR_RE.sub(

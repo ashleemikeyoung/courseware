@@ -87,7 +87,7 @@ except Exception as _e:
 
 try:
     import lesson_catalog
-    lesson_catalog.start_catalog_refresh(max_pages=4)
+    lesson_catalog.start_catalog_refresh()
 except Exception as _e:
     print(f"  Lesson catalog prewarm unavailable ({_e}). Everything else runs normally.")
 

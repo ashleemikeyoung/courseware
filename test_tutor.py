@@ -272,6 +272,25 @@ def main():
         _rag_for_start.read_indexed_source_text = original_read_for_start
     chk("the first lesson screen embeds the module video",
         "youtube:qwNTv1tjKbA" in start, True)
+    cached = copy.deepcopy(with_module_video)
+    cached["project"] = "cached-lecture"
+    cached["lectures"][0].pop("lesson_body", None)
+    cached["lectures"][0].pop("lesson_body_file", None)
+    tutor.save(cached)
+    calls = []
+    original_read_for_cache = _rag_for_start.read_indexed_source_text
+    lesson._ask = lambda *args, **kwargs: calls.append(args) or "The action $a$ is chosen."
+    _rag_for_start.read_indexed_source_text = lambda source: "Expected utility theory."
+    try:
+        first = tutor.render_start(cached)
+        second = tutor.render_start(tutor.load("cached-lecture"))
+    finally:
+        lesson._ask = ORIGINAL_ASK
+        _rag_for_start.read_indexed_source_text = original_read_for_cache
+    chk("saved lecture body avoids reteaching through the model",
+        len(calls), 1)
+    chk("cached lesson body is normalized when rendered",
+        "action \\(a\\)" in second, True)
 
     print("Placement is the relevant lectures, not the course")
     placement = tutor.render_placement(SYLLABUS)

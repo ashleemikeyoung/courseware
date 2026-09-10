@@ -64,6 +64,9 @@ def main():
     chk("single-letter equation variable",
         mathtext.normalize("Here, $a=2$ and b=3."),
         "Here, \\(a=2\\) and \\(b=3\\).")
+    chk("single-letter action variable",
+        mathtext.normalize("the action $a$ maximizes utility"),
+        "the action \\(a\\) maximizes utility")
     chk("bare function assignment",
         mathtext.normalize("The new utility function is v(c)=2+3u(c)."),
         "The new utility function is \\(v(c)=2+3u(c)\\).")
@@ -100,6 +103,9 @@ def main():
     chk("model-wrapped percent becomes prose percent",
         mathtext.normalize(r"probability $10\%$, nothing with $1\%$."),
         "probability 10%, nothing with 1%.")
+    chk("model-wrapped plain payoff becomes prose money",
+        mathtext.normalize(r"If the ball is red, you win $100$."),
+        "If the ball is red, you win $100.")
     chk("bare budget inequality is wrapped",
         mathtext.normalize("The budget constraint is 1A+2B≤10."),
         r"The budget constraint is \(1A+2B≤10\).")

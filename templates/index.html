@@ -1873,6 +1873,7 @@ function stripHiddenCitations(md){
 function mdToHtml(md, opts = {}){
   const showCitations = opts.showCitations !== false;
   if (!showCitations) md = stripHiddenCitations(md);
+  md = normalizeDisplayMathText(md);
   const lines = md.split("\n"); let out = [], list = null, code = null;
   let scripture = null, math = null;
   const inline = t => esc(t)
@@ -1995,6 +1996,14 @@ function mdToHtml(md, opts = {}){
   if (math) out.push(mathBlockHtml(math.lines.join("\n")));
   if (code) out.push(codeBlockHtml(code.lang, code.lines.join("\n")));
   close(); return out.join("");
+}
+
+function normalizeDisplayMathText(text){
+  return String(text || "")
+    .replace(/(?<!\\)\$(\d+(?:\.\d+)?)\\%\$(?!\$)/g, "$1%")
+    .replace(/(?<!\\)\$(\d+(?:\.\d+)?)\$(\s+(?:million|billion|trillion)\b)/gi, "$$$1$2")
+    .replace(/(?<!\\)\$(\d+(?:\.\d+)?)\$(?=\s*(?:\.|,|;|:|\)|$))/g, "$$$1")
+    .replace(/(?<!\\)\$([A-Za-z](?:_[A-Za-z0-9]+)?)\$(?!\$)/g, "\\($1\\)");
 }
 
 /* Attributes on a [SCRIPTURE ...] tag, order-independent -- the model is

@@ -1247,6 +1247,36 @@ def render_start(syl: dict) -> str:
     return intro + teach(syl)
 
 
+def render_lesson_body(header: str, lec: dict, syl: dict, body: str,
+                       video: dict = None) -> str:
+    source_title = lec.get("source_title") or lec["title"]
+    source_url = lec.get("source_url") or lec["url"]
+    video = video or lesson_video_for_lecture(lec, syl, resolve_page=True)
+    video_line = video_embed_line(video)
+    parts = [header]
+    if video:
+        parts += [
+            f"### {video['title']}",
+            "",
+            f"{format_hms(video['seconds'])} recorded lecture" if video.get("seconds")
+            else "Recorded lecture",
+            video_line,
+            "",
+        ]
+    parts.append(body)
+
+    footer = [f"\nSource: {source_title}" if video
+              else f"\nSource: {source_title} — {source_url}"]
+    if source_url != lec["url"] and not video:
+        footer.append(f"OCW lecture page: {lec['url']}")
+    if syl.get("assignments"):
+        nth = min(max(0, int(lec.get("n") or 1) - 1), len(syl["assignments"]) - 1)
+        assigned = syl["assignments"][nth]
+        footer.append(f"MIT assigned around here: {assigned['title']} — {assigned['url']}")
+    footer.append("\n" + actions_line("next", "quiz", "sources", "related", "syllabus"))
+    return "\n".join(parts) + "\n" + "\n".join(footer)
+
+
 # Kept under its old name because three surfaces and the tests call it. What
 # changed is what it renders: the placement, not a course listing.
 render_syllabus = render_placement
@@ -1358,6 +1388,10 @@ def teach(syl: dict, index: int = None) -> str:
                   actions_line("next", "quiz", "sources", "related", "syllabus")]
         return "\n".join(parts)
 
+    cached_body = (lec.get("lesson_body") or "").strip()
+    if cached_body and lec.get("lesson_body_file") == lec.get("file"):
+        return render_lesson_body(header, lec, syl, mathtext.normalize(cached_body), video)
+
     import rag
     try:
         text = rag.read_indexed_source_text(lec["file"]) or ""
@@ -1374,30 +1408,10 @@ def teach(syl: dict, index: int = None) -> str:
     elif THIN_LESSON_RE.search(body):
         body = _thin_lesson_bridge(syl, lec, text)
 
-    source_title = lec.get("source_title") or lec["title"]
-    source_url = lec.get("source_url") or lec["url"]
-    parts = [header]
-    if video:
-        parts += [
-            f"### {video['title']}",
-            "",
-            f"{format_hms(video['seconds'])} recorded lecture" if video.get("seconds")
-            else "Recorded lecture",
-            video_line,
-            "",
-        ]
-    parts.append(body)
-
-    footer = [f"\nSource: {source_title}" if video
-              else f"\nSource: {source_title} — {source_url}"]
-    if source_url != lec["url"] and not video:
-        footer.append(f"OCW lecture page: {lec['url']}")
-    if syl.get("assignments"):
-        nth = min(i, len(syl["assignments"]) - 1)
-        assigned = syl["assignments"][nth]
-        footer.append(f"MIT assigned around here: {assigned['title']} — {assigned['url']}")
-    footer.append("\n" + actions_line("next", "quiz", "sources", "related", "syllabus"))
-    return "\n".join(parts) + "\n" + "\n".join(footer)
+    lec["lesson_body"] = body
+    lec["lesson_body_file"] = lec.get("file", "")
+    save(syl)
+    return render_lesson_body(header, lec, syl, body, video)
 
 
 QUIZ_SYSTEM = """Write short retention questions on one lecture, from its text
