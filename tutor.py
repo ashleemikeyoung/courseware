@@ -155,7 +155,7 @@ def classify(title: str, url: str = "") -> str:
     return "other"
 
 
-LEC_NUM_RE = re.compile(r"(?:lecture|lec|chap(?:ter)?|note)\s*#?\s*(\d{1,2})", re.I)
+LEC_NUM_RE = re.compile(r"(?:lecture|lec|session|chap(?:ter)?|note)\s*#?\s*(\d{1,3})", re.I)
 KEY_LEC_RE = re.compile(r"(?:lec|lecture|handout|summary)[-_]?(\d{1,2})", re.I)
 KEY_TAIL_RE = re.compile(r"_(\d{1,2})[a-z]?(?:_pdf)?/?$")
 
@@ -629,9 +629,13 @@ def _home_course(hits: list, subject: str = "", videos: list = None) -> str:
     Rank is deliberately the weakest of the three now. It is the only one of
     the three that can be satisfied by a passing mention.
     """
+    ranked = _ranked_home_courses(hits, subject, videos)
+    return ranked[0] if ranked else ""
+
+
+def _ranked_home_courses(hits: list, subject: str = "", videos: list = None) -> list:
     wanted = _subject_tokens(subject)
     with_video = {v.get("course") for v in (videos or []) if v.get("course")}
-
     scores = {}
     for rank, hit in enumerate(hits):
         slug = course_of(hit.get("url", ""))
@@ -644,7 +648,32 @@ def _home_course(hits: list, subject: str = "", videos: list = None) -> str:
                 scores[slug] += 2.0
         scores[slug] += 1.0 / (rank + 1)
 
-    return max(scores, key=scores.get) if scores else ""
+    return [slug for slug, _ in sorted(
+        scores.items(), key=lambda item: item[1], reverse=True)]
+
+
+def _load_course_inventory(slug: str) -> tuple[list, str]:
+    inventory_subject = course_number(slug)
+    inventory = lesson_catalog.cached_mit_files(inventory_subject, limit=300)
+    source = ""
+    if inventory:
+        source = "local lesson catalog"
+        inventory = [dict(
+            f,
+            kind=f.get("kind") or classify(f.get("title", ""), f.get("url", "")),
+            seq=int(f.get("seq") or sequence_of(f.get("title", ""), f.get("url", ""))),
+        ) for f in inventory if _hit_course_slug(f) == slug]
+        if len([f for f in inventory if f.get("kind") == "lecture"]) < 3:
+            page_inventory = _course_page_inventory(slug, limit=300)
+            if page_inventory:
+                inventory = page_inventory
+                lesson_catalog.remember_mit_files(inventory_subject, inventory)
+                source = "MIT course pages"
+    else:
+        inventory = _course_inventory(slug, limit=300)
+        lesson_catalog.remember_mit_files(inventory_subject, inventory)
+        source = "MIT search/pages"
+    return inventory, source
 
 
 def _course_inventory(slug: str, limit: int = 200) -> list:
@@ -702,11 +731,14 @@ def _plain_html(text: str) -> str:
 
 def _page_kind(title: str, url: str, content: str) -> str:
     haystack = f"{title or ''} {url or ''} {content or ''}".lower()
+    title_url = f"{title or ''} {url or ''}".lower()
     if "lecture video and summary" in haystack or "watch the video lecture" in haystack:
         return "lecture"
-    if "exam" in haystack and "lecture video" not in haystack:
+    if re.search(r"\bsession[-\s]*\d+", title_url):
+        return "lecture"
+    if "exam" in title_url and "lecture video" not in haystack:
         return "exam"
-    if "problem set" in haystack or "problems and solutions" in haystack:
+    if "problem set" in title_url or "problems and solutions" in title_url:
         return "assignment"
     return classify(title, url)
 
@@ -739,35 +771,45 @@ def _course_page_inventory(slug: str, limit: int = 200) -> list:
         return []
 
     seen = set()
-    pages = []
+    queue = []
     skip = (
         "/pages/syllabus", "/pages/instructor-insights", "/pages/related-resources",
         "/pages/resource-index", "/pages/final-exam", "/pages/download",
     )
-    for href in COURSE_PAGE_RE.findall(html):
+
+    def add_page(href: str) -> None:
         page_url = urllib.parse.urljoin(course_url, unescape(href)).split("#", 1)[0]
         page_url = page_url.split("?", 1)[0]
         if page_url in seen or any(s in page_url for s in skip):
-            continue
+            return
         seen.add(page_url)
-        pages.append(page_url.rstrip("/") + "/")
-        if len(pages) >= int(limit or 200):
-            break
+        queue.append(page_url.rstrip("/") + "/")
+
+    for href in COURSE_PAGE_RE.findall(html):
+        add_page(href)
 
     out = []
     metadata = _course_metadata(slug)
     course_title = metadata.get("course_title") or metadata.get("title") or ""
     course_number_value = metadata.get("primary_course_number") or course_number(slug)
-    for seq, page_url in enumerate(pages, start=1):
+    seq = 0
+    max_pages = max(int(limit or 200) * 3, int(limit or 200), 80)
+    checked = 0
+    while queue and len(out) < int(limit or 200) and checked < max_pages:
+        page_url = queue.pop(0)
+        checked += 1
         try:
             data = lesson._fetch_json(page_url + "data.json")
         except Exception:
             continue
         title = data.get("title") or page_url.rstrip("/").rsplit("/", 1)[-1].replace("-", " ")
         content = data.get("content") or data.get("description") or ""
+        for href in COURSE_PAGE_RE.findall(content):
+            add_page(href)
         kind = _page_kind(title, page_url, content)
         if kind not in {"lecture", "assignment", "exam"}:
             continue
+        seq += 1
         item = {
             "title": title,
             "url": page_url,
@@ -1142,29 +1184,30 @@ def plan(subject: str, project: str = None, on_progress=None) -> dict:
     # be hoisted -- and an earlier version of this line referenced it anyway
     # and would have raised NameError on the first real lesson.
     video_hint = topic_videos(subject)
-    slug = _home_course(hits, subject, video_hint)
+    candidate_slugs = _ranked_home_courses(hits, subject, video_hint)
+    slug, inventory, lectures, assignments, exams = "", [], [], [], []
+    for candidate in candidate_slugs[:8]:
+        number = course_number(candidate)
+        say(f"Home course candidate: {number}. Reading its full file list...")
+        candidate_inventory, source = _load_course_inventory(candidate)
+        if source:
+            say(f"  course file list loaded from {source}")
+        candidate_inventory = _merge_course_hits(candidate_inventory, hits, candidate)
+        candidate_lectures = [f for f in candidate_inventory if f["kind"] == "lecture"]
+        if not candidate_lectures and candidate != candidate_slugs[-1]:
+            say("  no teachable lectures found; trying the next MIT course")
+            continue
+        slug = candidate
+        inventory = candidate_inventory
+        lectures = candidate_lectures
+        assignments = [f for f in inventory if f["kind"] in {"assignment", "solution"}]
+        exams = [f for f in inventory if f["kind"] == "exam"]
+        break
+    if not slug:
+        return {"subject": subject, "project": project, "course": None,
+                "lectures": [], "assignments": [], "exams": [], "related": [],
+                "position": 0, "built": date.today().isoformat()}
     number = course_number(slug)
-    say(f"Home course: {number}. Reading its full file list...")
-
-    inventory_subject = course_number(slug)
-    inventory = lesson_catalog.cached_mit_files(inventory_subject, limit=200)
-    if inventory:
-        say("  course file list loaded from the local lesson catalog")
-        inventory = [dict(f, kind=classify(f.get("title", ""), f.get("url", "")),
-                          seq=sequence_of(f.get("title", ""), f.get("url", "")))
-                     for f in inventory if _hit_course_slug(f) == slug]
-        if len([f for f in inventory if f.get("kind") == "lecture"]) < 3:
-            page_inventory = _course_page_inventory(slug)
-            if page_inventory:
-                inventory = page_inventory
-                lesson_catalog.remember_mit_files(inventory_subject, inventory)
-    else:
-        inventory = _course_inventory(slug)
-        lesson_catalog.remember_mit_files(inventory_subject, inventory)
-    inventory = _merge_course_hits(inventory, hits, slug)
-    lectures = [f for f in inventory if f["kind"] == "lecture"]
-    assignments = [f for f in inventory if f["kind"] in {"assignment", "solution"}]
-    exams = [f for f in inventory if f["kind"] == "exam"]
 
     say(f"  {len(lectures)} lectures, {len(assignments)} assignments, {len(exams)} exams")
 

@@ -684,8 +684,18 @@ def lesson_catalog_stats() -> dict:
         _ensure_lesson_catalog_schema(client)
         courses = client.execute("SELECT count(*) FROM lesson_mit_courses").rows[0][0]
         files = client.execute("SELECT count(*) FROM lesson_catalog_files").rows[0][0]
+        course_pages = client.execute(
+            "SELECT count(*) FROM lesson_catalog_files WHERE url LIKE '%/pages/%'"
+        ).rows[0][0]
+        subject_hits = client.execute("SELECT count(*) FROM lesson_subject_hits").rows[0][0]
         subjects = client.execute("SELECT count(*) FROM lesson_background_subjects").rows[0][0]
-        return {"courses": courses, "files": files, "subjects": subjects}
+        return {
+            "courses": courses,
+            "files": files,
+            "course_pages": course_pages,
+            "subject_hits": subject_hits,
+            "subjects": subjects,
+        }
     finally:
         client.close()
 

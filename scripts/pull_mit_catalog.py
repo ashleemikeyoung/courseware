@@ -22,12 +22,83 @@ import lesson_catalog
 import memory_client
 
 
+def _ocw_slug(row: dict) -> str:
+    import tutor
+
+    return tutor.course_of(row.get("url") or "") or row.get("course_slug") or ""
+
+
 def _matching_course_numbers(prefix: str = "", limit: int = 0) -> list[str]:
-    numbers = lesson_catalog.cached_course_numbers(limit=limit)
+    numbers = lesson_catalog.cached_course_numbers()
     if prefix:
         prefix = prefix.strip()
         numbers = [number for number in numbers if number.startswith(prefix)]
+    if limit:
+        numbers = numbers[:int(limit)]
     return numbers
+
+
+def _matching_courses(prefix: str = "", slug_contains: str = "",
+                      limit: int = 0) -> list[dict]:
+    import tutor
+
+    courses = memory_client.list_lesson_mit_courses()
+    out = []
+    seen = set()
+    for row in courses:
+        slug = _ocw_slug(row)
+        number = row.get("course_number") or tutor.course_number(slug)
+        if prefix and not str(number).startswith(prefix.strip()):
+            continue
+        if slug_contains and slug_contains.strip().lower() not in slug.lower():
+            continue
+        key = slug or number
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append({**row, "course_number": number})
+        if limit and len(out) >= int(limit):
+            break
+    return out
+
+
+def _build_course_page_lessons(courses: list[dict], sleep: float,
+                               progress_every: int) -> tuple[int, int, int]:
+    import lesson_catalog as catalog
+    import tutor
+
+    ok = 0
+    failed = 0
+    lessons = 0
+    total = len(courses)
+    for index, row in enumerate(courses, start=1):
+        slug = _ocw_slug(row)
+        number = row.get("course_number") or tutor.course_number(slug)
+        if not slug:
+            continue
+        try:
+            inventory = tutor._course_page_inventory(slug, limit=300)
+            if inventory:
+                subject_key = number or slug
+                catalog.remember_mit_files(subject_key, inventory)
+                lessons += len(inventory)
+            ok += 1
+            if progress_every <= 1 or index == total or index % progress_every == 0:
+                print(
+                    f"[pages {index}/{total}] {number or slug}: "
+                    f"{len(inventory)} lessons/pages cached",
+                    flush=True,
+                )
+        except Exception as exc:
+            failed += 1
+            print(
+                f"[pages {index}/{total}] {number or slug}: "
+                f"{type(exc).__name__}: {exc}",
+                flush=True,
+            )
+        if sleep > 0:
+            time.sleep(sleep)
+    return ok, failed, lessons
 
 
 def main() -> int:
@@ -63,9 +134,24 @@ def main() -> int:
         help="Only prewarm course numbers that begin with this prefix, such as 14.",
     )
     parser.add_argument(
+        "--only-course-slug-contains",
+        default="",
+        help="Only build course pages for course slugs containing this text.",
+    )
+    parser.add_argument(
         "--skip-course-inventories",
         action="store_true",
         help="Refresh only the MIT course map; do not prewarm course files.",
+    )
+    parser.add_argument(
+        "--build-course-pages",
+        action="store_true",
+        help="Also crawl each OCW course page and cache its lesson/session manifests.",
+    )
+    parser.add_argument(
+        "--skip-search-inventories",
+        action="store_true",
+        help="Skip content-search inventories and only build course-page lessons.",
     )
     parser.add_argument(
         "--sleep",
@@ -98,11 +184,19 @@ def main() -> int:
     if args.skip_course_inventories:
         return 0
 
+    courses = _matching_courses(
+        prefix=args.only_course_prefix,
+        slug_contains=args.only_course_slug_contains,
+        limit=max(0, args.course_limit),
+    )
+
     numbers = _matching_course_numbers(
         prefix=args.only_course_prefix,
         limit=max(0, args.course_limit),
     )
-    print(f"Prewarming {len(numbers)} course inventories.", flush=True)
+    if args.skip_search_inventories:
+        numbers = []
+    print(f"Prewarming {len(numbers)} course search inventories.", flush=True)
 
     ok = 0
     failed = 0
@@ -112,21 +206,38 @@ def main() -> int:
             ok += 1
             if args.progress_every <= 1 or index == len(numbers) or index % args.progress_every == 0:
                 print(
-                    f"[{index}/{len(numbers)}] {number}: cached {count} records",
+                    f"[search {index}/{len(numbers)}] {number}: cached {count} records",
                     flush=True,
                 )
         except Exception as exc:
             failed += 1
             print(
-                f"[{index}/{len(numbers)}] {number}: {type(exc).__name__}: {exc}",
+                f"[search {index}/{len(numbers)}] {number}: {type(exc).__name__}: {exc}",
                 flush=True,
             )
         if args.sleep > 0:
             time.sleep(args.sleep)
 
+    page_ok = 0
+    page_failed = 0
+    page_lessons = 0
+    if args.build_course_pages:
+        print(f"Building lesson/session pages for {len(courses)} courses.", flush=True)
+        page_ok, page_failed, page_lessons = _build_course_page_lessons(
+            courses,
+            sleep=args.sleep,
+            progress_every=args.progress_every,
+        )
+
     final = memory_client.lesson_catalog_stats()
-    print(f"Finished MIT catalogue pull. ok={ok} failed={failed} cache={final}", flush=True)
-    return 0 if failed == 0 else 1
+    print(
+        "Finished MIT catalogue pull. "
+        f"search_ok={ok} search_failed={failed} "
+        f"page_ok={page_ok} page_failed={page_failed} "
+        f"page_lessons={page_lessons} cache={final}",
+        flush=True,
+    )
+    return 0 if failed == 0 and page_failed == 0 else 1
 
 
 if __name__ == "__main__":

@@ -98,6 +98,22 @@ def main():
         tutor.classify("Lecture 3 transcript"), "transcript")
     chk("chapter notes count as lectures",
         tutor.classify("Chap2 Decision Making Under Risk"), "lecture")
+    chk("zoomnotes are supporting readings, not a lecture arc",
+        tutor.classify("ZoomNotes for Linear Algebra"), "reading")
+    chk("session pages are teachable lessons",
+        tutor._page_kind(
+            "Session 9: Matrix Multiplication",
+            "https://ocw.mit.edu/courses/18-02sc-x/pages/session-9-matrix-multiplication/",
+            "Problem Set links nearby",
+        ),
+        "lecture")
+    chk("unit container pages are not lectures just because they link sessions",
+        tutor._page_kind(
+            "Part B: Matrices and Systems of Equations",
+            "https://ocw.mit.edu/courses/18-02sc-x/pages/part-b/",
+            "Session 9: Matrix Multiplication",
+        ),
+        "other")
 
     print("Ordering")
     chk("a number in the title wins",
@@ -110,6 +126,10 @@ def main():
         tutor.sequence_of("Uncertainty",
                           "https://ocw.mit.edu/courses/14-01-x/resources/lec-20-uncertainty/"),
         20)
+    chk("session number can order OCW Scholar courses",
+        tutor.sequence_of("Session 102: Unit 4 Review",
+                          "https://ocw.mit.edu/courses/18-02sc-x/pages/session-102-unit-4-review/"),
+        102)
     chk("unnumbered files sort to the end, not the front",
         tutor.sequence_of("Readings", "https://ocw.mit.edu/c/resources/readings/"), 999)
 
