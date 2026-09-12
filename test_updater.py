@@ -34,6 +34,25 @@ def main():
         updater._is_runtime_file("memory/memory_client.py"), False)
     chk("ordinary source file is still code",
         updater._is_runtime_file("lesson_catalog.py"), False)
+    chk("catalog rebuild logs are runtime",
+        updater._is_runtime_file("logs/mit-catalog-slug-rebuild-2026-09-12.log"), True)
+    chk("claude export folder is runtime",
+        updater._is_runtime_file("Claude outputs/"), True)
+
+    print("Git status parsing")
+    original_git = updater._git
+
+    class FakeStatus:
+        stdout = "?? Claude outputs/\0?? logs/mit-catalog.log\0 M updater.py\0"
+
+    updater._git = lambda *args, **kwargs: FakeStatus()
+    try:
+        chk("porcelain z paths with spaces are unquoted",
+            updater._status_entries()[0]["path"], "Claude outputs/")
+        chk("runtime entries are filtered before git add",
+            updater.pending_files(), ["updater.py"])
+    finally:
+        updater._git = original_git
 
     print("Apply result")
     original_pending_files = updater.pending_files

@@ -8,6 +8,8 @@ app-restart.log
 chroma_db/
 lancedb/
 documents/
+logs/
+Claude outputs/
 Offline Email/
 .offlineimaprc
 projects/*/output/

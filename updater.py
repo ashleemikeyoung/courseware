@@ -42,6 +42,8 @@ projects/*/output/
 projects/*/plans/
 plans/
 output/
+logs/
+Claude outputs/
 benchmark.jsonl
 app-restart.log
 backups/
@@ -66,6 +68,8 @@ RUNTIME_UPDATE_PREFIXES = (
     "memory/keys/",
     "projects/",
     "output/",
+    "logs/",
+    "Claude outputs/",
     "plans/",
     "backups/",
     "backup/",
@@ -104,15 +108,23 @@ def _git(*args, check=True):
 
 
 def _status_entries() -> list:
-    r = _git("status", "--porcelain", check=False)
+    r = _git("status", "--porcelain", "-z", check=False)
     out = []
-    for line in r.stdout.splitlines():
-        if not line.strip():
+    parts = [part for part in r.stdout.split("\0") if part]
+    i = 0
+    while i < len(parts):
+        line = parts[i]
+        if len(line) < 3:
+            i += 1
             continue
-        path = line[2:].strip()
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1]
-        out.append({"code": line[:2], "path": path})
+        code = line[:2]
+        path = line[3:]
+        if code[0] in {"R", "C"}:
+            i += 1
+            if i < len(parts):
+                path = parts[i]
+        out.append({"code": code, "path": path})
+        i += 1
     return out
 
 
