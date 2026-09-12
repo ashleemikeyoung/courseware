@@ -80,11 +80,10 @@ def prewarm_now(subject: str) -> int:
 
     files = lesson._mit_files(subject_key, limit=40)
     remember_mit_files(subject_key, files)
-    slug = tutor._home_course(files)
-    number = tutor.course_number(slug)
-    if number and number.lower() != subject_key:
-        inventory = lesson._mit_files(number, limit=200)
-        remember_mit_files(number, inventory)
+    slug = tutor._home_course(files, subject_key)
+    if slug and slug.lower() != subject_key:
+        inventory = tutor._course_inventory(slug, limit=200)
+        remember_mit_files(slug, inventory)
     return len(files)
 
 
@@ -150,11 +149,11 @@ def refresh_catalog_now(max_pages: int = 0, page_size: int = 100,
         total += memory_client.remember_lesson_mit_courses(
             results, course_slug_fn=_course_slug_from_url)
         for item in results:
-            slug = (item.get("readable_id") or item.get("run_slug") or
-                    _course_slug_from_url(item.get("url") or ""))
-            number = tutor.course_number((slug or "").removeprefix("courses/"))
-            if number:
-                enqueue_subject(number, reason="MIT catalog course inventory")
+            slug = (_course_slug_from_url(item.get("url") or "") or
+                    item.get("run_slug") or item.get("readable_id") or "")
+            slug = (slug or "").removeprefix("courses/")
+            if slug:
+                enqueue_subject(slug, reason="MIT catalog course inventory")
         if len(results) < int(page_size or 100):
             break
         page += 1

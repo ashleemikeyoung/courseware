@@ -393,48 +393,56 @@ def remember_lesson_mit_files(subject: str, files: list, course_slug_fn=None) ->
     client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
     try:
         _ensure_lesson_catalog_schema(client)
-        client.execute("DELETE FROM lesson_subject_hits WHERE subject = ?", [subject])
-        for rank, item in enumerate(files or []):
-            url = item.get("url") or ""
-            if not url:
-                continue
-            course_slug = item.get("run_slug") or (
-                course_slug_fn(url) if course_slug_fn else "")
-            client.execute(
-                "INSERT INTO lesson_catalog_files "
-                "(url, title, description, course_slug, kind, seq, payload, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(url) DO UPDATE SET "
-                "title=excluded.title, description=excluded.description, "
-                "course_slug=excluded.course_slug, kind=excluded.kind, "
-                "seq=excluded.seq, payload=excluded.payload, "
-                "updated_at=excluded.updated_at",
-                [
-                    url,
-                    item.get("title") or "",
-                    item.get("description") or "",
-                    course_slug or "",
-                    item.get("kind") or "",
-                    int(item.get("seq") or 999),
-                    json.dumps(item, ensure_ascii=False, sort_keys=True),
-                    now,
-                ],
+        tx = client.transaction()
+        try:
+            tx.execute("DELETE FROM lesson_subject_hits WHERE subject = ?", [subject])
+            for rank, item in enumerate(files or []):
+                url = item.get("url") or ""
+                if not url:
+                    continue
+                course_slug = (
+                    item.get("course_slug") or item.get("run_slug") or
+                    (course_slug_fn(url) if course_slug_fn else "")
+                )
+                tx.execute(
+                    "INSERT INTO lesson_catalog_files "
+                    "(url, title, description, course_slug, kind, seq, payload, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(url) DO UPDATE SET "
+                    "title=excluded.title, description=excluded.description, "
+                    "course_slug=excluded.course_slug, kind=excluded.kind, "
+                    "seq=excluded.seq, payload=excluded.payload, "
+                    "updated_at=excluded.updated_at",
+                    [
+                        url,
+                        item.get("title") or "",
+                        item.get("description") or "",
+                        course_slug or "",
+                        item.get("kind") or "",
+                        int(item.get("seq") or 999),
+                        json.dumps(item, ensure_ascii=False, sort_keys=True),
+                        now,
+                    ],
+                )
+                tx.execute(
+                    "INSERT INTO lesson_subject_hits (subject, url, rank, updated_at) "
+                    "VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(subject, url) DO UPDATE SET "
+                    "rank=excluded.rank, updated_at=excluded.updated_at",
+                    [subject, url, rank, now],
+                )
+            tx.execute(
+                "INSERT INTO lesson_background_subjects "
+                "(subject, reason, status, attempts, updated_at) "
+                "VALUES (?, '', 'ready', 0, ?) "
+                "ON CONFLICT(subject) DO UPDATE SET "
+                "status='ready', updated_at=excluded.updated_at",
+                [subject, now],
             )
-            client.execute(
-                "INSERT INTO lesson_subject_hits (subject, url, rank, updated_at) "
-                "VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(subject, url) DO UPDATE SET "
-                "rank=excluded.rank, updated_at=excluded.updated_at",
-                [subject, url, rank, now],
-            )
-        client.execute(
-            "INSERT INTO lesson_background_subjects "
-            "(subject, reason, status, attempts, updated_at) "
-            "VALUES (?, '', 'ready', 0, ?) "
-            "ON CONFLICT(subject) DO UPDATE SET "
-            "status='ready', updated_at=excluded.updated_at",
-            [subject, now],
-        )
+            tx.commit()
+        except Exception:
+            tx.rollback()
+            raise
     finally:
         client.close()
 
@@ -560,6 +568,36 @@ def remember_lesson_mit_courses(courses: list, course_slug_fn=None) -> int:
             return str(value)
         return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
+    def course_number_values(item) -> list[str]:
+        course = item.get("course") if isinstance(item.get("course"), dict) else {}
+        raw = (
+            item.get("course_numbers") or item.get("course_number") or
+            course.get("course_numbers") or course.get("course_number") or []
+        )
+        if isinstance(raw, (str, int, float)):
+            raw = [raw]
+        values = []
+        for number in raw or []:
+            if isinstance(number, dict):
+                value = (
+                    number.get("value") or number.get("course_number") or
+                    number.get("number")
+                )
+            else:
+                value = number
+            value = text_value(value).strip()
+            if value:
+                values.append(value)
+        return values
+
+    def course_term(item) -> str:
+        course = item.get("course") if isinstance(item.get("course"), dict) else {}
+        for key in ("semester", "term"):
+            value = item.get(key) or course.get(key)
+            if value:
+                return text_value(value)
+        return ""
+
     now = int(time.time())
     count = 0
     client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
@@ -567,14 +605,14 @@ def remember_lesson_mit_courses(courses: list, course_slug_fn=None) -> int:
         _ensure_lesson_catalog_schema(client)
         for item in courses or []:
             url = item.get("url") or ""
-            slug = item.get("readable_id") or item.get("run_slug") or (
-                course_slug_fn(url) if course_slug_fn else "")
+            slug = (
+                (course_slug_fn(url) if course_slug_fn else "") or
+                item.get("run_slug") or item.get("readable_id") or ""
+            )
             slug = (slug or "").removeprefix("courses/")
             if not slug:
                 continue
-            course_numbers = item.get("course_numbers") or item.get("course_number") or []
-            if isinstance(course_numbers, str):
-                course_numbers = [course_numbers]
+            course_numbers = course_number_values(item)
             departments = item.get("departments") or item.get("department_name") or []
             if isinstance(departments, str):
                 departments = [departments]
@@ -592,14 +630,13 @@ def remember_lesson_mit_courses(courses: list, course_slug_fn=None) -> int:
                 "updated_at=excluded.updated_at",
                 [
                     slug,
-                    ", ".join(text_value(n) for n in course_numbers if n)
-                    or text_value(item.get("course_number")),
+                    ", ".join(course_numbers),
                     text_value(item.get("title")),
                     text_value(url),
                     json.dumps(departments, ensure_ascii=False, sort_keys=True),
                     json.dumps(topics, ensure_ascii=False, sort_keys=True),
                     text_value(item.get("level")),
-                    text_value(item.get("offered_by") or item.get("semester") or item.get("term")),
+                    course_term(item),
                     json.dumps(item, ensure_ascii=False, sort_keys=True),
                     now,
                 ],

@@ -141,6 +141,12 @@ def main():
         tutor.course_number("14-121-microeconomic-theory-i-fall-2015"), "14.121")
     chk("course number from plus-term slug",
         tutor.course_number("14.121+fall_2015"), "14.121")
+    chk("letter-suffixed department number survives",
+        tutor.course_number("21a-219-law-and-society-spring-2003"), "21A.219")
+    chk("special topics suffix survives",
+        tutor.course_number("18-s096-topics-in-mathematics-with-applications-in-finance-fall-2013"), "18.S096")
+    chk("resource course number keeps its second segment",
+        tutor.course_number("res-env-001-climate-action-hands-on-fall-2021"), "RES.ENV")
     chk("home course is rank-weighted, so two top hits beat three late ones",
         tutor._home_course([
             {"url": "https://ocw.mit.edu/courses/14-121-a/resources/1/"},

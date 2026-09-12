@@ -51,7 +51,12 @@ class FakeMemoryClient:
             url = item.get("url") or ""
             if not url:
                 continue
-            self.files[url] = {"payload": dict(item), "updated_at": int(time.time())}
+            course_slug = item.get("course_slug") or item.get("run_slug") or (
+                course_slug_fn(url) if course_slug_fn else "")
+            payload = dict(item)
+            if course_slug:
+                payload["course_slug"] = course_slug
+            self.files[url] = {"payload": payload, "updated_at": int(time.time())}
             self.hits[subject].append(url)
         self.subjects[subject] = {"status": "ready", "updated_at": int(time.time())}
 
@@ -79,13 +84,18 @@ class FakeMemoryClient:
     def remember_lesson_mit_courses(self, courses, course_slug_fn=None):
         for item in courses or []:
             url = item.get("url") or ""
-            slug = item.get("readable_id") or item.get("run_slug") or (
-                course_slug_fn(url) if course_slug_fn else "")
+            slug = (course_slug_fn(url) if course_slug_fn else "") or item.get("run_slug") or item.get("readable_id") or ""
             row = dict(item)
-            numbers = row.get("course_numbers") or row.get("course_number") or []
+            course = row.get("course") if isinstance(row.get("course"), dict) else {}
+            numbers = (
+                row.get("course_numbers") or row.get("course_number") or
+                course.get("course_numbers") or course.get("course_number") or []
+            )
             if isinstance(numbers, str):
                 numbers = [numbers]
-            row["course_number"] = ", ".join(numbers)
+            row["course_number"] = ", ".join(
+                n.get("value") if isinstance(n, dict) else n for n in numbers)
+            row["course_slug"] = slug.removeprefix("courses/")
             self.courses[slug.removeprefix("courses/")] = row
         return len(courses or [])
 
@@ -174,7 +184,7 @@ def main():
             lesson_catalog.cached_mit_files("consumer choice")[0]["title"],
             "Lecture 2: Consumer Choice")
         chk("owning course inventory is cached too",
-            lesson_catalog.cached_mit_files("14.04")[0]["title"],
+            lesson_catalog.cached_mit_files("14-04-x")[0]["title"],
             "Lecture 3: Preferences")
         chk("prewarm asks for the subject and course inventory",
             calls, [("consumer choice", 40), ("14.04", 200)])
@@ -189,8 +199,8 @@ def main():
             return {"results": [{
                 "title": "Principles of Microeconomics",
                 "url": "https://ocw.mit.edu/courses/14-01-x/",
-                "readable_id": "14-01-x",
-                "course_numbers": ["14.01"],
+                "readable_id": "14.01+fall_2023",
+                "course": {"course_numbers": [{"value": "14.01"}], "semester": "Fall"},
                 "departments": ["Economics"],
                 "topics": ["Microeconomics"],
             }]}
@@ -204,7 +214,7 @@ def main():
             lesson_catalog.memory_client.courses["14-01-x"]["departments"],
             ["Economics"])
         chk("catalog refresh queues course inventory",
-            "14.01" in lesson_catalog.memory_client.subjects, True)
+            "14-01-x" in lesson_catalog.memory_client.subjects, True)
         chk("cached course numbers can feed the overnight puller",
             lesson_catalog.cached_course_numbers(), ["14.01"])
     finally:

@@ -1,5 +1,7 @@
 __pycache__/
 *.pyc
+.DS_Store
+app-restart.log
 .venv-offlineimap/
 .env
 .env-bak

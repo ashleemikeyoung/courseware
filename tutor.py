@@ -215,15 +215,20 @@ def strip_number_prefix(title: str) -> str:
 def course_number(slug: str) -> str:
     """14-121-microeconomic-theory-i-fall-2015 -> 14.121"""
     cleaned = (slug or "").removeprefix("courses/").split("+", 1)[0]
-    match = re.match(r"([A-Za-z]*\.?\d+(?:[-.]\d+[A-Za-z]*)?)", cleaned)
-    if match:
-        number = match.group(1)
-        if re.match(r"^\d+[A-Za-z]*-\d", number):
-            number = number.replace("-", ".", 1)
-        return number.upper()
     parts = cleaned.split("-")
-    if len(parts) >= 2 and re.fullmatch(r"\d+[a-z]*", parts[1] or ""):
-        return f"{parts[0]}.{parts[1]}".upper()
+    if len(parts) >= 2:
+        first, second = parts[0], parts[1]
+        if re.fullmatch(r"res", first, re.I):
+            return f"RES.{second}".upper()
+        if re.fullmatch(r"\d+[a-z]*", first, re.I):
+            if re.fullmatch(r"[a-z]?\d+[a-z]*|s\d+[a-z]*|w\d+[a-z]*", second, re.I):
+                return f"{first}.{second}".upper()
+            return first.upper()
+        if re.fullmatch(r"[a-z]+", first, re.I) and re.fullmatch(r"\d+[a-z]*", second, re.I):
+            return f"{first}.{second}".upper()
+    match = re.match(r"([A-Za-z]*\.?\d+(?:[.-]\w+)?)", cleaned)
+    if match:
+        return match.group(1).replace("-", ".", 1).upper()
     return (parts[0] if parts else "").upper()
 
 
@@ -653,7 +658,7 @@ def _ranked_home_courses(hits: list, subject: str = "", videos: list = None) -> 
 
 
 def _load_course_inventory(slug: str) -> tuple[list, str]:
-    inventory_subject = course_number(slug)
+    inventory_subject = (slug or "").removeprefix("courses/").lower()
     inventory = lesson_catalog.cached_mit_files(inventory_subject, limit=300)
     source = ""
     if inventory:

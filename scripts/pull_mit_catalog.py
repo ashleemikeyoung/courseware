@@ -79,8 +79,7 @@ def _build_course_page_lessons(courses: list[dict], sleep: float,
         try:
             inventory = tutor._course_page_inventory(slug, limit=300)
             if inventory:
-                subject_key = number or slug
-                catalog.remember_mit_files(subject_key, inventory)
+                catalog.remember_mit_files(slug, inventory)
                 lessons += len(inventory)
             ok += 1
             if progress_every <= 1 or index == total or index % progress_every == 0:
