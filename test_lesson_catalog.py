@@ -12,6 +12,7 @@ import time
 
 import lesson_catalog
 import lesson
+import tutor
 
 
 _failures = 0
@@ -96,6 +97,9 @@ class FakeMemoryClient:
             row["course_number"] = ", ".join(
                 n.get("value") if isinstance(n, dict) else n for n in numbers)
             row["course_slug"] = slug.removeprefix("courses/")
+            for old_slug, old_row in list(self.courses.items()):
+                if old_row.get("url") == url and old_slug != row["course_slug"]:
+                    del self.courses[old_slug]
             self.courses[slug.removeprefix("courses/")] = row
         return len(courses or [])
 
@@ -158,7 +162,9 @@ def main():
 
     print("Background prewarm")
     original_mit_files = lesson._mit_files
+    original_course_inventory = tutor._course_inventory
     calls = []
+    course_inventory_calls = []
 
     def fake_mit_files(subject, limit=40):
         calls.append((subject, limit))
@@ -177,7 +183,16 @@ def main():
             }]
         return []
 
+    def fake_course_inventory(slug, limit=200):
+        course_inventory_calls.append((slug, limit))
+        return [{
+            "title": "Lecture 3: Preferences",
+            "url": "https://ocw.mit.edu/courses/14-04-x/resources/lec-3/",
+            "run_slug": "14-04-x",
+        }]
+
     lesson._mit_files = fake_mit_files
+    tutor._course_inventory = fake_course_inventory
     try:
         lesson_catalog.prewarm_now("consumer choice")
         chk("subject search is cached",
@@ -187,9 +202,15 @@ def main():
             lesson_catalog.cached_mit_files("14-04-x")[0]["title"],
             "Lecture 3: Preferences")
         chk("prewarm asks for the subject and course inventory",
-            calls, [("consumer choice", 40), ("14.04", 200)])
+            calls, [("consumer choice", 40)])
+        chk("owning course inventory uses exact slug",
+            course_inventory_calls, [("14-04-x", 200)])
+        lesson_catalog.prewarm_now("14-04-x")
+        chk("course slug prewarm does not do a broad search",
+            calls, [("consumer choice", 40)])
     finally:
         lesson._mit_files = original_mit_files
+        tutor._course_inventory = original_course_inventory
 
     print("MIT course map refresh")
     original_fetch_json = lesson._fetch_json
@@ -208,13 +229,19 @@ def main():
 
     lesson._fetch_json = fake_fetch_json
     try:
+        lesson_catalog.memory_client.courses["14.01+fall_2023"] = {
+            "url": "https://ocw.mit.edu/courses/14-01-x/",
+            "course_slug": "14.01+fall_2023",
+        }
         refreshed = lesson_catalog.refresh_catalog_now(max_pages=1, page_size=100)
         chk("catalog refresh stores course rows", refreshed, 1)
         chk("catalog refresh keeps department metadata",
             lesson_catalog.memory_client.courses["14-01-x"]["departments"],
             ["Economics"])
-        chk("catalog refresh queues course inventory",
-            "14-01-x" in lesson_catalog.memory_client.subjects, True)
+        chk("catalog refresh removes readable-id aliases",
+            "14.01+fall_2023" in lesson_catalog.memory_client.courses, False)
+        chk("catalog refresh does not queue thousands of prewarm jobs",
+            "14-01-x" in lesson_catalog.memory_client.subjects, False)
         chk("cached course numbers can feed the overnight puller",
             lesson_catalog.cached_course_numbers(), ["14.01"])
     finally:

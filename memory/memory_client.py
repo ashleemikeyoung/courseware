@@ -393,56 +393,51 @@ def remember_lesson_mit_files(subject: str, files: list, course_slug_fn=None) ->
     client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
     try:
         _ensure_lesson_catalog_schema(client)
-        tx = client.transaction()
-        try:
-            tx.execute("DELETE FROM lesson_subject_hits WHERE subject = ?", [subject])
-            for rank, item in enumerate(files or []):
-                url = item.get("url") or ""
-                if not url:
-                    continue
-                course_slug = (
-                    item.get("course_slug") or item.get("run_slug") or
-                    (course_slug_fn(url) if course_slug_fn else "")
-                )
-                tx.execute(
-                    "INSERT INTO lesson_catalog_files "
-                    "(url, title, description, course_slug, kind, seq, payload, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
-                    "ON CONFLICT(url) DO UPDATE SET "
-                    "title=excluded.title, description=excluded.description, "
-                    "course_slug=excluded.course_slug, kind=excluded.kind, "
-                    "seq=excluded.seq, payload=excluded.payload, "
-                    "updated_at=excluded.updated_at",
-                    [
-                        url,
-                        item.get("title") or "",
-                        item.get("description") or "",
-                        course_slug or "",
-                        item.get("kind") or "",
-                        int(item.get("seq") or 999),
-                        json.dumps(item, ensure_ascii=False, sort_keys=True),
-                        now,
-                    ],
-                )
-                tx.execute(
-                    "INSERT INTO lesson_subject_hits (subject, url, rank, updated_at) "
-                    "VALUES (?, ?, ?, ?) "
-                    "ON CONFLICT(subject, url) DO UPDATE SET "
-                    "rank=excluded.rank, updated_at=excluded.updated_at",
-                    [subject, url, rank, now],
-                )
-            tx.execute(
-                "INSERT INTO lesson_background_subjects "
-                "(subject, reason, status, attempts, updated_at) "
-                "VALUES (?, '', 'ready', 0, ?) "
-                "ON CONFLICT(subject) DO UPDATE SET "
-                "status='ready', updated_at=excluded.updated_at",
-                [subject, now],
+        statements = [("DELETE FROM lesson_subject_hits WHERE subject = ?", [subject])]
+        for rank, item in enumerate(files or []):
+            url = item.get("url") or ""
+            if not url:
+                continue
+            course_slug = (
+                item.get("course_slug") or item.get("run_slug") or
+                (course_slug_fn(url) if course_slug_fn else "")
             )
-            tx.commit()
-        except Exception:
-            tx.rollback()
-            raise
+            statements.append((
+                "INSERT INTO lesson_catalog_files "
+                "(url, title, description, course_slug, kind, seq, payload, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(url) DO UPDATE SET "
+                "title=excluded.title, description=excluded.description, "
+                "course_slug=excluded.course_slug, kind=excluded.kind, "
+                "seq=excluded.seq, payload=excluded.payload, "
+                "updated_at=excluded.updated_at",
+                [
+                    url,
+                    item.get("title") or "",
+                    item.get("description") or "",
+                    course_slug or "",
+                    item.get("kind") or "",
+                    int(item.get("seq") or 999),
+                    json.dumps(item, ensure_ascii=False, sort_keys=True),
+                    now,
+                ],
+            ))
+            statements.append((
+                "INSERT INTO lesson_subject_hits (subject, url, rank, updated_at) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(subject, url) DO UPDATE SET "
+                "rank=excluded.rank, updated_at=excluded.updated_at",
+                [subject, url, rank, now],
+            ))
+        statements.append((
+            "INSERT INTO lesson_background_subjects "
+            "(subject, reason, status, attempts, updated_at) "
+            "VALUES (?, '', 'ready', 0, ?) "
+            "ON CONFLICT(subject) DO UPDATE SET "
+            "status='ready', updated_at=excluded.updated_at",
+            [subject, now],
+        ))
+        client.batch(statements)
     finally:
         client.close()
 
@@ -641,6 +636,12 @@ def remember_lesson_mit_courses(courses: list, course_slug_fn=None) -> int:
                     now,
                 ],
             )
+            if url:
+                client.execute(
+                    "DELETE FROM lesson_mit_courses "
+                    "WHERE url = ? AND course_slug != ?",
+                    [url, slug],
+                )
             count += 1
         return count
     finally:

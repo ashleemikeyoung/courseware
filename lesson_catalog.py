@@ -8,6 +8,7 @@ structured knowledge later.
 """
 
 import queue
+import re
 import sys
 import threading
 import time
@@ -78,6 +79,11 @@ def prewarm_now(subject: str) -> int:
     import lesson
     import tutor
 
+    if _looks_like_ocw_course_slug(subject_key):
+        inventory = tutor._course_inventory(subject_key, limit=200)
+        remember_mit_files(subject_key, inventory)
+        return len(inventory)
+
     files = lesson._mit_files(subject_key, limit=40)
     remember_mit_files(subject_key, files)
     slug = tutor._home_course(files, subject_key)
@@ -121,7 +127,6 @@ def _catalog_worker(max_pages: int) -> None:
 def refresh_catalog_now(max_pages: int = 0, page_size: int = 100,
                         force: bool = False) -> int:
     import lesson
-    import tutor
 
     run = memory_client.lesson_catalog_run("mit-ocw-courses")
     now = int(time.time())
@@ -148,12 +153,6 @@ def refresh_catalog_now(max_pages: int = 0, page_size: int = 100,
             break
         total += memory_client.remember_lesson_mit_courses(
             results, course_slug_fn=_course_slug_from_url)
-        for item in results:
-            slug = (_course_slug_from_url(item.get("url") or "") or
-                    item.get("run_slug") or item.get("readable_id") or "")
-            slug = (slug or "").removeprefix("courses/")
-            if slug:
-                enqueue_subject(slug, reason="MIT catalog course inventory")
         if len(results) < int(page_size or 100):
             break
         page += 1
@@ -233,6 +232,10 @@ def _subject_from_text(text: str, lesson_mode: bool = False) -> str:
     if len(raw.split()) > 8:
         return ""
     return tutor.normalize_subject(raw)
+
+
+def _looks_like_ocw_course_slug(text: str) -> bool:
+    return bool(re.match(r"^(?:res|[a-z]+|\d+[a-z]*)-[a-z0-9]", text or "", re.I))
 
 
 def re_subject_request(text: str) -> str:
