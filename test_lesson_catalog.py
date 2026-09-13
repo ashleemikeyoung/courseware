@@ -121,10 +121,28 @@ class FakeMemoryClient:
         }
 
 
+class FailingMemoryClient:
+    def __getattr__(self, name):
+        raise RuntimeError("libsql offline")
+
+
 def main():
     lesson_catalog.memory_client = FakeMemoryClient()
     chk("lesson catalog delegates storage to memory client",
         hasattr(lesson_catalog.memory_client, "cached_lesson_mit_files"), True)
+
+    print("LibSQL outage tolerance")
+    working_memory = lesson_catalog.memory_client
+    lesson_catalog.memory_client = FailingMemoryClient()
+    try:
+        chk("cache miss is a soft miss when libSQL is offline",
+            lesson_catalog.cached_mit_files("consumer choice"), [])
+        lesson_catalog.remember_mit_files("consumer choice", [{"url": "u"}])
+        lesson_catalog.enqueue_subject("consumer choice", reason="offline")
+        lesson_catalog._catalog_worker(0)
+        chk("offline catalog calls do not crash", True, True)
+    finally:
+        lesson_catalog.memory_client = working_memory
 
     print("MIT record cache")
     rows = [{

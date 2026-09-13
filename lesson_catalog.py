@@ -27,12 +27,31 @@ _CATALOG_STARTED = False
 _LOCK = threading.Lock()
 
 
+def _catalog_note(message: str) -> None:
+    print(f"  Lesson catalog unavailable ({message}). Continuing without prewarm.",
+          file=sys.stderr)
+
+
+def _safe_update_run(name: str, status: str, cursor: str = "",
+                     message: str = "") -> None:
+    try:
+        memory_client.update_lesson_catalog_run(
+            name, status, cursor=cursor, message=message)
+    except Exception as exc:
+        _catalog_note(f"{type(exc).__name__}: {exc}")
+
+
 def cached_mit_files(subject: str, limit: int = 40) -> list:
     subject_key = _subject_key(subject)
     if not subject_key:
         return []
     now = int(time.time())
-    rows = memory_client.cached_lesson_mit_files(subject_key, limit=int(limit or 40))
+    try:
+        rows = memory_client.cached_lesson_mit_files(
+            subject_key, limit=int(limit or 40))
+    except Exception as exc:
+        _catalog_note(f"{type(exc).__name__}: {exc}")
+        return []
     if not rows:
         return []
     if now - max(int(r.get("updated_at") or 0) for r in rows) > STALE_AFTER_SECONDS:
@@ -44,22 +63,29 @@ def remember_mit_files(subject: str, files: list) -> None:
     subject_key = _subject_key(subject)
     if not subject_key:
         return
-    memory_client.remember_lesson_mit_files(
-        subject_key,
-        files or [],
-        course_slug_fn=_course_slug_from_url,
-    )
+    try:
+        memory_client.remember_lesson_mit_files(
+            subject_key,
+            files or [],
+            course_slug_fn=_course_slug_from_url,
+        )
+    except Exception as exc:
+        _catalog_note(f"{type(exc).__name__}: {exc}")
 
 
 def enqueue_subject(subject: str, reason: str = "") -> None:
     subject_key = _subject_key(subject)
     if not subject_key:
         return
-    queued = memory_client.enqueue_lesson_subject(
-        subject_key,
-        reason=reason or "",
-        stale_after_seconds=STALE_AFTER_SECONDS,
-    )
+    try:
+        queued = memory_client.enqueue_lesson_subject(
+            subject_key,
+            reason=reason or "",
+            stale_after_seconds=STALE_AFTER_SECONDS,
+        )
+    except Exception as exc:
+        _catalog_note(f"{type(exc).__name__}: {exc}")
+        return
     if not queued:
         return
     _QUEUE.put(subject_key)
@@ -117,10 +143,10 @@ def start_catalog_refresh(max_pages: int = 0) -> None:
 def _catalog_worker(max_pages: int) -> None:
     try:
         count = refresh_catalog_now(max_pages=max_pages)
-        memory_client.update_lesson_catalog_run(
+        _safe_update_run(
             "mit-ocw-courses", "ready", message=f"{count} courses refreshed")
     except Exception as exc:
-        memory_client.update_lesson_catalog_run(
+        _safe_update_run(
             "mit-ocw-courses", "error", message=f"{type(exc).__name__}: {exc}")
 
 
@@ -190,11 +216,17 @@ def _worker() -> None:
         subject = _QUEUE.get()
         now = int(time.time())
         try:
-            memory_client.mark_lesson_subject_running(subject, updated_at=now)
+            try:
+                memory_client.mark_lesson_subject_running(subject, updated_at=now)
+            except Exception as exc:
+                _catalog_note(f"{type(exc).__name__}: {exc}")
             prewarm_now(subject)
         except Exception:
-            memory_client.mark_lesson_subject_error(
-                subject, updated_at=int(time.time()))
+            try:
+                memory_client.mark_lesson_subject_error(
+                    subject, updated_at=int(time.time()))
+            except Exception as exc:
+                _catalog_note(f"{type(exc).__name__}: {exc}")
         finally:
             _QUEUE.task_done()
 
