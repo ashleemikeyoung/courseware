@@ -1964,6 +1964,10 @@ function mdToHtml(md, opts = {}){
       close();
       out.push(lessonSubjectHtml(m[1]));
     }
+    else if ((m = l.match(/^\[LESSON_MAJOR\s+(.+?)\]$/i))) {
+      close();
+      out.push(lessonMajorHtml(m[1]));
+    }
     else if (lessonActionWordsFromText(l).length) {
       close();
       out.push(lessonActionsHtml(lessonActionWordsFromText(l).join(" ")));
@@ -2260,6 +2264,14 @@ function lessonSubjectHtml(raw){
   return `<div class="lesson-actions">` +
     `<button type="button" class="lesson-action" data-lesson-subject="${escAttr(subject)}">` +
     `Start ${esc(subject)}</button></div>`;
+}
+
+function lessonMajorHtml(raw){
+  const subject = String(raw || "").trim();
+  if (!subject) return "";
+  return `<div class="lesson-actions">` +
+    `<button type="button" class="lesson-action" data-lesson-major="${escAttr(subject)}">` +
+    `Start full ${esc(subject)} path</button></div>`;
 }
 
 function lessonActionWordsFromText(text){
@@ -4100,6 +4112,12 @@ document.addEventListener("click", e => {
   if (subject) {
     e.preventDefault();
     sendLessonSubject(subject.dataset.lessonSubject || "");
+    return;
+  }
+  const major = e.target.closest("[data-lesson-major]");
+  if (major) {
+    e.preventDefault();
+    sendLessonCommand(`full major ${major.dataset.lessonMajor || ""}`);
   }
 });
 $("#attachmentInput").onchange = uploadAttachments;

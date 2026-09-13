@@ -1084,8 +1084,11 @@ def summarize_result(result: dict) -> str:
 def _lesson_response(text: str, found: bool = True, **extra) -> dict:
     metrics = {"route": "lesson_command", "lesson_mode": True, "found": found}
     metrics.update(extra)
-    return {"text": mathtext.normalize(text or ""), "evidence": {}, "grounded": found,
-            "passages_offered": 0, "metrics": metrics}
+    response = {"text": mathtext.normalize(text or ""), "evidence": {},
+                "grounded": found, "passages_offered": 0, "metrics": metrics}
+    if extra.get("project"):
+        response["project"] = extra["project"]
+    return response
 
 
 def answer_lesson_command(question: str, project: str = None,
@@ -1127,6 +1130,27 @@ def answer_lesson_command(question: str, project: str = None,
 
     import tutor
 
+    full_major = re.match(r"^\s*(?:full\s+)?major\s+(.+?)\s*$", body, re.I)
+    if full_major:
+        major_subject = tutor.normalize_subject(full_major.group(1))
+        subjects = tutor.major_path_subjects(major_subject)
+        if subjects:
+            first = subjects[0]
+            syllabus = tutor.plan(first, on_progress=on_progress)
+            tutor.set_current(syllabus["project"])
+            syllabus = tutor.ensure_indexed(syllabus, on_progress=on_progress)
+            return _lesson_response(
+                f"Starting the full **{major_subject}** path.\n\n"
+                f"First course: **{first}**\n\n"
+                + tutor.render_start(syllabus),
+                project=syllabus["project"],
+                major=major_subject,
+                course=syllabus["course"]["number"],
+                lectures=len(syllabus["lectures"]))
+        view = tutor.render_major(major_subject)
+        if view:
+            return _lesson_response(view, project=projects.safe(major_subject))
+
     syllabus = tutor.current_syllabus(use_fallback=False)
     kind, payload = tutor.route(syllabus, body)
 
@@ -1147,6 +1171,12 @@ def answer_lesson_command(question: str, project: str = None,
     if kind == "question":
         return _lesson_response(tutor.answer_question(syllabus, payload),
                                 project=syllabus.get("project", ""))
+
+    if tutor.is_major_subject(payload):
+        tutor.clear_current()
+        return _lesson_response(tutor.render_major(payload),
+                                project=projects.safe(payload),
+                                major=tutor.normalize_subject(payload))
 
     try:
         syllabus = tutor.plan(payload, on_progress=on_progress)

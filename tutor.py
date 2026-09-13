@@ -59,6 +59,64 @@ import lesson
 import lesson_catalog
 
 
+MIT_MAJOR_PLANS = {
+    "economics": {
+        "title": "Economics",
+        "school": "MIT Department of Economics",
+        "degree": "Bachelor of Science in Economics",
+        "course": "14-1",
+        "source": "https://economics.mit.edu/academic-programs/undergraduate-programs/majors",
+        "required": [
+            {"number": "14.01", "title": "Principles of Microeconomics"},
+            {"number": "14.02", "title": "Principles of Macroeconomics"},
+            {"number": "14.30", "title": "Introduction to Statistical Methods in Economics"},
+            {"number": "14.32", "title": "Econometric Data Science"},
+        ],
+        "choices": [
+            {
+                "name": "Intermediate microeconomics",
+                "pick": 1,
+                "courses": [
+                    {"number": "14.04", "title": "Intermediate Microeconomic Theory"},
+                    {"number": "14.12", "title": "Economic Applications of Game Theory"},
+                    {"number": "14.15", "title": "Networks"},
+                    {"number": "14.16", "title": "Strategy and Information"},
+                    {"number": "14.17", "title": "Blockchain and Financial System Design"},
+                    {"number": "14.19", "title": "Market Design"},
+                    {"number": "14.26", "title": "Organizational Economics"},
+                ],
+            },
+            {
+                "name": "Macroeconomics and communication intensive work",
+                "pick": 2,
+                "courses": [
+                    {"number": "14.05", "title": "Intermediate Applied Macroeconomics"},
+                    {"number": "14.06", "title": "Advanced Macroeconomics"},
+                    {"number": "14.18", "title": "Mathematical Economic Modeling"},
+                    {"number": "14.33", "title": "Economics Research & Communication"},
+                    {"number": "14.35", "title": "Why Markets Fail"},
+                ],
+            },
+        ],
+        "capstone": [
+            {"number": "14.THU", "title": "Thesis, or replace thesis with an economics elective"},
+        ],
+        "electives": [
+            {"number": "14.03", "title": "Microeconomic Theory & Public Policy"},
+            {"number": "14.13", "title": "Psychology and Economics"},
+            {"number": "14.20", "title": "Industrial Organization"},
+            {"number": "14.41", "title": "Public Economics"},
+            {"number": "14.42", "title": "Environmental Policy and Economics"},
+            {"number": "14.54", "title": "International Trade"},
+            {"number": "14.64", "title": "Labor Economics and Public Policy"},
+            {"number": "14.73", "title": "The Challenge of World Poverty"},
+            {"number": "14.74", "title": "Foundations of Development Economics"},
+        ],
+        "elective_note": "Choose four economics electives.",
+    },
+}
+
+
 # ---------------------------------------------------------------------------
 # The teaching contract
 #
@@ -607,6 +665,111 @@ SUBJECT_STOP = {
 
 def _subject_tokens(subject: str) -> set:
     return {w for w in re.findall(r"[a-z]{3,}", (subject or "").lower())} - SUBJECT_STOP
+
+
+def is_major_subject(subject: str) -> bool:
+    return normalize_subject(subject).lower() in MIT_MAJOR_PLANS
+
+
+def _catalog_courses_by_number() -> dict:
+    rows = lesson_catalog.cached_mit_courses(limit=0)
+    out = {}
+    for row in rows or []:
+        for number in str(row.get("course_number") or "").split(","):
+            number = number.strip()
+            if not number:
+                continue
+            out.setdefault(number, []).append(row)
+    return out
+
+
+def _course_subject(item: dict, catalog: dict) -> str:
+    number = item.get("number", "")
+    title = item.get("title", "")
+    rows = catalog.get(number) or []
+    if rows:
+        best = rows[0]
+        return f"{number} {strip_number_prefix(best.get('title') or title)}"
+    return f"{number} {title}".strip()
+
+
+def major_path_subjects(subject: str) -> list:
+    plan = MIT_MAJOR_PLANS.get(normalize_subject(subject).lower())
+    if not plan:
+        return []
+    catalog = _catalog_courses_by_number()
+    items = list(plan.get("required") or [])
+    for block in plan.get("choices") or []:
+        courses = block.get("courses") or []
+        if courses:
+            items.append(courses[0])
+    items.extend(plan.get("capstone") or [])
+    return [_course_subject(item, catalog) for item in items
+            if item.get("number") != "14.THU"]
+
+
+def major_action_line(subject: str) -> str:
+    subject = normalize_subject(subject)
+    return f"[LESSON_MAJOR {subject}]" if subject else ""
+
+
+def render_major(subject: str) -> str:
+    subject = normalize_subject(subject)
+    plan = MIT_MAJOR_PLANS.get(subject.lower())
+    if not plan:
+        return ""
+    catalog = _catalog_courses_by_number()
+
+    def course_line(item: dict) -> list:
+        number = item.get("number", "")
+        title = item.get("title", "")
+        rows = catalog.get(number) or []
+        suffix = "available in local OCW catalog" if rows else "search when opened"
+        return [
+            f"- **{number}** {title} ({suffix})",
+            subject_action_line(_course_subject(item, catalog)),
+        ]
+
+    lines = [
+        f"# {plan['title']} Major",
+        "",
+        f"{plan['school']} · {plan['degree']} · Course {plan['course']}",
+        "",
+        "This is a major, not a single lesson topic. Start the full path to move through the required spine, or open one course at a time.",
+        "",
+        major_action_line(subject),
+        "",
+        "## Required spine",
+        "",
+    ]
+    for item in plan.get("required") or []:
+        lines.extend(course_line(item))
+
+    for block in plan.get("choices") or []:
+        pick = block.get("pick", 1)
+        label = "course" if int(pick or 1) == 1 else "courses"
+        lines += ["", f"## Choose {pick}: {block['name']}", ""]
+        lines[-2] += f" ({label})"
+        for item in block.get("courses") or []:
+            lines.extend(course_line(item))
+
+    if plan.get("capstone"):
+        lines += ["", "## Capstone", ""]
+        for item in plan["capstone"]:
+            lines.append(f"- **{item['number']}** {item['title']}")
+
+    if plan.get("electives"):
+        lines += ["", "## Electives", "", plan.get("elective_note", ""), ""]
+        for item in plan["electives"]:
+            lines.extend(course_line(item))
+
+    lines += [
+        "",
+        "Source: MIT Economics major requirements — inside ElRoi",
+        "",
+        actions_line("related", "sources"),
+    ]
+    return "\n".join(lines)
 
 
 def _home_course(hits: list, subject: str = "", videos: list = None) -> str:

@@ -389,6 +389,21 @@ def main():
                            "introduction to theory"),
         "14-121-microeconomic-theory-i-fall-2015")
 
+    print("Major subjects")
+    chk("economics is a major, not one lesson topic",
+        tutor.is_major_subject("economics"), True)
+    major = tutor.render_major("economics")
+    chk("major view names the degree path",
+        "Bachelor of Science in Economics" in major, True)
+    chk("major view lists required courses",
+        "14.01" in major and "14.32" in major, True)
+    chk("major view exposes the full path action",
+        "[LESSON_MAJOR economics]" in major, True)
+    chk("major view exposes individual course starts",
+        "[LESSON_SUBJECT 14.01 Principles of Microeconomics]" in major, True)
+    chk("major view does not print raw external links",
+        "http" in major, False)
+
     print("Navigation words")
     chk("next", tutor.navigation_word("next"), "next")
     chk("case and padding ignored", tutor.navigation_word("  Quiz Me "), "quiz")
@@ -519,6 +534,35 @@ def main():
         tutor.route(OPEN, "stochastic dominance")[1], "stochastic dominance")
 
     print("Navigation, through lesson.py's Ask entry point")
+    reply = lesson.answer_lesson_command("/lesson economics")
+    chk("a major subject renders a major view",
+        "This is a major, not a single lesson topic" in reply["text"], True)
+    chk("the major view is associated with the major project",
+        reply.get("project"), "economics")
+
+    original_plan = tutor.plan
+    original_ensure_indexed = tutor.ensure_indexed
+    original_render_start = tutor.render_start
+    planned_subjects = []
+
+    def fake_plan(subject, project=None, on_progress=None):
+        planned_subjects.append(subject)
+        return copy.deepcopy(SYLLABUS)
+
+    tutor.plan = fake_plan
+    tutor.ensure_indexed = lambda syl, *args, **kwargs: syl
+    tutor.render_start = lambda syl: "# first course"
+    try:
+        reply = lesson.answer_lesson_command("/lesson full major economics")
+    finally:
+        tutor.plan = original_plan
+        tutor.ensure_indexed = original_ensure_indexed
+        tutor.render_start = original_render_start
+    chk("full major starts with the first required course",
+        planned_subjects, ["14.01 Principles of Microeconomics"])
+    chk("full major response explains what started",
+        "Starting the full **economics** path" in reply["text"], True)
+
     tutor.save(dict(SYLLABUS))
     tutor.set_current("expected-utility")
     lesson.answer_lesson_command("/lesson")

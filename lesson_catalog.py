@@ -188,7 +188,7 @@ def refresh_catalog_now(max_pages: int = 0, page_size: int = 100,
 def cached_course_numbers(limit: int = 0) -> list:
     import tutor
 
-    rows = memory_client.list_lesson_mit_courses(limit=int(limit or 0))
+    rows = cached_mit_courses(limit=limit)
     numbers = []
     seen = set()
     for row in rows:
@@ -200,6 +200,14 @@ def cached_course_numbers(limit: int = 0) -> list:
                 seen.add(number)
                 numbers.append(number)
     return numbers
+
+
+def cached_mit_courses(limit: int = 0) -> list:
+    try:
+        return memory_client.list_lesson_mit_courses(limit=int(limit or 0))
+    except Exception as exc:
+        _catalog_note(f"{type(exc).__name__}: {exc}")
+        return []
 
 
 def _start_worker() -> None:
