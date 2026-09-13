@@ -31,6 +31,40 @@ from email.parser import BytesParser
 from pathlib import Path
 from urllib.parse import quote_plus
 
+
+def _reexec_into_rag_env_if_needed():
+    """
+    Make the easy command work.
+
+    The app's dependencies live in the conda environment named "rag". If a
+    launcher or terminal starts plain ``python app.py``, imports below fail
+    before Flask can even show a useful message. Re-exec before those imports
+    so the update helper, desktop shortcuts, and hand starts all land in the
+    same environment.
+    """
+    if os.environ.get("CONDA_DEFAULT_ENV") == "rag":
+        return
+    if os.environ.get("ELROI_CONDA_REEXEC") == "1":
+        return
+    try:
+        import pypdf  # noqa: F401
+        import flask  # noqa: F401
+        return
+    except Exception:
+        pass
+
+    env = dict(os.environ)
+    env["ELROI_CONDA_REEXEC"] = "1"
+    os.execvpe(
+        "conda",
+        ["conda", "run", "--no-capture-output", "-n", "rag",
+         "python", *sys.argv],
+        env,
+    )
+
+
+_reexec_into_rag_env_if_needed()
+
 from flask import Flask, Response, jsonify, render_template, request, send_file
 
 import writer
