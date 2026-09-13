@@ -98,6 +98,7 @@ from datetime import date
 from io import BytesIO
 from pathlib import Path
 
+import mathtext
 import projects
 from rag import ingest_content
 
@@ -1083,7 +1084,7 @@ def summarize_result(result: dict) -> str:
 def _lesson_response(text: str, found: bool = True, **extra) -> dict:
     metrics = {"route": "lesson_command", "lesson_mode": True, "found": found}
     metrics.update(extra)
-    return {"text": text, "evidence": {}, "grounded": found,
+    return {"text": mathtext.normalize(text or ""), "evidence": {}, "grounded": found,
             "passages_offered": 0, "metrics": metrics}
 
 

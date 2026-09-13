@@ -230,6 +230,32 @@ def wrap_raw_tex_display(text: str) -> str:
     return rf"\[{repair_malformed_tex(text)}\]"
 
 
+def repair_raw_tex_display_lines(text: str) -> str:
+    """
+    Wrap raw display TeX even when it is one line inside a longer answer.
+
+    The whole-string guard above catches a response that is only a formula.
+    Real lesson answers usually say "The planner solves:" and then put the
+    formula on the next line. Without this pass, wrap_bare_equations() sees
+    fragments like ``i=1`` inside a raw TeX line and wraps those fragments
+    individually, which is how the display gets visibly corrupted.
+    """
+    if not text or "\\" not in text:
+        return text or ""
+
+    lines = text.splitlines(keepends=True)
+    changed = False
+    for idx, line in enumerate(lines):
+        body = line[:-1] if line.endswith("\n") else line
+        newline = "\n" if line.endswith("\n") else ""
+        leading = body[:len(body) - len(body.lstrip())]
+        stripped = body.strip()
+        if looks_like_raw_tex_display(stripped):
+            lines[idx] = f"{leading}{wrap_raw_tex_display(stripped)}{newline}"
+            changed = True
+    return "".join(lines) if changed else text
+
+
 def looks_like_math(body: str) -> bool:
     """
     Does the text between two dollar signs actually contain maths?
@@ -287,6 +313,7 @@ def normalize(text: str) -> str:
     it first stops the inline pass from tearing a $$ pair in half.
     """
     text = repair_line_broken_math(text or "")
+    text = repair_raw_tex_display_lines(text)
     raw_display = wrap_raw_tex_display(text)
     if raw_display != text:
         return raw_display

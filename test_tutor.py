@@ -613,6 +613,17 @@ def main():
         "http" in reply["text"] or "c3" in reply["text"], False)
     chk("related offers an in-app lesson start",
         "[LESSON_SUBJECT 14.123 Micro III]" in reply["text"], True)
+    malformed = (
+        "The planner solves:\n"
+        r"\max\_{{E\_i(t)}*{((i=1)}^N} \sum*{(t=0)}^T \left[ "
+        r"\sum\_{(i=1)}^N W\_i(E\_i(t)), Y\_i(t)) - \lambda \cdot "
+        r"C(\sum\_{((i=1)}^N E\_i(t)) \right])"
+    )
+    boundary = lesson._lesson_response(malformed)["text"]
+    chk("lesson response boundary repairs raw display maths",
+        r"\max_{\{E_i(t)\}_{i=1}^N}" in boundary, True)
+    chk("lesson response boundary does not leak the broken formula",
+        r"\max\_{{E\_i(t)}*{((i=1)}^N}" in boundary, False)
 
     lesson.answer_lesson_command("/lesson next")
     reply = lesson.answer_lesson_command("/lesson next")

@@ -132,6 +132,18 @@ def main():
         r"\[\max_{\{E_i(t)\}_{i=1}^N} \sum_{t=0}^T \left[ "
         r"\sum_{i=1}^N W_i(E_i(t), Y_i(t)) - \lambda \cdot "
         r"C(\sum_{i=1}^N E_i(t)) \right]\]")
+    chk("model-mangled display optimization is repaired inside prose",
+        mathtext.normalize(
+            "The planner solves:\n"
+            r"\max\_{{E\_i(t)}*{((i=1)}^N} \sum*{(t=0)}^T \left[ "
+            r"\sum\_{(i=1)}^N W\_i(E\_i(t)), Y\_i(t)) - \lambda \cdot "
+            r"C(\sum\_{((i=1)}^N E\_i(t)) \right])"
+            "\nThen interprets the result."),
+        "The planner solves:\n"
+        r"\[\max_{\{E_i(t)\}_{i=1}^N} \sum_{t=0}^T \left[ "
+        r"\sum_{i=1}^N W_i(E_i(t), Y_i(t)) - \lambda \cdot "
+        r"C(\sum_{i=1}^N E_i(t)) \right]\]"
+        "\nThen interprets the result.")
 
     print("Line-broken model maths is repaired")
     chk("duplicate expectation stack",
