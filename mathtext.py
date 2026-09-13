@@ -78,6 +78,8 @@ BARE_INEQUALITY_RE = re.compile(
     r"(?![\w$])")
 BAD_SET_LABEL_RE = re.compile(r"\(?\bB(feasible|preferences|budget)\b\)?")
 MATH_SPAN_RE = re.compile(r"(\\\(.+?\\\)|\\\[.+?\\\])", re.DOTALL)
+RAW_TEX_DISPLAY_RE = re.compile(
+    r"^\s*\\(?:max|min|sum|prod|int|left|mathbb|frac|begin)\b", re.DOTALL)
 
 MAX_INLINE = 200
 MATH_ATOM_RE = re.compile(
@@ -180,6 +182,54 @@ def wrap_bare_equations(text: str) -> str:
     return "".join(parts)
 
 
+def repair_malformed_tex(tex: str) -> str:
+    """
+    Repair common model/Markdown damage inside raw TeX formulas.
+
+    Local models sometimes produce a formula without delimiters, after
+    Markdown escaping has already touched it: ``\\sum*{i=1}`` instead of
+    ``\\sum_{i=1}``, ``\\_`` instead of ``_``, and doubled parentheses inside
+    subscripts. This pass is intentionally small and only runs on raw TeX-ish
+    strings, before the prose equation wrapper can mangle the fragments.
+    """
+    out = tex or ""
+    out = out.replace(r"\_", "_")
+    out = re.sub(r"\\(sum|prod|int)\*\{", r"\\\1_{", out)
+    out = re.sub(
+        r"\}\*\{\(+([^{}]+?)\}(\^[A-Za-z0-9]+)",
+        lambda m: r"}_{" + m.group(1).strip("()") + r"}" + m.group(2),
+        out,
+    )
+    out = re.sub(r"_\{\(+([^{}()]+)\)\}", r"_{\1}", out)
+    out = re.sub(r"_\{\(+([^{}()]+)\}", r"_{\1}", out)
+    out = re.sub(
+        r"\\max_\{\{([^{}]+)\}_\{([^{}]+)\}(\^[A-Za-z0-9]+)\}",
+        r"\\max_{\{\1\}_{\2}\3}",
+        out,
+    )
+    out = re.sub(
+        r"W_([A-Za-z0-9]+)\(E_([A-Za-z0-9]+)\(t\)\),\s*Y_\1\(t\)\)",
+        r"W_\1(E_\2(t), Y_\1(t))",
+        out,
+    )
+    out = out.replace(r"\right])", r"\right]")
+    out = re.sub(r"\s+", " ", out).strip()
+    return out
+
+
+def looks_like_raw_tex_display(text: str) -> bool:
+    stripped = (text or "").strip()
+    if not RAW_TEX_DISPLAY_RE.match(stripped):
+        return False
+    return bool(re.search(r"\\[A-Za-z]+|[_^{}]", stripped))
+
+
+def wrap_raw_tex_display(text: str) -> str:
+    if not looks_like_raw_tex_display(text):
+        return text or ""
+    return rf"\[{repair_malformed_tex(text)}\]"
+
+
 def looks_like_math(body: str) -> bool:
     """
     Does the text between two dollar signs actually contain maths?
@@ -237,6 +287,9 @@ def normalize(text: str) -> str:
     it first stops the inline pass from tearing a $$ pair in half.
     """
     text = repair_line_broken_math(text or "")
+    raw_display = wrap_raw_tex_display(text)
+    if raw_display != text:
+        return raw_display
     if "$" not in text:
         return wrap_bare_equations(text)
 

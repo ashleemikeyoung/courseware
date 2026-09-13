@@ -124,6 +124,14 @@ def main():
     chk("a long run between dollars is not swallowed",
         mathtext.normalize("$5 " + "x" * 250 + r" \alpha $"),
         "$5 " + "x" * 250 + r" \alpha $")
+    chk("model-mangled display optimization is repaired",
+        mathtext.normalize(
+            r"\max\_{{E\_i(t)}*{((i=1)}^N} \sum*{(t=0)}^T \left[ "
+            r"\sum\_{(i=1)}^N W\_i(E\_i(t)), Y\_i(t)) - \lambda \cdot "
+            r"C(\sum\_{((i=1)}^N E\_i(t)) \right])"),
+        r"\[\max_{\{E_i(t)\}_{i=1}^N} \sum_{t=0}^T \left[ "
+        r"\sum_{i=1}^N W_i(E_i(t), Y_i(t)) - \lambda \cdot "
+        r"C(\sum_{i=1}^N E_i(t)) \right]\]")
 
     print("Line-broken model maths is repaired")
     chk("duplicate expectation stack",
