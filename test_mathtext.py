@@ -144,6 +144,14 @@ def main():
         r"\sum_{i=1}^N W_i(E_i(t), Y_i(t)) - \lambda \cdot "
         r"C(\sum_{i=1}^N E_i(t)) \right]\]"
         "\nThen interprets the result.")
+    chk("escaped unclosed display formula is repaired",
+        mathtext.normalize(
+            r"\\[\max \sum\_i \beta\_i \mathbb{E} \left[ "
+            r"\sum\_t \delta\_t Y\_i(t) - \text{Cost}\_i(t) + "
+            r"\text{Benefit}(C(t)) \right]"),
+        r"\[\max \sum_i \beta_i \mathbb{E} \left[ "
+        r"\sum_t \delta_t Y_i(t) - \text{Cost}_i(t) + "
+        r"\text{Benefit}(C(t)) \right]\]")
 
     print("Line-broken model maths is repaired")
     chk("duplicate expectation stack",

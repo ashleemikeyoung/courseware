@@ -88,6 +88,8 @@ MATH_ATOM_RE = re.compile(
 MATHY_PREFIX_RE = re.compile(
     r"^\s*([A-Za-z][A-Za-z0-9_]*(?:\[[^\]\n]+\]|\([^\)\n]+\))?"
     r"(?:\s*[=+\-−<>×⋅·*/]\s*[^,.;:\n]+)?)")
+DISPLAY_OPEN_RE = re.compile(r"(?<!\\)\\\[")
+DISPLAY_CLOSE_RE = re.compile(r"(?<!\\)\\\]")
 
 
 # Words that only appear between two dollar signs when those dollar signs are
@@ -212,9 +214,47 @@ def repair_malformed_tex(tex: str) -> str:
         r"W_\1(E_\2(t), Y_\1(t))",
         out,
     )
+    left_brackets = len(re.findall(r"\\left\[", out))
+    right_brackets = len(re.findall(r"\\right\]", out))
+    if left_brackets > right_brackets:
+        out = out.rstrip() + (" " + r"\right]") * (left_brackets - right_brackets)
     out = out.replace(r"\right])", r"\right]")
     out = re.sub(r"\s+", " ", out).strip()
     return out
+
+
+def repair_display_delimiters(text: str) -> str:
+    """
+    Repair model-escaped and unclosed display math delimiters.
+
+    The UI parser treats ``\\[`` as the start of a math box. Models sometimes
+    emit it as ``\\\\[`` after Markdown-style escaping, or start a display and
+    forget the closing ``\\]``. Normalize those before span detection so the
+    rest of this module can treat the formula as one protected math unit.
+    """
+    if not text or ("\\[" not in text and "\\]" not in text):
+        return text or ""
+    out = re.sub(r"(?m)^([ \t]*)\\\\\[(.*)$", r"\1\\[\2", text or "")
+    out = re.sub(r"(?m)^(.*?)\\\\\]([ \t]*)$", r"\1\\]\2", out)
+    opens = len(DISPLAY_OPEN_RE.findall(out))
+    closes = len(DISPLAY_CLOSE_RE.findall(out))
+    if opens > closes:
+        out = out.rstrip() + r"\]"
+    return out
+
+
+def repair_delimited_math_spans(text: str) -> str:
+    if not text:
+        return text or ""
+
+    def display(m):
+        return rf"\[{repair_malformed_tex(m.group(1))}\]"
+
+    def inline(m):
+        return rf"\({repair_malformed_tex(m.group(1))}\)"
+
+    text = re.sub(r"\\\[(.+?)\\\]", display, text, flags=re.DOTALL)
+    return re.sub(r"\\\((.+?)\\\)", inline, text, flags=re.DOTALL)
 
 
 def looks_like_raw_tex_display(text: str) -> bool:
@@ -312,7 +352,8 @@ def normalize(text: str) -> str:
     Display maths first: $$ is unambiguous, has no currency reading, and doing
     it first stops the inline pass from tearing a $$ pair in half.
     """
-    text = repair_line_broken_math(text or "")
+    text = repair_display_delimiters(repair_line_broken_math(text or ""))
+    text = repair_delimited_math_spans(text)
     text = repair_raw_tex_display_lines(text)
     raw_display = wrap_raw_tex_display(text)
     if raw_display != text:

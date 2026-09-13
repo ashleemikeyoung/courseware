@@ -668,6 +668,18 @@ def main():
         r"\max_{\{E_i(t)\}_{i=1}^N}" in boundary, True)
     chk("lesson response boundary does not leak the broken formula",
         r"\max\_{{E\_i(t)}*{((i=1)}^N}" in boundary, False)
+    escaped_display = (
+        r"\\[\max \sum\_i \beta\_i \mathbb{E} \left[ "
+        r"\sum\_t \delta\_t Y\_i(t) - \text{Cost}\_i(t) + "
+        r"\text{Benefit}(C(t)) \right]"
+    )
+    boundary = lesson._lesson_response(escaped_display)["text"]
+    chk("lesson response boundary repairs escaped display opener",
+        boundary.startswith(r"\[\max \sum_i \beta_i"), True)
+    chk("lesson response boundary closes escaped display maths",
+        boundary.endswith(r"\text{Benefit}(C(t)) \right]\]"), True)
+    chk("lesson response boundary does not leak doubled display opener",
+        r"\\[\max" in boundary, False)
 
     lesson.answer_lesson_command("/lesson next")
     reply = lesson.answer_lesson_command("/lesson next")
