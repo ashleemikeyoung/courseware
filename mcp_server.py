@@ -11,6 +11,7 @@ Setup:
 
 import asyncio
 import json
+import sys
 from pathlib import Path
 
 from mcp.server import Server
@@ -1298,11 +1299,11 @@ async def handle_synthesize_workset(arguments: dict) -> CallToolResult:
 # ---------------------------------------------------------------------------
 
 async def main():
-    print("RAG MCP Server starting...")
-    print(f"Documents folder: {Path(DOCUMENTS_FOLDER).resolve()}")
-    print(f"Projects:         {', '.join(projects.discover()) or 'none'}")
-    print(f"Chunks in index:  {collection.count()}")
-    print("Waiting for Claude Desktop to connect...\n")
+    print("RAG MCP Server starting...", file=sys.stderr)
+    print(f"Documents folder: {Path(DOCUMENTS_FOLDER).resolve()}", file=sys.stderr)
+    print(f"Projects:         {', '.join(projects.discover()) or 'none'}", file=sys.stderr)
+    print(f"Chunks in index:  {collection.count()}", file=sys.stderr)
+    print("Waiting for an MCP client to connect...\n", file=sys.stderr)
 
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
