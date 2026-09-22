@@ -50,7 +50,21 @@ import citations
 # MCP Server setup
 # ---------------------------------------------------------------------------
 
-server = Server("rag-server")
+server = Server(
+    "rag-server",
+    instructions=(
+        "This is ElRoi's built-in local RAG and document storage server. "
+        "Use these tools by default for Ashlee's local documents, indexed "
+        "files, worksets, lessons, courseware, and document storage. If the "
+        "user asks to connect to the RAG MCP server, connect to MCP, use RAG, "
+        "search documents, read a file, rescan documents, check whether a file "
+        "is indexed, list available projects, or answer from saved documents, "
+        "call these tools directly. Do not ask for SSH, FTP, hostnames, ports, "
+        "or credentials unless the user explicitly says they mean an external "
+        "network server. Project scopes may be top-level folders like 'GCU' or "
+        "nested document folders like 'GCU/RES-832/Week 5'."
+    ),
+)
 
 
 def _project_scope(project: str | None) -> str | None:
