@@ -63,7 +63,12 @@ server = Server(
         "or credentials unless the user explicitly says they mean an external "
         "network server. Project scopes may be top-level folders, nested "
         "document folders, or unique folder names discovered from the indexed "
-        "document paths."
+        "document paths. For document revision tasks, especially professor "
+        "feedback on a submitted paper, create or reuse a document revision "
+        "case before drafting. The case records the source document, feedback, "
+        "target sections, locked sections, and revision history so future turns "
+        "preserve the requested scope instead of repeatedly shortening unrelated "
+        "sections."
     ),
 )
 
@@ -518,6 +523,140 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="create_document_revision_case",
+            description=(
+                "Create durable working memory for a document-revision task. Use this "
+                "before revising a submitted paper from professor feedback so future "
+                "turns remember the source document, feedback, requested target "
+                "sections, locked sections that must not be changed, and constraints. "
+                "This is metadata and intent memory; it does not rewrite the document "
+                "by itself."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "case_name": {
+                        "type": "string",
+                        "description": "Human-readable name for the revision case.",
+                    },
+                    "source_document": {
+                        "type": "string",
+                        "description": "Original document path, workset doc id, or title.",
+                    },
+                    "feedback_source": {
+                        "type": "string",
+                        "description": "Feedback document path, workset doc id, or title.",
+                    },
+                    "feedback_text": {
+                        "type": "string",
+                        "description": "Professor/client feedback text when available.",
+                    },
+                    "request": {
+                        "type": "string",
+                        "description": "User's editing instruction for this revision.",
+                    },
+                    "target_sections": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Sections that may be rewritten.",
+                    },
+                    "locked_sections": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Sections that should be preserved unchanged.",
+                    },
+                    "constraints": {
+                        "type": "object",
+                        "description": "Structured constraints such as style, rubric, or citation rules.",
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "Optional RAG project/scope.",
+                    },
+                    "workset": {
+                        "type": "string",
+                        "description": "Optional workset name containing the attachments.",
+                    },
+                    "source_hash": {
+                        "type": "string",
+                        "description": "Optional source document hash.",
+                    },
+                    "feedback_hash": {
+                        "type": "string",
+                        "description": "Optional feedback document hash.",
+                    },
+                },
+                "required": ["case_name", "source_document"],
+            },
+        ),
+        Tool(
+            name="list_document_revision_cases",
+            description=(
+                "List durable document-revision cases from memory. Use this when the "
+                "user continues a previous professor-feedback or document-editing task."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project": {
+                        "type": "string",
+                        "description": "Optional project filter.",
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": "Status filter, usually active. Empty means all.",
+                        "default": "active",
+                    },
+                    "limit": {"type": "integer", "default": 20},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_document_revision_case",
+            description=(
+                "Read a document-revision memory case, including source document, "
+                "feedback, target sections, locked sections, constraints, and event history."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "case_id": {
+                        "type": "string",
+                        "description": "Revision case id.",
+                    },
+                },
+                "required": ["case_id"],
+            },
+        ),
+        Tool(
+            name="record_document_revision_event",
+            description=(
+                "Append a note, draft, validation result, or completion status to a "
+                "document-revision case so later turns know what changed and what "
+                "remained locked."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "case_id": {"type": "string"},
+                    "event_type": {
+                        "type": "string",
+                        "description": "Event kind, e.g. draft, validation, note, completed.",
+                    },
+                    "details": {
+                        "type": "object",
+                        "description": "Structured event details.",
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": "Optional case status update.",
+                    },
+                },
+                "required": ["case_id", "event_type"],
+            },
+        ),
+        Tool(
             name="query_document_registry",
             description=(
                 "Query libSQL document metadata for saved project files treated as uploaded documents. "
@@ -658,6 +797,18 @@ async def call_tool(name: str, arguments: dict) -> CallToolResult:
     elif name == "synthesize_workset":
         return await handle_synthesize_workset(arguments or {})
 
+    elif name == "create_document_revision_case":
+        return await handle_create_document_revision_case(arguments or {})
+
+    elif name == "list_document_revision_cases":
+        return await handle_list_document_revision_cases(arguments or {})
+
+    elif name == "get_document_revision_case":
+        return await handle_get_document_revision_case(arguments or {})
+
+    elif name == "record_document_revision_event":
+        return await handle_record_document_revision_event(arguments or {})
+
     elif name == "query_document_registry":
         return await handle_query_document_registry(arguments or {})
 
@@ -693,6 +844,123 @@ async def handle_query_document_registry(arguments: dict) -> CallToolResult:
     except Exception as e:
         return CallToolResult(
             content=[TextContent(type="text", text=f"Document registry query error: {e}")]
+        )
+
+
+def _load_memory_client():
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "memory"))
+        import memory_client
+        return memory_client, None
+    except Exception as e:
+        return None, CallToolResult(
+            content=[TextContent(type="text", text=f"Could not load memory client: {e}")]
+        )
+
+
+async def handle_create_document_revision_case(arguments: dict) -> CallToolResult:
+    memory_client, error = _load_memory_client()
+    if error:
+        return error
+    case_name = (arguments.get("case_name") or "").strip()
+    source_document = (arguments.get("source_document") or "").strip()
+    if not case_name or not source_document:
+        return CallToolResult(
+            content=[TextContent(
+                type="text",
+                text="Error: case_name and source_document are required.",
+            )]
+        )
+    try:
+        case = memory_client.create_document_revision_case(
+            case_name=case_name,
+            source_document=source_document,
+            feedback_source=(arguments.get("feedback_source") or "").strip(),
+            feedback_text=arguments.get("feedback_text") or "",
+            request=arguments.get("request") or "",
+            target_sections=arguments.get("target_sections") or [],
+            locked_sections=arguments.get("locked_sections") or [],
+            constraints=arguments.get("constraints") or {},
+            project=(arguments.get("project") or "").strip(),
+            workset=(arguments.get("workset") or "").strip(),
+            source_hash=(arguments.get("source_hash") or "").strip(),
+            feedback_hash=(arguments.get("feedback_hash") or "").strip(),
+        )
+        return _json_result({"revision_case": case})
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Create revision case error: {e}")]
+        )
+
+
+async def handle_list_document_revision_cases(arguments: dict) -> CallToolResult:
+    memory_client, error = _load_memory_client()
+    if error:
+        return error
+    try:
+        status = arguments.get("status", "active")
+        rows = memory_client.list_document_revision_cases(
+            project=(arguments.get("project") or "").strip() or None,
+            status=(status or "").strip() or None,
+            limit=int(arguments.get("limit", 20) or 20),
+        )
+        return _json_result({"revision_cases": rows})
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"List revision cases error: {e}")]
+        )
+
+
+async def handle_get_document_revision_case(arguments: dict) -> CallToolResult:
+    memory_client, error = _load_memory_client()
+    if error:
+        return error
+    case_id = (arguments.get("case_id") or "").strip()
+    if not case_id:
+        return CallToolResult(
+            content=[TextContent(type="text", text="Error: case_id is required.")]
+        )
+    try:
+        case = memory_client.get_document_revision_case(case_id)
+        if not case:
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"No revision case found for {case_id}.")]
+            )
+        return _json_result({"revision_case": case})
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Get revision case error: {e}")]
+        )
+
+
+async def handle_record_document_revision_event(arguments: dict) -> CallToolResult:
+    memory_client, error = _load_memory_client()
+    if error:
+        return error
+    case_id = (arguments.get("case_id") or "").strip()
+    event_type = (arguments.get("event_type") or "").strip()
+    if not case_id or not event_type:
+        return CallToolResult(
+            content=[TextContent(
+                type="text",
+                text="Error: case_id and event_type are required.",
+            )]
+        )
+    try:
+        case = memory_client.record_document_revision_event(
+            case_id=case_id,
+            event_type=event_type,
+            details=arguments.get("details") or {},
+            status=(arguments.get("status") or "").strip() or None,
+        )
+        if not case:
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"No revision case found for {case_id}.")]
+            )
+        return _json_result({"revision_case": case})
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Record revision event error: {e}")]
         )
 
 

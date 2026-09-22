@@ -360,6 +360,225 @@ def _ensure_lesson_catalog_schema(client):
     """)
 
 
+def _ensure_document_revision_schema(client):
+    client.execute("""
+        CREATE TABLE IF NOT EXISTS document_revision_cases (
+            case_id          TEXT PRIMARY KEY,
+            case_name        TEXT NOT NULL,
+            project          TEXT NOT NULL DEFAULT '',
+            workset          TEXT NOT NULL DEFAULT '',
+            source_document  TEXT NOT NULL DEFAULT '',
+            source_hash      TEXT NOT NULL DEFAULT '',
+            feedback_source  TEXT NOT NULL DEFAULT '',
+            feedback_hash    TEXT NOT NULL DEFAULT '',
+            feedback_text    TEXT NOT NULL DEFAULT '',
+            request          TEXT NOT NULL DEFAULT '',
+            target_sections  TEXT NOT NULL DEFAULT '[]',
+            locked_sections  TEXT NOT NULL DEFAULT '[]',
+            constraints_json TEXT NOT NULL DEFAULT '{}',
+            status           TEXT NOT NULL DEFAULT 'active',
+            created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    client.execute("""
+        CREATE INDEX IF NOT EXISTS idx_document_revision_cases_project
+            ON document_revision_cases(project, updated_at)
+    """)
+    client.execute("""
+        CREATE TABLE IF NOT EXISTS document_revision_events (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id     TEXT NOT NULL REFERENCES document_revision_cases(case_id),
+            event_type  TEXT NOT NULL,
+            details     TEXT NOT NULL DEFAULT '{}',
+            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    client.execute("""
+        CREATE INDEX IF NOT EXISTS idx_document_revision_events_case
+            ON document_revision_events(case_id, created_at)
+    """)
+
+
+def _json_array(value):
+    if isinstance(value, list):
+        return [str(v) for v in value if str(v).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _json_object(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _decode_json_array(raw):
+    try:
+        value = json.loads(raw or "[]")
+        return value if isinstance(value, list) else []
+    except Exception:
+        return []
+
+
+def _decode_json_value(raw, default):
+    try:
+        value = json.loads(raw or json.dumps(default))
+        return value
+    except Exception:
+        return default
+
+
+def create_document_revision_case(case_name: str, source_document: str,
+                                  feedback_source: str = "",
+                                  feedback_text: str = "",
+                                  request: str = "",
+                                  target_sections: list = None,
+                                  locked_sections: list = None,
+                                  constraints: dict = None,
+                                  project: str = "",
+                                  workset: str = "",
+                                  source_hash: str = "",
+                                  feedback_hash: str = "") -> dict:
+    """
+    Record the durable editing intent for a document revision.
+
+    This is the "working memory" layer for professor-feedback/document-edit
+    tasks: the model can retrieve one case across turns and know which document
+    is being revised, which feedback governs it, which sections may change, and
+    which sections are intentionally locked.
+    """
+    case_id = str(uuid.uuid4())
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        _ensure_document_revision_schema(client)
+        client.execute(
+            "INSERT INTO document_revision_cases "
+            "(case_id, case_name, project, workset, source_document, source_hash, "
+            " feedback_source, feedback_hash, feedback_text, request, "
+            " target_sections, locked_sections, constraints_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                case_id,
+                (case_name or "Document revision").strip(),
+                project or "",
+                workset or "",
+                source_document or "",
+                source_hash or "",
+                feedback_source or "",
+                feedback_hash or "",
+                feedback_text or "",
+                request or "",
+                json.dumps(_json_array(target_sections)),
+                json.dumps(_json_array(locked_sections)),
+                json.dumps(_json_object(constraints)),
+            ],
+        )
+        client.execute(
+            "INSERT INTO document_revision_events (case_id, event_type, details) "
+            "VALUES (?, 'created', ?)",
+            [case_id, json.dumps({"request": request or ""})],
+        )
+        return get_document_revision_case(case_id, _client=client)
+    finally:
+        client.close()
+
+
+def list_document_revision_cases(project: str = None, status: str = "active",
+                                 limit: int = 20) -> list:
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        _ensure_document_revision_schema(client)
+        clauses = []
+        params = []
+        if project:
+            clauses.append("project = ?")
+            params.append(project)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        result = client.execute(
+            "SELECT case_id, case_name, project, workset, source_document, "
+            "feedback_source, request, target_sections, locked_sections, "
+            "status, created_at, updated_at FROM document_revision_cases"
+            + where + " ORDER BY updated_at DESC LIMIT ?",
+            params + [int(limit or 20)],
+        )
+        rows = [dict(zip(result.columns, row)) for row in result.rows]
+        for row in rows:
+            row["target_sections"] = _decode_json_array(row.get("target_sections"))
+            row["locked_sections"] = _decode_json_array(row.get("locked_sections"))
+        return rows
+    finally:
+        client.close()
+
+
+def get_document_revision_case(case_id: str, _client=None) -> dict | None:
+    close = False
+    client = _client
+    if client is None:
+        client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+        close = True
+    try:
+        _ensure_document_revision_schema(client)
+        result = client.execute(
+            "SELECT * FROM document_revision_cases WHERE case_id = ?",
+            [case_id],
+        )
+        if not result.rows:
+            return None
+        row = dict(zip(result.columns, result.rows[0]))
+        row["target_sections"] = _decode_json_array(row.get("target_sections"))
+        row["locked_sections"] = _decode_json_array(row.get("locked_sections"))
+        row["constraints"] = _decode_json_value(row.pop("constraints_json", "{}"), {})
+        events = client.execute(
+            "SELECT id, event_type, details, created_at "
+            "FROM document_revision_events WHERE case_id = ? ORDER BY id",
+            [case_id],
+        )
+        row["events"] = [
+            {
+                **dict(zip(events.columns, event)),
+                "details": _decode_json_value(dict(zip(events.columns, event)).get("details"), {}),
+            }
+            for event in events.rows
+        ]
+        return row
+    finally:
+        if close:
+            client.close()
+
+
+def record_document_revision_event(case_id: str, event_type: str,
+                                   details: dict = None,
+                                   status: str = None) -> dict | None:
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        _ensure_document_revision_schema(client)
+        if not get_document_revision_case(case_id, _client=client):
+            return None
+        client.execute(
+            "INSERT INTO document_revision_events (case_id, event_type, details) "
+            "VALUES (?, ?, ?)",
+            [case_id, event_type or "note", json.dumps(_json_object(details))],
+        )
+        if status:
+            client.execute(
+                "UPDATE document_revision_cases SET status = ?, updated_at = datetime('now') "
+                "WHERE case_id = ?",
+                [status, case_id],
+            )
+        else:
+            client.execute(
+                "UPDATE document_revision_cases SET updated_at = datetime('now') "
+                "WHERE case_id = ?",
+                [case_id],
+            )
+        return get_document_revision_case(case_id, _client=client)
+    finally:
+        client.close()
+
+
 def _decode_json_object(raw: str) -> dict:
     try:
         value = json.loads(raw or "{}")
