@@ -53,6 +53,39 @@ import citations
 server = Server("rag-server")
 
 
+def _project_scope(project: str | None) -> str | None:
+    """Normalize a user-supplied project/folder scope."""
+    scope = (project or "").strip().strip("/")
+    if not scope or scope == projects.ALL:
+        return None
+    return scope
+
+
+def _scope_root(scope: str | None) -> str | None:
+    if not scope:
+        return None
+    return Path(scope).parts[0] if Path(scope).parts else scope
+
+
+def _source_in_scope(source: str, scope: str | None) -> bool:
+    """Accept either a top-level project or a nested folder under it."""
+    scope = _project_scope(scope)
+    if not scope:
+        return True
+    source_norm = source.strip("/")
+    scope_norm = scope.strip("/")
+    if "/" not in scope_norm:
+        return projects.project_of(source_norm) == scope_norm
+    return source_norm == scope_norm or source_norm.startswith(f"{scope_norm}/")
+
+
+def _filter_indexed_by_scope(indexed: dict, scope: str | None) -> dict:
+    scope = _project_scope(scope)
+    if not scope:
+        return indexed
+    return {k: v for k, v in indexed.items() if _source_in_scope(k, scope)}
+
+
 # ---------------------------------------------------------------------------
 # Tool: search_documents
 # ---------------------------------------------------------------------------
@@ -629,7 +662,7 @@ async def handle_query_document_registry(arguments: dict) -> CallToolResult:
 async def handle_search(arguments: dict) -> CallToolResult:
     query = arguments.get("query", "").strip()
     n_results = min(int(arguments.get("n_results", 3)), 10)
-    project = (arguments.get("project") or "").strip() or None
+    project = _project_scope(arguments.get("project"))
 
     if not query:
         return CallToolResult(
@@ -645,9 +678,19 @@ async def handle_search(arguments: dict) -> CallToolResult:
         )
 
     try:
-        results = search(query, n_results=n_results, project=project)
+        search_project = _scope_root(project)
+        search_limit = n_results if project == search_project else 50
+        results = search(query, n_results=search_limit, project=search_project)
         docs = results["documents"][0]
         metas = results["metadatas"][0]
+        if project and project != search_project:
+            scoped = [
+                (doc, meta)
+                for doc, meta in zip(docs, metas)
+                if _source_in_scope(meta.get("source", ""), project)
+            ][:n_results]
+            docs = [doc for doc, _meta in scoped]
+            metas = [meta for _doc, meta in scoped]
 
         # Citation correlation, via the shared helper in citations.py -- see
         # that module's docstring for the full reasoning. This used to be
@@ -655,9 +698,11 @@ async def handle_search(arguments: dict) -> CallToolResult:
         # now call the one shared implementation.
         seen_sources = {m.get("source") for m in metas}
         citation_blocks = []
-        for hit in citations.topup(query, seen_sources, project=project):
+        for hit in citations.topup(query, seen_sources, project=search_project):
             if "_warning" in hit:
                 citation_blocks.append(f"[Warning: citation lookup failed: {hit['_warning']}]")
+                continue
+            if project and not _source_in_scope(hit.get("source", ""), project):
                 continue
             citation_blocks.append(
                 "--- Verified citation record (from memory-db, not chroma_db) ---\n"
@@ -709,11 +754,8 @@ async def handle_projects() -> CallToolResult:
 
 
 async def handle_document_list(arguments: dict) -> CallToolResult:
-    project = (arguments.get("project") or "").strip() or None
-    indexed = get_indexed_sources()
-    if project:
-        indexed = {k: v for k, v in indexed.items()
-                   if projects.project_of(k) == project}
+    project = _project_scope(arguments.get("project"))
+    indexed = _filter_indexed_by_scope(get_indexed_sources(), project)
 
     if not indexed:
         return CallToolResult(
@@ -974,10 +1016,7 @@ async def handle_ask_local(arguments: dict) -> CallToolResult:
 
 
 def _resolve_indexed_source(source_query: str, project: str = None):
-    indexed = get_indexed_sources()
-    if project:
-        indexed = {k: v for k, v in indexed.items()
-                   if projects.project_of(k) == project}
+    indexed = _filter_indexed_by_scope(get_indexed_sources(), project)
 
     needle = (source_query or "").strip()
     needle_lower = needle.lower()
@@ -1014,7 +1053,7 @@ def _resolve_indexed_source(source_query: str, project: str = None):
 
 async def handle_read_document(arguments: dict) -> CallToolResult:
     source_query = (arguments.get("source") or "").strip()
-    project = (arguments.get("project") or "").strip() or None
+    project = _project_scope(arguments.get("project"))
     start = max(int(arguments.get("start", 0) or 0), 0)
     max_chars = int(arguments.get("max_chars", 20000) or 20000)
     max_chars = min(max(max_chars, 1), 100000)
