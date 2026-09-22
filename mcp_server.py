@@ -61,8 +61,9 @@ server = Server(
         "is indexed, list available projects, or answer from saved documents, "
         "call these tools directly. Do not ask for SSH, FTP, hostnames, ports, "
         "or credentials unless the user explicitly says they mean an external "
-        "network server. Project scopes may be top-level folders like 'GCU' or "
-        "nested document folders like 'GCU/RES-832/Week 5'."
+        "network server. Project scopes may be top-level folders, nested "
+        "document folders, or unique folder names discovered from the indexed "
+        "document paths."
     ),
 )
 
@@ -81,15 +82,37 @@ def _scope_root(scope: str | None) -> str | None:
     return Path(scope).parts[0] if Path(scope).parts else scope
 
 
+def _scope_search_root(scope: str | None) -> str | None:
+    """Best top-level project to search before applying the final scope filter."""
+    scope = _project_scope(scope)
+    if not scope:
+        return None
+    parts = Path(scope).parts
+    if len(parts) > 1:
+        return parts[0]
+    indexed = get_indexed_sources()
+    if any(projects.project_of(source) == scope for source in indexed):
+        return scope
+    roots = {
+        projects.project_of(source)
+        for source in indexed
+        if scope in Path(source).parts
+    }
+    return next(iter(roots)) if len(roots) == 1 else None
+
+
 def _source_in_scope(source: str, scope: str | None) -> bool:
-    """Accept either a top-level project or a nested folder under it."""
+    """Accept top-level projects, nested folders, and unique folder aliases."""
     scope = _project_scope(scope)
     if not scope:
         return True
     source_norm = source.strip("/")
     scope_norm = scope.strip("/")
     if "/" not in scope_norm:
-        return projects.project_of(source_norm) == scope_norm
+        return (
+            projects.project_of(source_norm) == scope_norm
+            or scope_norm in Path(source_norm).parts
+        )
     return source_norm == scope_norm or source_norm.startswith(f"{scope_norm}/")
 
 
@@ -692,7 +715,7 @@ async def handle_search(arguments: dict) -> CallToolResult:
         )
 
     try:
-        search_project = _scope_root(project)
+        search_project = _scope_search_root(project)
         search_limit = n_results if project == search_project else 50
         results = search(query, n_results=search_limit, project=search_project)
         docs = results["documents"][0]
@@ -964,7 +987,7 @@ async def handle_lesson(arguments: dict) -> CallToolResult:
 
 async def handle_ask_local(arguments: dict) -> CallToolResult:
     question = (arguments.get("question") or "").strip()
-    project = (arguments.get("project") or "").strip() or None
+    project = _project_scope(arguments.get("project"))
 
     if not question:
         return CallToolResult(
@@ -1011,11 +1034,18 @@ async def handle_ask_local(arguments: dict) -> CallToolResult:
         # No model is passed -- ask.ask() defaults to config.ASK_MODEL on
         # its own now, so this tool doesn't need to know or care what that
         # default is, same as app.py no longer does.
+        search_project = _scope_search_root(project)
         result = ask_module.ask(
             [{"role": "user", "content": question}],
-            project=project,
+            project=search_project,
             ground=True,
         )
+        if project and project != search_project and result.get("evidence"):
+            result["evidence"] = {
+                key: value
+                for key, value in result["evidence"].items()
+                if _source_in_scope(value.get("source", ""), project)
+            }
         lines = [result["text"]]
         if result["evidence"]:
             sources = sorted({e["source"] for e in result["evidence"].values()})
