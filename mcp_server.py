@@ -569,6 +569,14 @@ async def list_tools() -> list[Tool]:
                         "type": "object",
                         "description": "Structured constraints such as style, rubric, or citation rules.",
                     },
+                    "source_sections": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                        "description": (
+                            "Optional source section fingerprints with heading, role, "
+                            "char_count, content_hash, start_line, and end_line."
+                        ),
+                    },
                     "project": {
                         "type": "string",
                         "description": "Optional RAG project/scope.",
@@ -587,6 +595,64 @@ async def list_tools() -> list[Tool]:
                     },
                 },
                 "required": ["case_name", "source_document"],
+            },
+        ),
+        Tool(
+            name="create_revision_case_from_workset",
+            description=(
+                "Create a document-revision memory case from files already ingested "
+                "into a workset. Use this when Ashlee uploads a submitted paper and "
+                "separate professor feedback. The tool reads the full extracted "
+                "source document, records feedback text, fingerprints source sections, "
+                "marks target sections, and locks unrelated sections."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "workset": {
+                        "type": "string",
+                        "description": "Workset containing the source and feedback files.",
+                    },
+                    "case_name": {
+                        "type": "string",
+                        "description": "Human-readable revision case name.",
+                    },
+                    "source_doc": {
+                        "type": "string",
+                        "description": "Workset doc id, filename, or label of the paper to revise.",
+                    },
+                    "feedback_doc": {
+                        "type": "string",
+                        "description": "Optional workset doc id, filename, or label of the feedback document.",
+                    },
+                    "feedback_text": {
+                        "type": "string",
+                        "description": "Feedback text if it was pasted rather than uploaded.",
+                    },
+                    "request": {
+                        "type": "string",
+                        "description": "User's requested revision scope.",
+                    },
+                    "target_sections": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Sections that may be changed.",
+                    },
+                    "locked_sections": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Sections to preserve. Omit to lock all non-target sections.",
+                    },
+                    "constraints": {
+                        "type": "object",
+                        "description": "Structured rubric/style constraints.",
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "Optional project/scope name.",
+                    },
+                },
+                "required": ["workset", "case_name", "source_doc"],
             },
         ),
         Tool(
@@ -800,6 +866,9 @@ async def call_tool(name: str, arguments: dict) -> CallToolResult:
     elif name == "create_document_revision_case":
         return await handle_create_document_revision_case(arguments or {})
 
+    elif name == "create_revision_case_from_workset":
+        return await handle_create_revision_case_from_workset(arguments or {})
+
     elif name == "list_document_revision_cases":
         return await handle_list_document_revision_cases(arguments or {})
 
@@ -881,6 +950,7 @@ async def handle_create_document_revision_case(arguments: dict) -> CallToolResul
             target_sections=arguments.get("target_sections") or [],
             locked_sections=arguments.get("locked_sections") or [],
             constraints=arguments.get("constraints") or {},
+            source_sections=arguments.get("source_sections") or [],
             project=(arguments.get("project") or "").strip(),
             workset=(arguments.get("workset") or "").strip(),
             source_hash=(arguments.get("source_hash") or "").strip(),
@@ -890,6 +960,40 @@ async def handle_create_document_revision_case(arguments: dict) -> CallToolResul
     except Exception as e:
         return CallToolResult(
             content=[TextContent(type="text", text=f"Create revision case error: {e}")]
+        )
+
+
+async def handle_create_revision_case_from_workset(arguments: dict) -> CallToolResult:
+    worksets, error = _load_worksets()
+    if error:
+        return error
+    workset = (arguments.get("workset") or "").strip()
+    case_name = (arguments.get("case_name") or "").strip()
+    source_doc = (arguments.get("source_doc") or "").strip()
+    if not workset or not case_name or not source_doc:
+        return CallToolResult(
+            content=[TextContent(
+                type="text",
+                text="Error: workset, case_name, and source_doc are required.",
+            )]
+        )
+    try:
+        case = worksets.create_revision_case_from_workset(
+            workset=workset,
+            case_name=case_name,
+            source_doc=source_doc,
+            feedback_doc=(arguments.get("feedback_doc") or "").strip(),
+            feedback_text=arguments.get("feedback_text") or "",
+            request=arguments.get("request") or "",
+            target_sections=arguments.get("target_sections") or [],
+            locked_sections=arguments.get("locked_sections") or [],
+            constraints=arguments.get("constraints") or {},
+            project=(arguments.get("project") or "").strip(),
+        )
+        return _json_result({"revision_case": case})
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Create workset revision case error: {e}")]
         )
 
 

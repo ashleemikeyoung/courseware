@@ -11,6 +11,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -38,9 +39,18 @@ SECTION_KEYWORDS = [
     "abstract",
     "introduction",
     "literature review",
+    "problem statement",
+    "purpose statement",
+    "research question",
+    "research questions",
+    "hypothesis",
+    "hypotheses",
     "method",
     "methods",
     "methodology",
+    "theoretical framework",
+    "conceptual framework",
+    "background",
     "results",
     "findings",
     "discussion",
@@ -256,6 +266,119 @@ def find_key_sections(text: str) -> dict:
             if clean == keyword or clean.startswith(keyword + " "):
                 hits.setdefault(keyword, i)
     return hits
+
+
+def _norm_section_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+
+def _section_role(heading: str, target_sections: list, locked_sections: list) -> str:
+    normalized = _norm_section_name(heading)
+    targets = [_norm_section_name(s) for s in (target_sections or [])]
+    locks = [_norm_section_name(s) for s in (locked_sections or [])]
+    if any(t and (t in normalized or normalized in t) for t in targets):
+        return "target"
+    if any(l and (l in normalized or normalized in l) for l in locks):
+        return "locked"
+    return "locked" if targets else "review"
+
+
+def section_fingerprints(text: str, target_sections: list = None,
+                         locked_sections: list = None) -> list[dict]:
+    lines = (text or "").splitlines()
+    hits = find_key_sections(text or "")
+    if not lines:
+        return []
+    if not hits:
+        content = text or ""
+        return [{
+            "ordinal": 1,
+            "heading": "Document",
+            "role": "target" if target_sections else "review",
+            "char_count": len(content),
+            "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            "start_line": 0,
+            "end_line": len(lines) - 1,
+        }]
+
+    ordered = sorted((line, heading) for heading, line in hits.items())
+    sections = []
+    for index, (start, heading) in enumerate(ordered):
+        end = ordered[index + 1][0] - 1 if index + 1 < len(ordered) else len(lines) - 1
+        content = "\n".join(lines[start:end + 1])
+        sections.append({
+            "ordinal": index + 1,
+            "heading": heading,
+            "role": _section_role(heading, target_sections or [], locked_sections or []),
+            "char_count": len(content),
+            "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            "start_line": start,
+            "end_line": end,
+        })
+    return sections
+
+
+def _find_doc(data: dict, doc_id_or_name: str) -> WorksetDoc:
+    needle = (doc_id_or_name or "").strip().lower()
+    for doc in data.get("docs", []):
+        values = [
+            doc.doc_id,
+            doc.filename,
+            doc.label,
+            Path(doc.original_path).name if doc.original_path else "",
+        ]
+        if any(needle == (value or "").lower() for value in values):
+            return doc
+    for doc in data.get("docs", []):
+        if needle and needle in (doc.filename or "").lower():
+            return doc
+        if needle and needle in (doc.label or "").lower():
+            return doc
+    raise ValueError(f"No document matching '{doc_id_or_name}' in workset '{data['name']}'.")
+
+
+def create_revision_case_from_workset(workset: str, case_name: str,
+                                      source_doc: str,
+                                      feedback_doc: str = "",
+                                      feedback_text: str = "",
+                                      request: str = "",
+                                      target_sections: list = None,
+                                      locked_sections: list = None,
+                                      constraints: dict = None,
+                                      project: str = "") -> dict:
+    data = _load_manifest(workset)
+    source = _find_doc(data, source_doc)
+    source_text = Path(source.extracted_path).read_text(encoding="utf-8")
+    feedback_source = feedback_doc or ""
+    feedback_hash = ""
+    if feedback_doc:
+        feedback = _find_doc(data, feedback_doc)
+        feedback_source = feedback.label or feedback.filename or feedback.doc_id
+        feedback_hash = feedback.hash
+        feedback_text = Path(feedback.extracted_path).read_text(encoding="utf-8")
+
+    sys.path.insert(0, str(BASE_DIR / "memory"))
+    from memory_client import create_document_revision_case
+
+    return create_document_revision_case(
+        case_name=case_name,
+        source_document=source.label or source.filename or source.doc_id,
+        feedback_source=feedback_source,
+        feedback_text=feedback_text or "",
+        request=request or "",
+        target_sections=target_sections or [],
+        locked_sections=locked_sections or [],
+        constraints=constraints or {},
+        source_sections=section_fingerprints(
+            source_text,
+            target_sections=target_sections or [],
+            locked_sections=locked_sections or [],
+        ),
+        project=project or "",
+        workset=data["name"],
+        source_hash=source.hash,
+        feedback_hash=feedback_hash,
+    )
 
 
 def ingest_file(workset: str, file_path: str) -> dict:

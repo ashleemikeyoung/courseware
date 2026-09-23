@@ -398,6 +398,25 @@ def _ensure_document_revision_schema(client):
         CREATE INDEX IF NOT EXISTS idx_document_revision_events_case
             ON document_revision_events(case_id, created_at)
     """)
+    client.execute("""
+        CREATE TABLE IF NOT EXISTS document_revision_sections (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id        TEXT NOT NULL REFERENCES document_revision_cases(case_id),
+            ordinal        INTEGER NOT NULL,
+            heading        TEXT NOT NULL DEFAULT '',
+            role           TEXT NOT NULL DEFAULT 'locked',
+            char_count     INTEGER NOT NULL DEFAULT 0,
+            content_hash   TEXT NOT NULL DEFAULT '',
+            start_line     INTEGER,
+            end_line       INTEGER,
+            created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(case_id, ordinal)
+        )
+    """)
+    client.execute("""
+        CREATE INDEX IF NOT EXISTS idx_document_revision_sections_case
+            ON document_revision_sections(case_id, ordinal)
+    """)
 
 
 def _json_array(value):
@@ -435,6 +454,7 @@ def create_document_revision_case(case_name: str, source_document: str,
                                   target_sections: list = None,
                                   locked_sections: list = None,
                                   constraints: dict = None,
+                                  source_sections: list = None,
                                   project: str = "",
                                   workset: str = "",
                                   source_hash: str = "",
@@ -478,6 +498,24 @@ def create_document_revision_case(case_name: str, source_document: str,
             "VALUES (?, 'created', ?)",
             [case_id, json.dumps({"request": request or ""})],
         )
+        for ordinal, section in enumerate(source_sections or [], start=1):
+            if not isinstance(section, dict):
+                continue
+            client.execute(
+                "INSERT INTO document_revision_sections "
+                "(case_id, ordinal, heading, role, char_count, content_hash, "
+                " start_line, end_line) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    case_id,
+                    int(section.get("ordinal") or ordinal),
+                    str(section.get("heading") or ""),
+                    str(section.get("role") or "locked"),
+                    int(section.get("char_count") or 0),
+                    str(section.get("content_hash") or ""),
+                    section.get("start_line"),
+                    section.get("end_line"),
+                ],
+            )
         return get_document_revision_case(case_id, _client=client)
     finally:
         client.close()
@@ -542,6 +580,16 @@ def get_document_revision_case(case_id: str, _client=None) -> dict | None:
                 "details": _decode_json_value(dict(zip(events.columns, event)).get("details"), {}),
             }
             for event in events.rows
+        ]
+        sections = client.execute(
+            "SELECT ordinal, heading, role, char_count, content_hash, "
+            "start_line, end_line FROM document_revision_sections "
+            "WHERE case_id = ? ORDER BY ordinal",
+            [case_id],
+        )
+        row["source_sections"] = [
+            dict(zip(sections.columns, section))
+            for section in sections.rows
         ]
         return row
     finally:
