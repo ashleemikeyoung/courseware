@@ -24,6 +24,10 @@ from mcp.types import (
 
 # Import from your existing rag.py
 import projects
+
+# Cap on files summarize_documents will summarize in one MCP call. Each file
+# is a full model pass, and MCP clients time out (Goose defaults to 300s).
+SUMMARIZE_MAX_FILES = 5
 from rag import (
     search,
     scan_documents,
@@ -68,7 +72,10 @@ server = Server(
         "case before drafting. The case records the source document, feedback, "
         "target sections, locked sections, and revision history so future turns "
         "preserve the requested scope instead of repeatedly shortening unrelated "
-        "sections."
+        "sections. "
+        "IMPORTANT: When you need to read a document's full content (especially .docx, .pdf, .txt files), "
+        "ALWAYS call read_document with the exact source path. Do not attempt to use "
+        "external command-line tools like docx2txt - the read_document tool handles all formats."
     ),
 )
 
@@ -372,7 +379,12 @@ async def list_tools() -> list[Tool]:
                 "requests, where ask_local's chunk-based grounding might only "
                 "see fragments. Slower than ask_local when several files match, "
                 "since each one gets its own full-document summarization pass, "
-                "but the summary for each file is built from everything in it."
+                "but the summary for each file is built from everything in it. "
+                "To summarize one specific file, pass its exact filename or "
+                "indexed path as the query (e.g. 'Topic5 DQ2' or "
+                "'GCU/RES-832/Week 5/Topic5 DQ2.docx') and only that file is "
+                "summarized. Topic queries summarize at most max_files files "
+                "(default 5) and list the rest."
             ),
             inputSchema={
                 "type": "object",
@@ -390,6 +402,13 @@ async def list_tools() -> list[Tool]:
                         "description": (
                             "Restrict the search to one project folder. Omit to "
                             "search across every project."
+                        ),
+                    },
+                    "max_files": {
+                        "type": "integer",
+                        "description": (
+                            "Maximum number of matching files to summarize "
+                            "(default 5). Extra matches are listed, not summarized."
                         ),
                     },
                 },
@@ -1546,6 +1565,10 @@ async def handle_read_document(arguments: dict) -> CallToolResult:
 async def handle_summarize_documents(arguments: dict) -> CallToolResult:
     query = (arguments.get("query") or "").strip()
     project = (arguments.get("project") or "").strip() or None
+    try:
+        max_files = max(1, int(arguments.get("max_files") or SUMMARIZE_MAX_FILES))
+    except (TypeError, ValueError):
+        max_files = SUMMARIZE_MAX_FILES
 
     if not query:
         return CallToolResult(
@@ -1577,7 +1600,14 @@ async def handle_summarize_documents(arguments: dict) -> CallToolResult:
         # straight off disk and summarized whole, not from retrieved
         # chunks. One implementation, so "search then summarize" behaves
         # the same regardless of which interface asked for it.
-        results = summarize.summarize_search(query, project=project)
+        # Runs in a worker thread: summarizing is a long, blocking model
+        # call, and running it on the event loop froze every other tool on
+        # this server (a read_document queued behind it would time out).
+        sources = await asyncio.to_thread(
+            summarize.select_sources, query, project)
+        skipped = sources[max_files:]
+        results = await asyncio.to_thread(
+            summarize.summarize_sources, sources[:max_files])
     except Exception as e:
         return CallToolResult(
             content=[TextContent(type="text", text=f"Search error: {str(e)}")]
@@ -1600,6 +1630,14 @@ async def handle_summarize_documents(arguments: dict) -> CallToolResult:
             continue
         note = f" (truncated at {r['chars']} chars)" if r.get("truncated") else ""
         parts.append(f"{r['summary']}{note}\n")
+
+    if skipped:
+        parts.append(
+            f"[{len(skipped)} more matching document(s) not summarized "
+            f"(max_files={max_files}). Call again with a more specific query, "
+            f"an exact filename, or a higher max_files:]"
+        )
+        parts.extend(f"- {src}" for src in skipped)
 
     return CallToolResult(
         content=[TextContent(type="text", text="\n".join(parts))]
