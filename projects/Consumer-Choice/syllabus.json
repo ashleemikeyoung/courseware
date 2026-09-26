@@ -1,0 +1,136 @@
+{
+  "subject": "Consumer Choice",
+  "project": "Consumer-Choice",
+  "course": {
+    "slug": "14-04-intermediate-microeconomic-theory-fall-2020",
+    "number": "14.04",
+    "title": "14.04 Intermediate Microeconomic Theory (Fall 2020)",
+    "url": "https://ocw.mit.edu/courses/14-04-intermediate-microeconomic-theory-fall-2020/"
+  },
+  "synthesis": "",
+  "lectures": [
+    {
+      "n": 1,
+      "title": "Lecture 2: Consumer Choice",
+      "url": "https://ocw.mit.edu/courses/14-04-intermediate-microeconomic-theory-fall-2020/resources/ocw_1404_lecture02_2020sep03/",
+      "role": "core",
+      "seq": 2,
+      "course": "14.04 Intermediate Microeconomic Theory (Fall 2020)",
+      "course_url": "https://ocw.mit.edu/courses/14-04-intermediate-microeconomic-theory-fall-2020/",
+      "origin": "MIT OpenCourseWare \u00b7 14.04 Intermediate Microeconomic Theory (Fall 2020)",
+      "resolve": "ocw_page",
+      "kind": "lecture",
+      "file": "Consumer-Choice/mit-lecture-2-consumer-choice.md",
+      "status": "indexed",
+      "alternates": [
+        {
+          "title": "Lecture 2: Consumer Choice captions",
+          "url": "https://ocw.mit.edu/courses/14-04-intermediate-microeconomic-theory-fall-2020/resources/ocw_1404_lecture02_captions_webvtt/",
+          "kind": "transcript",
+          "course": "14.04 Intermediate Microeconomic Theory (Fall 2020)",
+          "course_url": "https://ocw.mit.edu/courses/14-04-intermediate-microeconomic-theory-fall-2020/",
+          "origin": "MIT OpenCourseWare \u00b7 14.04 Intermediate Microeconomic Theory (Fall 2020)",
+          "resolve": "ocw_page",
+          "youtube_url": "",
+          "description": "",
+          "seq": 2
+        },
+        {
+          "title": "Lecture 2: Consumer Choice transcript",
+          "url": "https://ocw.mit.edu/courses/14-04-intermediate-microeconomic-theory-fall-2020/resources/ocw_1404_lecture02_transcript_pdf/",
+          "kind": "transcript",
+          "course": "14.04 Intermediate Microeconomic Theory (Fall 2020)",
+          "course_url": "https://ocw.mit.edu/courses/14-04-intermediate-microeconomic-theory-fall-2020/",
+          "origin": "MIT OpenCourseWare \u00b7 14.04 Intermediate Microeconomic Theory (Fall 2020)",
+          "resolve": "ocw_page",
+          "youtube_url": "",
+          "description": "",
+          "seq": 2
+        }
+      ],
+      "video": {
+        "youtube_id": "rhOpABGewYA",
+        "title": "Lecture 2: Consumer Choice",
+        "url": "https://www.youtube.com/watch?v=rhOpABGewYA",
+        "course": "14-04-intermediate-microeconomic-theory-fall-2020",
+        "seconds": 0
+      },
+      "youtube_url": "https://www.youtube.com/watch?v=rhOpABGewYA",
+      "description": "How should rational consumers decide what to buy? Economists break the problem down into its component parts: feasible available commodity bundles, preferences over goods and services, and budget constraints."
+    }
+  ],
+  "sources": [],
+  "also_covered": [
+    {
+      "number": "14.01",
+      "title": "14.01 Principles Of Microeconomics (Fall 2023)",
+      "url": "https://ocw.mit.edu/courses/14-01-principles-of-microeconomics-fall-2023/",
+      "item": "Lec 3: Budget Constraints and Constrained Choice"
+    },
+    {
+      "number": "14.03",
+      "title": "14.03 Microeconomic Theory And Public Policy (Fall 2016)",
+      "url": "https://ocw.mit.edu/courses/14-03-microeconomic-theory-and-public-policy-fall-2016/",
+      "item": "14.03/14.003 Fall 2016 Lecture 3 Notes"
+    },
+    {
+      "number": "14.01SC",
+      "title": "14.01SC Principles Of Microeconomics (Fall 2011)",
+      "url": "https://ocw.mit.edu/courses/14-01sc-principles-of-microeconomics-fall-2011/",
+      "item": "Preferences and Utility"
+    },
+    {
+      "number": "14.121",
+      "title": "14.121 Microeconomic Theory I (Fall 2015)",
+      "url": "https://ocw.mit.edu/courses/14-121-microeconomic-theory-i-fall-2015/",
+      "item": "Dynamic Choice and Time-Inconsistency - Lecture Slides"
+    }
+  ],
+  "assignments": [],
+  "exams": [],
+  "related": {
+    "courses": [
+      {
+        "number": "15.010",
+        "title": "15.010 Economic Analysis For Business Decisions (Fall 2004)",
+        "url": "https://ocw.mit.edu/courses/15-010-economic-analysis-for-business-decisions-fall-2004/"
+      },
+      {
+        "number": "14.01",
+        "title": "14.01 Principles Of Microeconomics (Fall 2023)",
+        "url": "https://ocw.mit.edu/courses/14-01-principles-of-microeconomics-fall-2023/"
+      },
+      {
+        "number": "14.03",
+        "title": "14.03 Microeconomic Theory And Public Policy (Fall 2016)",
+        "url": "https://ocw.mit.edu/courses/14-03-microeconomic-theory-and-public-policy-fall-2016/"
+      },
+      {
+        "number": "14.03",
+        "title": "14.03 Microeconomic Theory And Public Policy (Fall 2025)",
+        "url": "https://ocw.mit.edu/courses/14-03-microeconomic-theory-and-public-policy-fall-2025/"
+      },
+      {
+        "number": "1.201J",
+        "title": "1.201J Transportation Systems Analysis Demand And Economics (Fall 2008)",
+        "url": "https://ocw.mit.edu/courses/1-201j-transportation-systems-analysis-demand-and-economics-fall-2008/"
+      },
+      {
+        "number": "14.01SC",
+        "title": "14.01SC Principles Of Microeconomics (Fall 2011)",
+        "url": "https://ocw.mit.edu/courses/14-01sc-principles-of-microeconomics-fall-2011/"
+      }
+    ],
+    "same_course": [
+      "Lecture 1: Economic Science"
+    ]
+  },
+  "watched": {
+    "rhOpABGewYA": {
+      "seconds": 0,
+      "duration": 3547
+    }
+  },
+  "position": 0,
+  "built": "2026-09-09"
+}

@@ -1,0 +1,101 @@
+{
+  "subject": "calculus",
+  "project": "calculus-check2",
+  "course": {
+    "slug": "18-024-multivariable-calculus-with-theory-spring-2011",
+    "number": "18.024",
+    "title": "18.024 Multivariable Calculus with Theory",
+    "url": "https://ocw.mit.edu/courses/18-024-multivariable-calculus-with-theory-spring-2011/"
+  },
+  "synthesis": "",
+  "lectures": [
+    {
+      "n": 1,
+      "title": "Course Notes",
+      "url": "https://ocw.mit.edu/courses/18-024-multivariable-calculus-with-theory-spring-2011/pages/course-notes/",
+      "role": "core",
+      "seq": 2,
+      "course": "18.024 Multivariable Calculus with Theory",
+      "course_url": "https://ocw.mit.edu/courses/18-024-multivariable-calculus-with-theory-spring-2011/",
+      "origin": "MIT OpenCourseWare \u00b7 18-024-multivariable-calculus-with-theory-spring-2011",
+      "resolve": "ocw_page",
+      "kind": "lecture",
+      "file": "",
+      "status": "pending: opens when reached",
+      "alternates": [],
+      "video": {
+        "youtube_id": "gv1aMp4YxyA",
+        "title": "Visualizing Calculus with Prof. Gigliola Staffilani",
+        "description": "<p>Professor Gigliola Staffilani, who teaches in MIT\u2019s Department of Mathematics, was closely involved in designing and teaching the introductory-level 18.01 Calculus I course series now found on the MIT Open Learning Library. She\u2019s also been involved in teaching calculus to students on campus. To help students become proficient in a notoriously intimidating subject, she has tried to design learning experiences that bridge the gap between the pure abstractions that mathematicians love, exemplified by the use of conventional notation such as x, y, and f(x), and the concrete real-world situations in which calculus is typically applied in other fields such as chemistry or physics. In this episode, Prof. Staffilani discusses her efforts to make calculus less abstract and more intuitive for learners\u2013efforts that draw on a diverse mix of teaching tools and props: digital applets, sketching tools, bagels, croissants, donuts, and even a balloon in a box. She also discusses her commitment to increasing equity and fighting implicit bias in her field.</p>\n",
+        "url": "https://www.youtube.com/watch?v=gv1aMp4YxyA",
+        "course": "18-01-calculus-i-single-variable-calculus-fall-2020",
+        "seconds": 0
+      },
+      "description": "This section provides the lecture notes for the course, as individual chapters and as a single file."
+    }
+  ],
+  "module_video": {
+    "youtube_id": "gv1aMp4YxyA",
+    "title": "Visualizing Calculus with Prof. Gigliola Staffilani",
+    "description": "<p>Professor Gigliola Staffilani, who teaches in MIT\u2019s Department of Mathematics, was closely involved in designing and teaching the introductory-level 18.01 Calculus I course series now found on the MIT Open Learning Library. She\u2019s also been involved in teaching calculus to students on campus. To help students become proficient in a notoriously intimidating subject, she has tried to design learning experiences that bridge the gap between the pure abstractions that mathematicians love, exemplified by the use of conventional notation such as x, y, and f(x), and the concrete real-world situations in which calculus is typically applied in other fields such as chemistry or physics. In this episode, Prof. Staffilani discusses her efforts to make calculus less abstract and more intuitive for learners\u2013efforts that draw on a diverse mix of teaching tools and props: digital applets, sketching tools, bagels, croissants, donuts, and even a balloon in a box. She also discusses her commitment to increasing equity and fighting implicit bias in her field.</p>\n",
+    "url": "https://www.youtube.com/watch?v=gv1aMp4YxyA",
+    "course": "18-01-calculus-i-single-variable-calculus-fall-2020",
+    "seconds": 0
+  },
+  "sources": [],
+  "also_covered": [],
+  "assignments": [
+    {
+      "title": "Assignments",
+      "url": "https://ocw.mit.edu/courses/18-024-multivariable-calculus-with-theory-spring-2011/pages/assignments/"
+    }
+  ],
+  "exams": [
+    {
+      "title": "Readings",
+      "url": "https://ocw.mit.edu/courses/18-024-multivariable-calculus-with-theory-spring-2011/pages/readings/"
+    },
+    {
+      "title": "Exams",
+      "url": "https://ocw.mit.edu/courses/18-024-multivariable-calculus-with-theory-spring-2011/pages/exams/"
+    }
+  ],
+  "related": {
+    "courses": [
+      {
+        "number": "RES.18",
+        "title": "RES.18 001 Calculus (Fall 2023)",
+        "url": "https://ocw.mit.edu/courses/res-18-001-calculus-fall-2023/"
+      },
+      {
+        "number": "16.323",
+        "title": "16.323 Principles Of Optimal Control (Spring 2008)",
+        "url": "https://ocw.mit.edu/courses/16-323-principles-of-optimal-control-spring-2008/"
+      },
+      {
+        "number": "18",
+        "title": "18 S096 Topics In Mathematics With Applications In Finance (Fall 2013)",
+        "url": "https://ocw.mit.edu/courses/18-s096-topics-in-mathematics-with-applications-in-finance-fall-2013/"
+      },
+      {
+        "number": "RES.18",
+        "title": "RES.18 007 Calculus Revisited Multivariable Calculus (Fall 2011)",
+        "url": "https://ocw.mit.edu/courses/res-18-007-calculus-revisited-multivariable-calculus-fall-2011/"
+      },
+      {
+        "number": "RES.18",
+        "title": "RES.18 006 Calculus Revisited Single Variable Calculus (Fall 2010)",
+        "url": "https://ocw.mit.edu/courses/res-18-006-calculus-revisited-single-variable-calculus-fall-2010/"
+      },
+      {
+        "number": "18.02SC",
+        "title": "18.02SC Multivariable Calculus (Fall 2010)",
+        "url": "https://ocw.mit.edu/courses/18-02sc-multivariable-calculus-fall-2010/"
+      }
+    ],
+    "same_course": []
+  },
+  "watched": {},
+  "position": 0,
+  "built": "2026-09-11"
+}

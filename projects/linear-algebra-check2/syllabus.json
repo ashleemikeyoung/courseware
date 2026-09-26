@@ -1,0 +1,186 @@
+{
+  "subject": "linear algebra",
+  "project": "linear-algebra-check2",
+  "course": {
+    "slug": "18-06sc-linear-algebra-fall-2011",
+    "number": "18.06SC",
+    "title": "18.06SC Linear Algebra",
+    "url": "https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/"
+  },
+  "synthesis": "",
+  "lectures": [
+    {
+      "n": 1,
+      "title": "The Geometry of Linear Equations",
+      "url": "https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/pages/ax-b-and-the-four-subspaces/the-geometry-of-linear-equations/",
+      "role": "core",
+      "seq": 2,
+      "course": "18.06SC Linear Algebra",
+      "course_url": "https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/",
+      "origin": "MIT OpenCourseWare \u00b7 18-06sc-linear-algebra-fall-2011",
+      "resolve": "ocw_page",
+      "kind": "lecture",
+      "file": "",
+      "status": "pending: opens when reached",
+      "alternates": [],
+      "video": {
+        "youtube_id": "J7DzL2_Na80",
+        "title": "The Geometry of Linear Equations",
+        "url": "https://www.youtube.com/watch?v=J7DzL2_Na80",
+        "course": "18-06sc-linear-algebra-fall-2011",
+        "seconds": 0
+      },
+      "youtube_url": "https://www.youtube.com/watch?v=J7DzL2_Na80",
+      "description": "This section provides a lesson on the geometry of linear equations."
+    },
+    {
+      "n": 2,
+      "title": "Linear Transformations and their Matrices",
+      "url": "https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/pages/positive-definite-matrices-and-applications/linear-transformations-and-their-matrices/",
+      "role": "core",
+      "seq": 37,
+      "course": "18.06SC Linear Algebra",
+      "course_url": "https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/",
+      "origin": "MIT OpenCourseWare \u00b7 18-06sc-linear-algebra-fall-2011",
+      "resolve": "ocw_page",
+      "kind": "lecture",
+      "file": "",
+      "status": "pending: opens when reached",
+      "alternates": [],
+      "video": {
+        "youtube_id": "Ts3o2I8_Mxc",
+        "title": "Linear Transformations and their Matrices",
+        "url": "https://www.youtube.com/watch?v=Ts3o2I8_Mxc",
+        "course": "18-06sc-linear-algebra-fall-2011",
+        "seconds": 0
+      },
+      "youtube_url": "https://www.youtube.com/watch?v=Ts3o2I8_Mxc"
+    },
+    {
+      "n": 3,
+      "title": "ZoomNotes for Linear Algebra",
+      "url": "https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/resources/mit18_06scf11_zoomnotes/",
+      "role": "core",
+      "seq": 999,
+      "course": "18.06SC Linear Algebra (Fall 2011)",
+      "course_url": "https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/",
+      "origin": "MIT OpenCourseWare \u00b7 18.06SC Linear Algebra (Fall 2011)",
+      "resolve": "ocw_page",
+      "kind": "lecture",
+      "file": "",
+      "status": "pending: opens when reached",
+      "alternates": [],
+      "video": {
+        "youtube_id": "lUUte2o2Sn8",
+        "title": "Gil Strang's Final 18.06 Linear Algebra Lecture",
+        "description": "",
+        "url": "https://www.youtube.com/watch?v=lUUte2o2Sn8",
+        "course": "18-06sc-linear-algebra-fall-2011",
+        "seconds": 0
+      }
+    }
+  ],
+  "module_video": {
+    "youtube_id": "lUUte2o2Sn8",
+    "title": "Gil Strang's Final 18.06 Linear Algebra Lecture",
+    "description": "",
+    "url": "https://www.youtube.com/watch?v=lUUte2o2Sn8",
+    "course": "18-06sc-linear-algebra-fall-2011",
+    "seconds": 0
+  },
+  "sources": [],
+  "also_covered": [
+    {
+      "number": "18.06",
+      "title": "18.06 Linear Algebra (Spring 2010)",
+      "url": "https://ocw.mit.edu/courses/18-06-linear-algebra-spring-2010/",
+      "item": "ZoomNotes for Linear Algebra"
+    },
+    {
+      "number": "18.065",
+      "title": "18.065 Matrix Methods In Data Analysis Signal Processing And Machine Learning (Spring 2018)",
+      "url": "https://ocw.mit.edu/courses/18-065-matrix-methods-in-data-analysis-signal-processing-and-machine-learning-spring-2018/",
+      "item": "ZoomNotes for Linear Algebra"
+    },
+    {
+      "number": "2.086",
+      "title": "2.086 Numerical Computation For Mechanical Engineers (Spring 2013)",
+      "url": "https://ocw.mit.edu/courses/2-086-numerical-computation-for-mechanical-engineers-spring-2013/",
+      "item": "2.086 Numerical Computation for Mechanical Engineers, Lecture 10: Linear Algebra I: Overdetermined Systems and Least-Squares Approximation"
+    }
+  ],
+  "assignments": [],
+  "exams": [
+    {
+      "title": "Exam 1",
+      "url": "https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/pages/ax-b-and-the-four-subspaces/exam-1/"
+    },
+    {
+      "title": "Unit II: Least Squares, Determinants and Eigenvalues",
+      "url": "https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/pages/least-squares-determinants-and-eigenvalues/"
+    },
+    {
+      "title": "Exam 2",
+      "url": "https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/pages/least-squares-determinants-and-eigenvalues/exam-2/"
+    },
+    {
+      "title": "Unit III: Positive Definite Matrices and Applications",
+      "url": "https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/pages/positive-definite-matrices-and-applications/"
+    },
+    {
+      "title": "Exam 3",
+      "url": "https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/pages/positive-definite-matrices-and-applications/exam-3/"
+    },
+    {
+      "title": "Final 18.06 Lecture 2023",
+      "url": "https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/pages/final-1806-lecture-2023/"
+    }
+  ],
+  "related": {
+    "courses": [
+      {
+        "number": "18",
+        "title": "18 S096 Topics In Mathematics With Applications In Finance (Fall 2013)",
+        "url": "https://ocw.mit.edu/courses/18-s096-topics-in-mathematics-with-applications-in-finance-fall-2013/"
+      },
+      {
+        "number": "18.06",
+        "title": "18.06 Linear Algebra (Spring 2010)",
+        "url": "https://ocw.mit.edu/courses/18-06-linear-algebra-spring-2010/"
+      },
+      {
+        "number": "18.085",
+        "title": "18.085 Computational Science And Engineering I (Fall 2008)",
+        "url": "https://ocw.mit.edu/courses/18-085-computational-science-and-engineering-i-fall-2008/"
+      },
+      {
+        "number": "18.065",
+        "title": "18.065 Matrix Methods In Data Analysis Signal Processing And Machine Learning (Spring 2018)",
+        "url": "https://ocw.mit.edu/courses/18-065-matrix-methods-in-data-analysis-signal-processing-and-machine-learning-spring-2018/"
+      },
+      {
+        "number": "3.024",
+        "title": "3.024 Electronic Optical And Magnetic Properties Of Materials (Spring 2013)",
+        "url": "https://ocw.mit.edu/courses/3-024-electronic-optical-and-magnetic-properties-of-materials-spring-2013/"
+      },
+      {
+        "number": "2.086",
+        "title": "2.086 Numerical Computation For Mechanical Engineers (Spring 2013)",
+        "url": "https://ocw.mit.edu/courses/2-086-numerical-computation-for-mechanical-engineers-spring-2013/"
+      }
+    ],
+    "same_course": [
+      "An Overview of Key Ideas",
+      "Elimination with Matrices",
+      "Multiplication and Inverse Matrices",
+      "Factorization into A = LU",
+      "Transposes, Permutations, Vector Spaces",
+      "Column Space and Nullspace",
+      "Solving Ax = 0: Pivot Variables, Special Solutions",
+      "Solving Ax = b: Row Reduced Form R"
+    ]
+  },
+  "watched": {},
+  "position": 0,
+  "built": "2026-09-10"
+}

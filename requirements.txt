@@ -1,0 +1,11 @@
+mcp==1.30.0
+python-docx
+PyPDF2
+unstructured
+pdfplumber
+tika
+requests
+beautifulsoup4
+chromadb
+sentence-transformers
+torch

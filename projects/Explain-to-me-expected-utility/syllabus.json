@@ -1,0 +1,135 @@
+{
+  "subject": "Explain to me expected utility",
+  "project": "Explain-to-me-expected-utility",
+  "course": {
+    "slug": "14-01-principles-of-microeconomics-fall-2023",
+    "number": "14.01",
+    "title": "14.01 Principles Of Microeconomics (Fall 2023)",
+    "url": "https://ocw.mit.edu/courses/14-01-principles-of-microeconomics-fall-2023/"
+  },
+  "lectures": [
+    {
+      "n": 1,
+      "title": "Lecture 01 Handout",
+      "url": "https://ocw.mit.edu/courses/14-01-principles-of-microeconomics-fall-2023/resources/mit14_01_f23_handout1_pdf/",
+      "role": "core",
+      "seq": 1,
+      "file": "",
+      "status": "skipped: no extractable text (likely a scanned or media file)"
+    },
+    {
+      "n": 2,
+      "title": "Lecture 02 Handout",
+      "url": "https://ocw.mit.edu/courses/14-01-principles-of-microeconomics-fall-2023/resources/mit14_01_f23_handout2_pdf/",
+      "role": "core",
+      "seq": 2,
+      "file": "Explain-to-me-expected-utility/mit-lecture-02-handout.md",
+      "status": "indexed"
+    },
+    {
+      "n": 3,
+      "title": "Lecture 03 Handouts",
+      "url": "https://ocw.mit.edu/courses/14-01-principles-of-microeconomics-fall-2023/resources/mit14_01_f23_handout3_pdf/",
+      "role": "core",
+      "seq": 3,
+      "file": "Explain-to-me-expected-utility/mit-lecture-03-handouts.md",
+      "status": "indexed"
+    },
+    {
+      "n": 4,
+      "title": "Lecture 04 Handout",
+      "url": "https://ocw.mit.edu/courses/14-01-principles-of-microeconomics-fall-2023/resources/mit14_01_f23_handout4_pdf/",
+      "role": "core",
+      "seq": 4,
+      "file": "Explain-to-me-expected-utility/mit-lecture-04-handout.md",
+      "status": "indexed"
+    },
+    {
+      "n": 5,
+      "title": "Lecture 05 Handout",
+      "url": "https://ocw.mit.edu/courses/14-01-principles-of-microeconomics-fall-2023/resources/mit14_01_f23_handout5_pdf/",
+      "role": "core",
+      "seq": 5,
+      "file": "",
+      "status": "skipped: no extractable text (likely a scanned or media file)"
+    },
+    {
+      "n": 6,
+      "title": "Lecture 06 Handout",
+      "url": "https://ocw.mit.edu/courses/14-01-principles-of-microeconomics-fall-2023/resources/mit14_01_f23_handout6_pdf/",
+      "role": "core",
+      "seq": 6,
+      "file": "Explain-to-me-expected-utility/mit-lecture-06-handout.md",
+      "status": "indexed"
+    }
+  ],
+  "assignments": [
+    {
+      "title": "Problem Set 02",
+      "url": "https://ocw.mit.edu/courses/14-01-principles-of-microeconomics-fall-2023/resources/mit14_01_f23_pset2_pdf/"
+    },
+    {
+      "title": "Problem Set 03",
+      "url": "https://ocw.mit.edu/courses/14-01-principles-of-microeconomics-fall-2023/resources/mit14_01_f23_pset3_pdf/"
+    },
+    {
+      "title": "Problem Set 04",
+      "url": "https://ocw.mit.edu/courses/14-01-principles-of-microeconomics-fall-2023/resources/mit14_01_f23_pset4_pdf/"
+    },
+    {
+      "title": "Problem Set 05",
+      "url": "https://ocw.mit.edu/courses/14-01-principles-of-microeconomics-fall-2023/resources/mit14_01_f23_pset5_pdf/"
+    },
+    {
+      "title": "Problem Set 08",
+      "url": "https://ocw.mit.edu/courses/14-01-principles-of-microeconomics-fall-2023/resources/mit14_01_f23_pset8_pdf/"
+    }
+  ],
+  "exams": [],
+  "related": {
+    "courses": [
+      {
+        "number": "RES.7",
+        "title": "RES.7 005 Biology Teaching Assistant Ta Training (Fall 2021)",
+        "url": "https://ocw.mit.edu/courses/res-7-005-biology-teaching-assistant-ta-training-fall-2021/"
+      },
+      {
+        "number": "21M.542",
+        "title": "21M.542 Interdisciplinary Approaches To Musical Time January (Iap 2010)",
+        "url": "https://ocw.mit.edu/courses/21m-542-interdisciplinary-approaches-to-musical-time-january-iap-2010/"
+      },
+      {
+        "number": "14.74",
+        "title": "14.74 Foundations Of Development Policy (Spring 2009)",
+        "url": "https://ocw.mit.edu/courses/14-74-foundations-of-development-policy-spring-2009/"
+      },
+      {
+        "number": "14.13",
+        "title": "14.13 Psychology And Economics (Spring 2020)",
+        "url": "https://ocw.mit.edu/courses/14-13-psychology-and-economics-spring-2020/"
+      },
+      {
+        "number": "14.12",
+        "title": "14.12 Economic Applications Of Game Theory (Fall 2025)",
+        "url": "https://ocw.mit.edu/courses/14-12-economic-applications-of-game-theory-fall-2025/"
+      },
+      {
+        "number": "14.04",
+        "title": "14.04 Intermediate Microeconomic Theory (Fall 2020)",
+        "url": "https://ocw.mit.edu/courses/14-04-intermediate-microeconomic-theory-fall-2020/"
+      }
+    ],
+    "same_course": [
+      "Lecture 07 Handout",
+      "Lecture 08 Handout",
+      "Lecture 09 Handout",
+      "Lecture 10 Handout",
+      "Lecture 11 Handout",
+      "Lecture 12 Handout",
+      "Lecture 13 Handout",
+      "Lecture 15 Handout"
+    ]
+  },
+  "position": 0,
+  "built": "2026-09-08"
+}

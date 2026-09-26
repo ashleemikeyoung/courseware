@@ -1,0 +1,110 @@
+{
+  "subject": "economics",
+  "project": "economics",
+  "course": {
+    "slug": "15-023j-global-climate-change-economics-science-and-policy-spring-2008",
+    "number": "15.023J",
+    "title": "15.023J Global Climate Change: Economics, Science, and Policy",
+    "url": "https://ocw.mit.edu/courses/15-023j-global-climate-change-economics-science-and-policy-spring-2008/"
+  },
+  "synthesis": "",
+  "lectures": [
+    {
+      "n": 1,
+      "title": "Lecture Notes",
+      "url": "https://ocw.mit.edu/courses/15-023j-global-climate-change-economics-science-and-policy-spring-2008/pages/lecture-notes/",
+      "role": "core",
+      "seq": 1,
+      "course": "15.023J Global Climate Change: Economics, Science, and Policy",
+      "course_url": "https://ocw.mit.edu/courses/15-023j-global-climate-change-economics-science-and-policy-spring-2008/",
+      "origin": "MIT OpenCourseWare \u00b7 15-023j-global-climate-change-economics-science-and-policy-spring-2008",
+      "resolve": "ocw_page",
+      "kind": "lecture",
+      "file": "economics/mit-lecture-notes.md",
+      "status": "indexed",
+      "alternates": [],
+      "description": "This section provides the lecture notes from the course and the schedule of lecture topics.",
+      "lesson_body": "This lecture establishes the methodology for determining global responsibility and effort allocation in climate policy, which is critical because, after understanding the physical science and the economic costs of emissions, the next logical step is figuring out *who* pays and *how much* they should pay.\n\nThe core principle of Integrated Assessment is that the global climate system and the global economy must be modeled together to understand how changes in one variable\u2014like emissions\u2014affect all others, including costs and damages. Burden sharing is the process of determining how the necessary global effort should be distributed among different nations, often balancing economic development needs with environmental necessity.\n\nThe mathematical framework for this involves optimizing global outcomes subject to constraints, such as maintaining a global temperature rise below a certain threshold. We are looking for the optimal path of emissions reduction over time, \\(\\mathbf{E}(t)\\), such that the total global cost is minimized while meeting the climate goal.\n\nThe general statement is that the optimal global effort, \\(\\mathbf{E}^*\\), is found by minimizing the sum of the costs of mitigation and the costs of climate damage across all regions and time periods.\n\n\\[\n\\min_{\\mathbf{E}(t)} \\left[ \\sum_{t} \\left( \\text{Cost}_{\\text{Mitigation}}(\\mathbf{E}(t)) + \\text{Cost}_{\\text{Damage}}(\\mathbf{E}(t)) \\right) \\right]\n\\]\n\nHere, \\(\\text{Cost}_{\\text{Mitigation}}(\\mathbf{E}(t))\\) represents the economic cost of reducing emissions in year \\(t\\), and \\(\\text{Cost}_{\\text{Damage}}(\\mathbf{E}(t))\\) represents the economic cost of the resulting climate damage in year \\(t\\).\n\nTo put this into practice, we must consider how the total effort is split. Suppose we have two regions, Developed (D) and Developing (G), and a total required global effort of 10 units of emissions reduction. The burden sharing dictates how this 10 units must be split, say \\(E_D\\) and \\(E_G\\), such that \\(E_D + E_G = 10\\).\n\nIf we assume that the cost of effort is higher in the Developed region (due to existing infrastructure) and the cost of damage is higher in the Developing region (due to greater vulnerability), the optimal split might not be equal.\n\nLet's use a simplified example where the total required effort is 10 units.\n\n1.  **Scenario 1: Equal Burden Sharing.** If we assume equal effort, \\(E_D = 5\\) and \\(E_G = 5\\). The total cost is \\(C_{\\text{total}} = C_{\\text{Mitigation}}(5, \\text{D}) + C_{\\text{Mitigation}}(5, \\text{G}) + C_{\\text{Damage}}(10)\\).\n2.  **Scenario 2: Burden Sharing based on Capacity.** If the model suggests that the Developed region has a higher capacity and lower marginal cost of reduction, the optimal split might be \\(E_D = 7\\) and \\(E_G = 3\\). The total cost is \\(C'_{\\text{total}} = C_{\\text{Mitigation}}(7, \\text{D}) + C_{\\text{Mitigation}}(3, \\text{G}) + C_{\\text{Damage}}(10)\\).\n\nThe Integrated Assessment II process determines which split, \\(E_D\\) and \\(E_G\\), minimizes the total global cost, thereby defining the most economically efficient and equitable burden share.\n\nWhat this sets up: The next lectures will move from the global, aggregated view of Integrated Assessment to more specific, localized problems, starting with the regional impacts of climate change in the Arctic and moving toward unresolved problems in climate analysis.",
+      "lesson_body_file": "economics/mit-lecture-notes.md"
+    }
+  ],
+  "module_video": {
+    "youtube_id": "fIFB6SBw2lU",
+    "title": "Lecture 1: Introduction to Development Economics",
+    "description": "<p><strong>Description:</strong> This video introduces the course. The class discusses the enormous differences in income and other important outcomes around the world. Prof. Duflo previews the main topics of the course.</p>\n<p>Session 1 lecture slides (PDF - 1.8MB)</p>\n<p><strong>Instructor:</strong> Esther Duflo</p>\n",
+    "url": "https://www.youtube.com/watch?v=fIFB6SBw2lU",
+    "course": "14-771-development-economics-fall-2021",
+    "seconds": 0
+  },
+  "sources": [],
+  "also_covered": [
+    {
+      "number": "ES.256",
+      "title": "ES.256 The Coming Years (Spring 2008)",
+      "url": "https://ocw.mit.edu/courses/es-256-the-coming-years-spring-2008/",
+      "item": "Lecture 11: Economics and Demographics"
+    },
+    {
+      "number": "14.01",
+      "title": "14.01 Principles Of Microeconomics (Fall 2023)",
+      "url": "https://ocw.mit.edu/courses/14-01-principles-of-microeconomics-fall-2023/",
+      "item": "Lec 25: Behavioral Economics"
+    },
+    {
+      "number": "14.73",
+      "title": "14.73 The Challenge Of World Poverty (Spring 2011)",
+      "url": "https://ocw.mit.edu/courses/14-73-the-challenge-of-world-poverty-spring-2011/",
+      "item": "The (not so simple) economics of lending to the poor"
+    }
+  ],
+  "assignments": [
+    {
+      "title": "Assignments",
+      "url": "https://ocw.mit.edu/courses/15-023j-global-climate-change-economics-science-and-policy-spring-2008/pages/assignments/"
+    }
+  ],
+  "exams": [],
+  "related": {
+    "courses": [
+      {
+        "number": "15.053",
+        "title": "15.053 Optimization Methods In Management Science (Spring 2013)",
+        "url": "https://ocw.mit.edu/courses/15-053-optimization-methods-in-management-science-spring-2013/"
+      },
+      {
+        "number": "14.01SC",
+        "title": "14.01SC Principles Of Microeconomics (Fall 2011)",
+        "url": "https://ocw.mit.edu/courses/14-01sc-principles-of-microeconomics-fall-2011/"
+      },
+      {
+        "number": "14.03",
+        "title": "14.03 Microeconomic Theory And Public Policy (Fall 2016)",
+        "url": "https://ocw.mit.edu/courses/14-03-microeconomic-theory-and-public-policy-fall-2016/"
+      },
+      {
+        "number": "ES.256",
+        "title": "ES.256 The Coming Years (Spring 2008)",
+        "url": "https://ocw.mit.edu/courses/es-256-the-coming-years-spring-2008/"
+      },
+      {
+        "number": "14.01",
+        "title": "14.01 Principles Of Microeconomics (Fall 2023)",
+        "url": "https://ocw.mit.edu/courses/14-01-principles-of-microeconomics-fall-2023/"
+      },
+      {
+        "number": "11.481J",
+        "title": "11.481J Analyzing And Accounting For Regional Economic Growth (Spring 2009)",
+        "url": "https://ocw.mit.edu/courses/11-481j-analyzing-and-accounting-for-regional-economic-growth-spring-2009/"
+      }
+    ],
+    "same_course": []
+  },
+  "watched": {
+    "fIFB6SBw2lU": {
+      "seconds": 0,
+      "duration": 4271
+    }
+  },
+  "position": 0,
+  "built": "2026-09-13"
+}

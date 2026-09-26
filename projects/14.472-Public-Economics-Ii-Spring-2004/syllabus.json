@@ -1,0 +1,99 @@
+{
+  "subject": "14.472 Public Economics Ii (Spring 2004)",
+  "project": "14.472-Public-Economics-Ii-Spring-2004",
+  "course": {
+    "slug": "14-472-public-economics-ii-spring-2004",
+    "number": "14.472",
+    "title": "14.472 Public Economics Ii (Spring 2004)",
+    "url": "https://ocw.mit.edu/courses/14-472-public-economics-ii-spring-2004/"
+  },
+  "synthesis": "",
+  "lectures": [
+    {
+      "n": 1,
+      "title": "Lecture Notes",
+      "url": "https://ocw.mit.edu/courses/14-472-public-economics-ii-spring-2004/pages/lecture-notes/",
+      "role": "core",
+      "seq": 999,
+      "course": "14.472 Public Economics Ii (Spring 2004)",
+      "course_url": "https://ocw.mit.edu/courses/14-472-public-economics-ii-spring-2004/pages/lecture-notes//",
+      "origin": "MIT OpenCourseWare \u00b7 14.472 Public Economics Ii (Spring 2004)",
+      "resolve": "ocw_page",
+      "kind": "lecture",
+      "file": "14.472-Public-Economics-Ii-Spring-2004/mit-lecture-notes.md",
+      "status": "indexed",
+      "alternates": [],
+      "description": "This section contains the lecture notes for the related lecture topics.",
+      "lesson_body": "This lecture establishes the comprehensive scope of Public Economics II, showing how various market failures and policy interventions are systematically analyzed across the entire life cycle of economic activity, from basic goods provision to complex health insurance markets.\n\nThe course begins by establishing the foundational concepts of market failure, starting with the provision of public goods and the role of private charity. This initial segment explores how goods that are non-excludable and non-rivalrous\u2014like national defense\u2014are often under-provided in a private equilibrium, necessitating government intervention. Following this, the focus shifts to how private giving interacts with the tax code, examining the mechanics of income tax deductions for charitable donations and the concept of \"warm glow\" preferences, which describes the non-pecuniary utility derived from giving.\n\nThe next major block of study addresses the taxation of wealth and income across time. We move from the general theory of annuities to specific tax treatments of gifts, estates, and savings. This section is crucial because it models how the government can tax assets that span generations, such as inherited wealth, and how these tax structures influence saving behavior.\n\nThe core of the course then delves into the mechanics of social insurance and labor market stability. We analyze the theory and practical application of Social Security, examining how benefit adequacy and the length of a worker's career interact with life expectancy. This leads to a detailed study of other safety nets, including Unemployment Insurance, Workers\u2019 Compensation, and Disability Insurance. These topics collectively model how government programs attempt to stabilize income and labor supply when individuals face temporary or permanent economic shocks.\n\nFinally, the course expands its scope to cover the most complex areas of modern public policy: welfare and health. We begin by reviewing traditional cash welfare programs before moving into the highly technical issues of health insurance. This final segment analyzes the twin problems of moral hazard\u2014where insured individuals consume more services than necessary\u2014and adverse selection\u2014where individuals with higher risk are more likely to seek insurance. We apply these theoretical frameworks to real-world programs like Medicare and Medicaid, and conclude by examining external effects, such as how smoking impacts the health of others.\n\nWhat this sets up: The systematic progression from foundational market failures (public goods) to wealth taxation (estates) and finally to complex behavioral issues (health insurance) establishes a comprehensive framework for evaluating the trade-offs inherent in government intervention, preparing the student to analyze any modern policy problem using a rigorous, multi-faceted economic lens.",
+      "lesson_body_file": "14.472-Public-Economics-Ii-Spring-2004/mit-lecture-notes.md"
+    }
+  ],
+  "module_video": {},
+  "sources": [],
+  "also_covered": [
+    {
+      "number": "22.812J",
+      "title": "22.812J Managing Nuclear Technology (Spring 2004)",
+      "url": "https://ocw.mit.edu/courses/22-812j-managing-nuclear-technology-spring-2004/",
+      "item": "Lecture Notes"
+    },
+    {
+      "number": "14.662",
+      "title": "14.662 Labor Economics Ii (Spring 2015)",
+      "url": "https://ocw.mit.edu/courses/14-662-labor-economics-ii-spring-2015/",
+      "item": "14.662 S15 Scientific Workforce Lecture Slides"
+    },
+    {
+      "number": "11.167",
+      "title": "11.167 Economic Development Technical Capabilities (Spring 2004)",
+      "url": "https://ocw.mit.edu/courses/11-167-economic-development-technical-capabilities-spring-2004/",
+      "item": "Lecture Notes"
+    }
+  ],
+  "assignments": [
+    {
+      "title": "Assignments",
+      "url": "https://ocw.mit.edu/courses/14-472-public-economics-ii-spring-2004/pages/assignments/"
+    }
+  ],
+  "exams": [],
+  "related": {
+    "courses": [
+      {
+        "number": "14.471",
+        "title": "14.471 Public Economics I (Fall 2012)",
+        "url": "https://ocw.mit.edu/courses/14-471-public-economics-i-fall-2012/"
+      },
+      {
+        "number": "22.812J",
+        "title": "22.812J Managing Nuclear Technology (Spring 2004)",
+        "url": "https://ocw.mit.edu/courses/22-812j-managing-nuclear-technology-spring-2004/"
+      },
+      {
+        "number": "11.947",
+        "title": "11.947 Sustainable Economic Development (Spring 2004)",
+        "url": "https://ocw.mit.edu/courses/11-947-sustainable-economic-development-spring-2004/"
+      },
+      {
+        "number": "14.462",
+        "title": "14.462 Advanced Macroeconomics Ii (Spring 2004)",
+        "url": "https://ocw.mit.edu/courses/14-462-advanced-macroeconomics-ii-spring-2004/"
+      },
+      {
+        "number": "11.167",
+        "title": "11.167 Economic Development Technical Capabilities (Spring 2004)",
+        "url": "https://ocw.mit.edu/courses/11-167-economic-development-technical-capabilities-spring-2004/"
+      },
+      {
+        "number": "1.253J",
+        "title": "1.253J Transportation Policy And Environmental Limits (Spring 2004)",
+        "url": "https://ocw.mit.edu/courses/1-253j-transportation-policy-and-environmental-limits-spring-2004/"
+      }
+    ],
+    "same_course": []
+  },
+  "watched": {},
+  "position": 0,
+  "built": "2026-09-12",
+  "module_video_checked": "2026-09-12"
+}

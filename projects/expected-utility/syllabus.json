@@ -1,0 +1,161 @@
+{
+  "subject": "expected utility",
+  "project": "expected-utility",
+  "course": {
+    "slug": "14-121-microeconomic-theory-i-fall-2015",
+    "number": "14.121",
+    "title": "14.121 Microeconomic Theory I (Fall 2015)",
+    "url": "https://ocw.mit.edu/courses/14-121-microeconomic-theory-i-fall-2015/"
+  },
+  "synthesis": "",
+  "lectures": [
+    {
+      "n": 1,
+      "title": "Expected Utility Theory - Lecture Slides",
+      "url": "https://ocw.mit.edu/courses/14-121-microeconomic-theory-i-fall-2015/resources/mit14_121f15_5s/",
+      "role": "core",
+      "seq": 5,
+      "course": "14.121 Microeconomic Theory I (Fall 2015)",
+      "course_url": "https://ocw.mit.edu/courses/14-121-microeconomic-theory-i-fall-2015/",
+      "origin": "MIT OpenCourseWare \u00b7 14.121 Microeconomic Theory I (Fall 2015)",
+      "resolve": "ocw_page",
+      "kind": "lecture",
+      "file": "expected-utility/mit-expected-utility-theory-lecture-slides.md",
+      "status": "indexed",
+      "alternates": [],
+      "description": "This resource contains information regarding expected utility theory."
+    },
+    {
+      "n": 2,
+      "title": "Critiques of Expected Utility - Lecture Slides",
+      "url": "https://ocw.mit.edu/courses/14-121-microeconomic-theory-i-fall-2015/resources/mit14_121f15_8s/",
+      "role": "core",
+      "seq": 8,
+      "course": "14.121 Microeconomic Theory I (Fall 2015)",
+      "course_url": "https://ocw.mit.edu/courses/14-121-microeconomic-theory-i-fall-2015/",
+      "origin": "MIT OpenCourseWare \u00b7 14.121 Microeconomic Theory I (Fall 2015)",
+      "resolve": "ocw_page",
+      "kind": "lecture",
+      "file": "expected-utility/mit-critiques-of-expected-utility-lecture-slides.md",
+      "status": "indexed",
+      "alternates": [],
+      "description": "This resource contains information regarding critiques of expected utility.",
+      "lesson_body": "This lecture establishes that while Expected Utility (EU) is a powerful foundational model, real-world human decision-making often violates its core assumptions, necessitating the development of several alternative theories.\n\n### Critique I: The Allais Paradox\n\nThe Allais Paradox demonstrates that people do not consistently make choices by maximizing the expected utility, suggesting that the decision-maker may weight probabilities non-linearly, particularly for extreme events.\n\nIn standard Expected Utility theory, the choice between two gambles is made by comparing the weighted average of the utilities of the possible outcomes. For example, when comparing Lottery A (1M for sure) and Lottery C (1M with probability 11%, 0 with probability 89%), EU predicts choosing A if the expected utility of A is greater than or equal to the expected utility of C.\n\nLet's use the provided comparison: choosing A if \\(u(1) \\ge 0.1u(5) + 0.89u(1)\\), which simplifies to \\(0.11u(1) \\ge 0.1u(5)\\).\n\nSuppose we normalize \\(u(0)\\) to 0. If we choose A, the utility is \\(u(1)\\). If we choose C, the expected utility is \\(0.11u(1)\\). The condition for choosing A is that the utility of the sure outcome must be greater than or equal to the expected utility of the mixed outcome.\n\nNow, let's put numbers through this condition. Suppose \\(u(1) = 10\\) and \\(u(5) = 50\\).\nWe check the condition: \\(0.11u(1) \\ge 0.1u(5)\\).\n\\(0.11(10) \\ge 0.1(50)\\)\n\\(1.1 \\ge 5\\)\nThis is false. Therefore, based on EU, we should choose C, as its expected utility (1.1) is greater than the utility of A (10). However, the paradox notes that subjects often choose A, violating the EU prediction.\n\n#### Rank-Dependent Expected Utility\n\nOne way to extend EU to accommodate this behavior is through rank-dependent expected utility, which modifies the probability weights based on the rank of the outcome. The decision-maker chooses the action that maximizes the utility of the outcome weighted by a new cumulative distribution function, \\(w \\circ F\\).\n\nThe decision-maker chooses to maximize \\(U(F) = u(x) dw(F(x))\\), where \\(w: [0, 1] \\to [0, 1]\\) is an increasing probability weighting function applied to the cumulative distribution function \\(F\\).\n\nLet's apply this to the four lotteries (A, B, C, D), assuming \\(u(0)=0\\).\nThe expected utility for Lottery A is:\n\\[U(A) = u(1)\\]\nThe expected utility for Lottery B is:\n\\[U(B) = [w(0.9) - w(0.01)] u(1) + [1 - w(0.9)] u(5)\\]\nThe expected utility for Lottery C is:\n\\[U(C) = [1 - w(0.89)] u(1)\\]\nThe expected utility for Lottery D is:\n\\[U(D) = [1 - w(0.9)] u(5)\\]\n\nIf we suppose \\(w\\) approaches an extreme inverse S-shape, defined by \\(w(0) = 0\\), \\(w(p) = 0.5\\) for all \\(p \\in (0, 1)\\), and \\(w(1) = 1\\).\nThen:\n\\(U(A) \\to u(1)\\)\n\\(U(B) \\to [0.5 - 0.0] u(1) + [1 - 0.5] u(5) = 0.5u(1) + 0.5u(5)\\)\n\\(U(C) \\to [1 - 0.5] u(1) = 0.5u(1)\\)\n\\(U(D) \\to [1 - 0.5] u(5) = 0.5u(5)\\)\n\nIf \\(u(5)\\) is between \\(u(1)\\) and \\(2u(1)\\), the decision-maker will choose A, which rationalizes the Allais behavior.\n\n### Critique II: The Ellsberg Paradox\n\nThe Ellsberg Paradox highlights a difference between \"quantifiable uncertainty\" (risk) and \"unquantifiable uncertainty\" (ambiguity), showing that people prefer known probabilities over unknown ones.\n\nIn standard EU, the decision-maker's choice is assumed to be independent of the underlying probability distribution, which is exogenously given. The decision-maker chooses the action \\(a\\) to maximize the expected utility according to the worst-case belief \\(P\\).\n\nThe decision-maker chooses action \\(a\\) to maximize \\(U(a) = \\min_{p \\in P} \\mathbb{E}_p[u(a)]\\).\n\nConsider the urn with 300 balls: 100 red balls, and 200 balls that are an unknown mix of blue and green.\n\n**Question 1: Which color would you choose?**\nThe set of beliefs \\(P\\) is defined such that \\(p_R = 1/3\\), and \\(p_B\\) and \\(p_G\\) can be anything between 0 and \\(2/3\\) (such that \\(p_B + p_G = 2/3\\)).\nIf the decision-maker chooses Red (R), the worst-case expected utility is:\n\\[U(R) = \\min_{p \\in P} p_R = 1/3\\]\nIf the decision-maker chooses Blue (B), the worst-case expected utility is:\n\\[U(B) = \\min_{p \\in P} p_B = 0\\]\nIf the decision-maker chooses Green (G), the worst-case expected utility is:\n\\[U(G) = \\min_{p \\in P} p_G = 0\\]\nThe decision-maker chooses Red, as \\(1/3 > 0\\).\n\n**Question 2: If the ball is not of the color you choose, you win $100. What color would you choose?**\nThe payoff structure changes: winning $100$ if the ball is *not* the chosen color.\nThe worst-case expected utility for choosing Red (R) is:\n\\[U(R) = \\min_{p \\in P} (1 - p_R) = 2/3\\]\nThe worst-case expected utility for choosing Blue (B) is:\n\\[U(B) = \\min_{p \\in P} (1 - p_B) = 1/3\\]\nThe worst-case expected utility for choosing Green (G) is:\n\\[U(G) = \\min_{p \\in P} (1 - p_G) = 1/3\\]\nThe decision-maker chooses Red, as \\(2/3 > 1/3\\).\n\nThe paradox arises because the decision-maker chooses Red in both questions, even though the underlying probabilities for blue and green are symmetrical and unknown.\n\n### Critique III: The Rabin Calibration Paradox\n\nThe Rabin Paradox shows that the assumption of constant risk aversion across all levels of wealth is inconsistent. If a decision-maker is risk-averse over small stakes, this implies an absurdly high degree of risk-aversion over large stakes.\n\nFor example, if a decision-maker has Constant Absolute Risk Aversion (CARA) preferences, \\(u(x) = -\\exp(-\\alpha x)\\), and rejects a small gamble, this implies a specific value for \\(\\alpha\\).\n\nSuppose the decision-maker rejects the gamble that gives $+\\$100$ with probability \\(p=0.6\\) and $-\\$100$ with probability \\(1-p=0.4\\). This rejection implies that the expected utility of the gamble is less than or equal to the utility of the sure outcome (which we can normalize to 0, or $-1$ if we use the exponential form).\n\nThe expected utility of the gamble is:\n\\[\\mathbb{E}[U] = p \\cdot u(100) + (1 - p) \\cdot u(-100)\\]\nUsing \\(u(x) = -\\exp(-\\alpha x)\\):\n\\[\\mathbb{E}[U] = 0.6 (-\\exp(-100\\alpha)) + 0.4 (-\\exp(100\\alpha))\\]\nThe rejection implies \\(\\mathbb{E}[U] \\le -1\\).\n\nNow, consider the second gamble: $-\\$200$ with probability $0.5$ and $+\\$100$ with probability $0.5.\nThe expected utility is:\n\\[\\mathbb{E}[U] = 0.5 (-\\exp(-100\\alpha)) + 0.5 (-\\exp(200\\alpha))\\]\nThe paradox shows that if \\(\\alpha \\ge \\log 3\\), then \\(\\mathbb{E}[U] \\le -1/2 \\exp(-\\infty) - 1/2 \\exp(2\\log 3) = -1/2 - 1/2 (9) = -5\\). Since $-5 < -1$, the decision-maker must reject this second gamble.\n\nHowever, the paradox continues: if the decision-maker rejects small gambles, she must reject even larger, more extreme gambles, which is absurd.\n\n#### Prospect Theory\n\nProspect Theory resolves this by suggesting that utility is relative to a reference point \\(x_0\\), and that gains and losses are weighted differently. The utility function has the form \\(u(x|x_0) = v(x - x_0)\\), where \\(v\\) satisfies:\n1. Concavity on \\(\\mathbb{R}^+\\) (risk-aversion toward gains).\n2. Convexity on \\(\\mathbb{R}^-\\) (risk-loving toward losses).\n3. A kink at 0 (loss-aversion).\n\nThis theory can accommodate the Rabin behavior because the kink allows for the rejection of small, positive expected value gambles.\n\n***\n\nWhat this sets up: The critiques demonstrate that EU is insufficient because it fails to account for probability weighting (Allais), ambiguity (Ellsberg), and reference dependence (Rabin). These failures motivate the development of behavioral models, which in turn set up the study of how these alternative theories are integrated into decision-making frameworks.",
+      "lesson_body_file": "expected-utility/mit-critiques-of-expected-utility-lecture-slides.md"
+    }
+  ],
+  "sources": [],
+  "also_covered": [
+    {
+      "number": "14.123",
+      "title": "14.123 Microeconomic Theory Iii (Spring 2015)",
+      "url": "https://ocw.mit.edu/courses/14-123-microeconomic-theory-iii-spring-2015/",
+      "item": "14.123 S15 Microeconomic Theory III, Subjective Expected Utility Recitation Notes"
+    },
+    {
+      "number": "14.03",
+      "title": "14.03 Microeconomic Theory And Public Policy (Fall 2016)",
+      "url": "https://ocw.mit.edu/courses/14-03-microeconomic-theory-and-public-policy-fall-2016/",
+      "item": "14.03/14.003 Fall 2016 Lecture 16 Notes"
+    }
+  ],
+  "assignments": [
+    {
+      "title": "14.121 Microeconomic Theory I: Problem set 1",
+      "url": "https://ocw.mit.edu/courses/14-121-microeconomic-theory-i-fall-2015/resources/mit14_121f15_ps1f05/"
+    },
+    {
+      "title": "14.121 Microeconomic Theory I: Problem set 2",
+      "url": "https://ocw.mit.edu/courses/14-121-microeconomic-theory-i-fall-2015/resources/mit14_121f15_ps2f05/"
+    },
+    {
+      "title": "14.121 Microeconomic Theory I: Problem set 3",
+      "url": "https://ocw.mit.edu/courses/14-121-microeconomic-theory-i-fall-2015/resources/mit14_121f15_ps3f05/"
+    },
+    {
+      "title": "14.121 Microeconomic Theory I: Problem set 4",
+      "url": "https://ocw.mit.edu/courses/14-121-microeconomic-theory-i-fall-2015/resources/mit14_121f15_ps4f05/"
+    },
+    {
+      "title": "14.121 Microeconomic Theory I: Problem set 5",
+      "url": "https://ocw.mit.edu/courses/14-121-microeconomic-theory-i-fall-2015/resources/mit14_121f15_ps5f05/"
+    },
+    {
+      "title": "14.121 Microeconomic Theory I: Problem set 6",
+      "url": "https://ocw.mit.edu/courses/14-121-microeconomic-theory-i-fall-2015/resources/mit14_121f15_ps6f05/"
+    }
+  ],
+  "exams": [
+    {
+      "title": "14.121 Microeconomic Theory I: Exam 2008",
+      "url": "https://ocw.mit.edu/courses/14-121-microeconomic-theory-i-fall-2015/resources/mit14_121f15_pexamf08/"
+    },
+    {
+      "title": "14.121 Microeconomic Theory I: Exam 2009",
+      "url": "https://ocw.mit.edu/courses/14-121-microeconomic-theory-i-fall-2015/resources/mit14_121f15_pexamf09/"
+    },
+    {
+      "title": "14.121 Microeconomic Theory I: Final Exam 2005",
+      "url": "https://ocw.mit.edu/courses/14-121-microeconomic-theory-i-fall-2015/resources/mit14_121f15_finalf05/"
+    }
+  ],
+  "related": {
+    "courses": [
+      {
+        "number": "14.472",
+        "title": "14.472 Public Economics Ii (Spring 2004)",
+        "url": "https://ocw.mit.edu/courses/14-472-public-economics-ii-spring-2004/"
+      },
+      {
+        "number": "14.123",
+        "title": "14.123 Microeconomic Theory Iii (Spring 2015)",
+        "url": "https://ocw.mit.edu/courses/14-123-microeconomic-theory-iii-spring-2015/"
+      },
+      {
+        "number": "14.03",
+        "title": "14.03 Microeconomic Theory And Public Policy (Fall 2016)",
+        "url": "https://ocw.mit.edu/courses/14-03-microeconomic-theory-and-public-policy-fall-2016/"
+      },
+      {
+        "number": "14.01",
+        "title": "14.01 Principles Of Microeconomics (Fall 2023)",
+        "url": "https://ocw.mit.edu/courses/14-01-principles-of-microeconomics-fall-2023/"
+      },
+      {
+        "number": "15.450",
+        "title": "15.450 Analytics Of Finance (Fall 2010)",
+        "url": "https://ocw.mit.edu/courses/15-450-analytics-of-finance-fall-2010/"
+      },
+      {
+        "number": "14.13",
+        "title": "14.13 Psychology And Economics (Spring 2020)",
+        "url": "https://ocw.mit.edu/courses/14-13-psychology-and-economics-spring-2020/"
+      }
+    ],
+    "same_course": [
+      "Consumer Theory - Lecture Slides",
+      "Applications of Consumer Theory - Lecture Slides",
+      "Monotone Comparative Statistics, with Applications to Producer Theory - Lecture Slides",
+      "Attitudes Towards Risk - Lecture Slides",
+      "Comparing Risky Prospects - Lecture Slides",
+      "Dynamic Choice and Time-Inconsistency - Lecture Slides"
+    ]
+  },
+  "watched": {
+    "qwNTv1tjKbA": {
+      "seconds": 0,
+      "duration": 2850
+    }
+  },
+  "position": 1,
+  "built": "2026-09-09",
+  "module_video": {
+    "youtube_id": "qwNTv1tjKbA",
+    "title": "Lec 20: Uncertainty",
+    "description": "<p>In this lecture, Prof. Gruber discusses a model on how to make decisions under uncertainty. Keywords: uncertainty, decisions, information asymmetry, risk aversion, expected utility theory</p>\n",
+    "url": "https://www.youtube.com/watch?v=qwNTv1tjKbA",
+    "course": "14-01-principles-of-microeconomics-fall-2023",
+    "seconds": 0
+  },
+  "module_video_checked": "2026-09-09"
+}

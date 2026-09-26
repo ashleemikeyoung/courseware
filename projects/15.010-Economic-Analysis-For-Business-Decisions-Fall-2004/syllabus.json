@@ -1,0 +1,112 @@
+{
+  "subject": "15.010 Economic Analysis For Business Decisions (Fall 2004)",
+  "project": "15.010-Economic-Analysis-For-Business-Decisions-Fall-2004",
+  "course": {
+    "slug": "15-010-economic-analysis-for-business-decisions-fall-2004",
+    "number": "15.010",
+    "title": "15.010 Economic Analysis For Business Decisions (Fall 2004)",
+    "url": "https://ocw.mit.edu/courses/15-010-economic-analysis-for-business-decisions-fall-2004/"
+  },
+  "synthesis": "",
+  "lectures": [
+    {
+      "n": 1,
+      "title": "Lecture Notes",
+      "url": "https://ocw.mit.edu/courses/15-010-economic-analysis-for-business-decisions-fall-2004/pages/lecture-notes/",
+      "role": "core",
+      "seq": 999,
+      "course": "15.010 Economic Analysis For Business Decisions (Fall 2004)",
+      "course_url": "https://ocw.mit.edu/courses/15-010-economic-analysis-for-business-decisions-fall-2004/pages/lecture-notes//",
+      "origin": "MIT OpenCourseWare \u00b7 15.010 Economic Analysis For Business Decisions (Fall 2004)",
+      "resolve": "ocw_page",
+      "kind": "lecture",
+      "file": "15.010-Economic-Analysis-For-Business-Decisions-Fall-2004/mit-lecture-notes.md",
+      "status": "indexed",
+      "alternates": []
+    }
+  ],
+  "sources": [],
+  "also_covered": [
+    {
+      "number": "11.945",
+      "title": "11.945 Springfield Studio (Fall 2005)",
+      "url": "https://ocw.mit.edu/courses/11-945-springfield-studio-fall-2005/",
+      "item": "Readings"
+    },
+    {
+      "number": "11.437",
+      "title": "11.437 Financing Economic Development (Fall 2016)",
+      "url": "https://ocw.mit.edu/courses/11-437-financing-economic-development-fall-2016/",
+      "item": "MIT 11.437 Fall 2016 Lecture 5: Financial Statement Analysis"
+    }
+  ],
+  "assignments": [
+    {
+      "title": "Assignments",
+      "url": "https://ocw.mit.edu/courses/15-010-economic-analysis-for-business-decisions-fall-2004/pages/assignments/"
+    },
+    {
+      "title": "homework_01_sol.pdf",
+      "url": "https://ocw.mit.edu/courses/15-010-economic-analysis-for-business-decisions-fall-2004/resources/homework_01_sol/"
+    },
+    {
+      "title": "homework_02_sol.pdf",
+      "url": "https://ocw.mit.edu/courses/15-010-economic-analysis-for-business-decisions-fall-2004/resources/homework_02_sol/"
+    },
+    {
+      "title": "homework_03_sol.pdf",
+      "url": "https://ocw.mit.edu/courses/15-010-economic-analysis-for-business-decisions-fall-2004/resources/homework_03_sol/"
+    },
+    {
+      "title": "homework_04_sol.pdf",
+      "url": "https://ocw.mit.edu/courses/15-010-economic-analysis-for-business-decisions-fall-2004/resources/homework_04_sol/"
+    },
+    {
+      "title": "homework_05_sol.pdf",
+      "url": "https://ocw.mit.edu/courses/15-010-economic-analysis-for-business-decisions-fall-2004/resources/homework_05_sol/"
+    },
+    {
+      "title": "homework_06_sol.pdf",
+      "url": "https://ocw.mit.edu/courses/15-010-economic-analysis-for-business-decisions-fall-2004/resources/homework_06_sol/"
+    }
+  ],
+  "exams": [],
+  "related": {
+    "courses": [
+      {
+        "number": "15.025",
+        "title": "15.025 Game Theory For Strategic Advantage (Spring 2015)",
+        "url": "https://ocw.mit.edu/courses/15-025-game-theory-for-strategic-advantage-spring-2015/"
+      },
+      {
+        "number": "15.020",
+        "title": "15.020 Competition In Telecommunications (Fall 2003)",
+        "url": "https://ocw.mit.edu/courses/15-020-competition-in-telecommunications-fall-2003/"
+      },
+      {
+        "number": "15.040",
+        "title": "15.040 Game Theory For Managers (Spring 2004)",
+        "url": "https://ocw.mit.edu/courses/15-040-game-theory-for-managers-spring-2004/"
+      },
+      {
+        "number": "11.491J",
+        "title": "11.491J Economic Development Policy Analysis And Industrialization (Fall 2004)",
+        "url": "https://ocw.mit.edu/courses/11-491j-economic-development-policy-analysis-and-industrialization-fall-2004/"
+      },
+      {
+        "number": "11.487",
+        "title": "11.487 Urban Public Finance In Developing Countries (Fall 2004)",
+        "url": "https://ocw.mit.edu/courses/11-487-urban-public-finance-in-developing-countries-fall-2004/"
+      },
+      {
+        "number": "11.945",
+        "title": "11.945 Springfield Studio (Fall 2005)",
+        "url": "https://ocw.mit.edu/courses/11-945-springfield-studio-fall-2005/"
+      }
+    ],
+    "same_course": []
+  },
+  "watched": {},
+  "position": 0,
+  "built": "2026-09-09"
+}

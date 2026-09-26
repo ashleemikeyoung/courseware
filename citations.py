@@ -29,7 +29,10 @@ from pathlib import Path
 import projects
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "memory"))
-from memory_client import find_citation
+try:
+    from memory_client import find_citation
+except ImportError:
+    find_citation = None
 
 from rag import meaningful_words
 
@@ -53,6 +56,8 @@ def topup(query: str, seen_sources: set, project: str = None) -> list:
     hits = []
     seen = set(seen_sources)
     checked = set()
+    if find_citation is None:
+        return hits
     try:
         for word in meaningful_words(query):
             if len(word) < 3 or word in checked:

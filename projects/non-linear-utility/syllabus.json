@@ -1,0 +1,150 @@
+{
+  "subject": "non-linear utility",
+  "project": "non-linear-utility",
+  "course": {
+    "slug": "14-04-intermediate-microeconomic-theory-fall-2020",
+    "number": "14.04",
+    "title": "14.04 Intermediate Microeconomic Theory (Fall 2020)",
+    "url": "https://ocw.mit.edu/courses/14-04-intermediate-microeconomic-theory-fall-2020/"
+  },
+  "synthesis": "",
+  "lectures": [
+    {
+      "n": 1,
+      "title": "Lecture 2: Consumer Choice",
+      "url": "https://ocw.mit.edu/courses/14-04-intermediate-microeconomic-theory-fall-2020/resources/ocw_1404_lecture02_2020sep03/",
+      "role": "prerequisite",
+      "seq": 2,
+      "course": "14.04 Intermediate Microeconomic Theory (Fall 2020)",
+      "course_url": "https://ocw.mit.edu/courses/14-04-intermediate-microeconomic-theory-fall-2020/",
+      "origin": "MIT OpenCourseWare \u00b7 14.04 Intermediate Microeconomic Theory (Fall 2020)",
+      "resolve": "ocw_page",
+      "kind": "lecture",
+      "file": "non-linear-utility/mit-lecture-2-consumer-choice.md",
+      "status": "indexed",
+      "alternates": [
+        {
+          "title": "Lecture 2: Consumer Choice transcript",
+          "url": "https://ocw.mit.edu/courses/14-04-intermediate-microeconomic-theory-fall-2020/resources/ocw_1404_lecture02_transcript_pdf/",
+          "kind": "transcript",
+          "course": "14.04 Intermediate Microeconomic Theory (Fall 2020)",
+          "course_url": "https://ocw.mit.edu/courses/14-04-intermediate-microeconomic-theory-fall-2020/",
+          "origin": "MIT OpenCourseWare \u00b7 14.04 Intermediate Microeconomic Theory (Fall 2020)",
+          "resolve": "ocw_page",
+          "youtube_url": "",
+          "description": "",
+          "seq": 2
+        }
+      ],
+      "youtube_url": "https://www.youtube.com/watch?v=rhOpABGewYA",
+      "description": "How should rational consumers decide what to buy? Economists break the problem down into its component parts: feasible available commodity bundles, preferences over goods and services, and budget constraints."
+    },
+    {
+      "n": 2,
+      "title": "Lecture 5: Uncertainty and Linear Programs",
+      "url": "https://ocw.mit.edu/courses/14-04-intermediate-microeconomic-theory-fall-2020/resources/ocw_1404_lecture05_2020sep15/",
+      "role": "core",
+      "seq": 5,
+      "course": "14.04 Intermediate Microeconomic Theory (Fall 2020)",
+      "course_url": "https://ocw.mit.edu/courses/14-04-intermediate-microeconomic-theory-fall-2020/",
+      "origin": "MIT OpenCourseWare \u00b7 14.04 Intermediate Microeconomic Theory (Fall 2020)",
+      "resolve": "ocw_page",
+      "kind": "lecture",
+      "file": "",
+      "status": "pending: opens when reached",
+      "alternates": [
+        {
+          "title": "Lecture 5: Uncertainty and Linear Programs transcript",
+          "url": "https://ocw.mit.edu/courses/14-04-intermediate-microeconomic-theory-fall-2020/resources/ocw_1404_lecture05_transcript_pdf/",
+          "kind": "transcript",
+          "course": "14.04 Intermediate Microeconomic Theory (Fall 2020)",
+          "course_url": "https://ocw.mit.edu/courses/14-04-intermediate-microeconomic-theory-fall-2020/",
+          "origin": "MIT OpenCourseWare \u00b7 14.04 Intermediate Microeconomic Theory (Fall 2020)",
+          "resolve": "ocw_page",
+          "youtube_url": "",
+          "description": "",
+          "seq": 5
+        }
+      ],
+      "youtube_url": "https://www.youtube.com/watch?v=s0gfi3OrtQk",
+      "description": "Farmers in medieval villages faced the risk of starvation and took great pains to diversify that risk as best they could, farming long narrow strips of land. There were also gains from pooling risk across distant villages. Surprisingly, such problems can be formalized with lotteries. Linear program problems capture this and a wide variety of applications."
+    }
+  ],
+  "sources": [],
+  "also_covered": [
+    {
+      "number": "14.129",
+      "title": "14.129 Blockchain And The Design Of Financial Systems (Spring 2025)",
+      "url": "https://ocw.mit.edu/courses/14-129-blockchain-and-the-design-of-financial-systems-spring-2025/",
+      "item": "Lecture 11: Algorithmic Game Theory"
+    },
+    {
+      "number": "6",
+      "title": "6 S890 Topics In Multiagent Learning (Fall 2024)",
+      "url": "https://ocw.mit.edu/courses/6-s890-topics-in-multiagent-learning-fall-2024/",
+      "item": "Lecture 09: Foundations of Extensive-Form Games (Slides)"
+    },
+    {
+      "number": "15.822",
+      "title": "15.822 Strategic Marketing Measurement (Fall 2002)",
+      "url": "https://ocw.mit.edu/courses/15-822-strategic-marketing-measurement-fall-2002/",
+      "item": "lecture2.pdf"
+    },
+    {
+      "number": "14.01SC",
+      "title": "14.01SC Principles Of Microeconomics (Fall 2011)",
+      "url": "https://ocw.mit.edu/courses/14-01sc-principles-of-microeconomics-fall-2011/",
+      "item": "Preferences and Utility"
+    }
+  ],
+  "assignments": [],
+  "exams": [
+    {
+      "title": "Exam #1 Review for Intermediate Microeconomic Theory",
+      "url": "https://ocw.mit.edu/courses/14-04-intermediate-microeconomic-theory-fall-2020/resources/ocw_1404_review_2020sep24/"
+    }
+  ],
+  "related": {
+    "courses": [
+      {
+        "number": "14.123",
+        "title": "14.123 Microeconomic Theory Iii (Spring 2015)",
+        "url": "https://ocw.mit.edu/courses/14-123-microeconomic-theory-iii-spring-2015/"
+      },
+      {
+        "number": "14.129",
+        "title": "14.129 Blockchain And The Design Of Financial Systems (Spring 2025)",
+        "url": "https://ocw.mit.edu/courses/14-129-blockchain-and-the-design-of-financial-systems-spring-2025/"
+      },
+      {
+        "number": "6",
+        "title": "6 S890 Topics In Multiagent Learning (Fall 2024)",
+        "url": "https://ocw.mit.edu/courses/6-s890-topics-in-multiagent-learning-fall-2024/"
+      },
+      {
+        "number": "16.892J",
+        "title": "16.892J Space System Architecture And Design (Fall 2004)",
+        "url": "https://ocw.mit.edu/courses/16-892j-space-system-architecture-and-design-fall-2004/"
+      },
+      {
+        "number": "1.731",
+        "title": "1.731 Water Resource Systems (Fall 2006)",
+        "url": "https://ocw.mit.edu/courses/1-731-water-resource-systems-fall-2006/"
+      },
+      {
+        "number": "15.822",
+        "title": "15.822 Strategic Marketing Measurement (Fall 2002)",
+        "url": "https://ocw.mit.edu/courses/15-822-strategic-marketing-measurement-fall-2002/"
+      }
+    ],
+    "same_course": [
+      "Lecture 1: Economic Science",
+      "Lecture 8: Risk-Sharing Application",
+      "Lecture 18: Aggregation",
+      "Lecture 19: Identification and Falsification"
+    ]
+  },
+  "watched": {},
+  "position": 0,
+  "built": "2026-09-09"
+}

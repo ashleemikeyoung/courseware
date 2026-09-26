@@ -340,7 +340,72 @@ def summarize_search(term: str, project: str = None, model: str = None,
     particular file couldn't be read or had nothing extractable -- a bad
     file never aborts the rest of the batch.
     """
-    sources = find_documents(term, project=project)
+    return summarize_sources(select_sources(term, project=project),
+                             model=model, max_chars=max_chars)
+
+
+def exact_source_match(term: str, project: str = None) -> str:
+    """
+    If `term` IS the name of one indexed file -- its relative path, its
+    filename, or its filename without the extension ("Topic5 DQ2") --
+    return that source. Returns None when nothing matches exactly or when
+    more than one source does.
+
+    detect_file_reference() only recognizes a filename typed WITH its
+    extension somewhere inside a longer sentence. This covers the other
+    common shape: the whole query is just the file's name, often without
+    ".docx" or with an absolute path pasted from Finder. Without it, a
+    query like "Topic5 DQ2" falls through to find_documents(), which ORs
+    the words together and summarizes every file mentioning "topic5" or
+    "dq2" -- dozens of files for one intended document.
+    """
+    project = None if project == projects.ALL else project
+    target = (term or "").strip().strip("\"'`“”‘’").replace("\\ ", " ")
+    if not target or rag.collection.count() == 0:
+        return None
+    docs_root = str(Path(rag.DOCUMENTS_FOLDER).expanduser()).rstrip("/") + "/"
+    target = str(Path(target).expanduser()) if target.startswith("~") else target
+    if target.startswith(docs_root):
+        target = target[len(docs_root):]
+    target_lower = target.lower()
+
+    all_data = rag.collection.get(include=["metadatas"])
+    sources = set()
+    for meta in all_data["metadatas"]:
+        if project and meta.get("project") != project:
+            continue
+        source = meta.get("source")
+        if source:
+            sources.add(source)
+
+    for key in (lambda s: s.lower(),
+                lambda s: Path(s).name.lower(),
+                lambda s: Path(s).stem.lower()):
+        matches = [s for s in sources if key(s) == target_lower]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            return None
+    return None
+
+
+def select_sources(term: str, project: str = None) -> list:
+    """
+    Which files a summarize request should cover. A direct, unambiguous
+    reference to one file (detect_file_reference() or exact_source_match())
+    returns just that file; anything else gets find_documents()'s
+    exhaustive topic match.
+    """
+    direct = (detect_file_reference(term, project=project)
+              or exact_source_match(term, project=project))
+    if direct:
+        return [direct]
+    return find_documents(term, project=project)
+
+
+def summarize_sources(sources: list, model: str = None,
+                      max_chars: int = 20000) -> list:
+    """Summarize each source in `sources`; same result shape as summarize_search()."""
     results = []
     for source in sources:
         try:

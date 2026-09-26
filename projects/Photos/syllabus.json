@@ -1,0 +1,87 @@
+{
+  "subject": "/photos",
+  "project": "photos",
+  "course": {
+    "slug": "21a-348-photography-and-truth-spring-2008",
+    "number": "21",
+    "title": "21A.348 Photography And Truth (Spring 2008)",
+    "url": "https://ocw.mit.edu/courses/21a-348-photography-and-truth-spring-2008/"
+  },
+  "synthesis": "",
+  "lectures": [],
+  "module_video": {
+    "youtube_id": "9uqKU5ZDwfM",
+    "title": "Lecture 28: Chernobyl Trip Report by Jake Hecla",
+    "description": "<p><strong>Description:</strong> After our discussion of the Chernobyl accident, MIT student Jake Hecla explains the accident in far more detail, and catalogs his recent trip to the Chernobyl site, the town of Pripyat, and the newly installed sarcophagus designed to contain the exploded nuclear plant. Tons of photos of Chernobyl in its current state are shown by Jake in the context of the accident.</p>\n<p><strong>Instructor:</strong> Jake Hecla</p>\n<p><strong>Note:</strong> To report potential content errors, please use this form.</p>\n",
+    "url": "https://www.youtube.com/watch?v=9uqKU5ZDwfM",
+    "course": "22-01-introduction-to-nuclear-engineering-and-ionizing-radiation-fall-2016",
+    "seconds": 0
+  },
+  "sources": [],
+  "also_covered": [
+    {
+      "number": "EC.050",
+      "title": "EC.050 Recreate Experiments From History Inform The Future From The Past Galileo January (Iap 2010)",
+      "url": "https://ocw.mit.edu/courses/ec-050-recreate-experiments-from-history-inform-the-future-from-the-past-galileo-january-iap-2010/",
+      "item": "Slide Rule"
+    },
+    {
+      "number": "5.111SC",
+      "title": "5.111SC Principles Of Chemical Science (Fall 2014)",
+      "url": "https://ocw.mit.edu/courses/5-111sc-principles-of-chemical-science-fall-2014/",
+      "item": "Principles of Chemical Science, Clicker Questions for Lecture 4: Wave-particle duality of matter; Schr\u00f6dinger equation"
+    },
+    {
+      "number": "15",
+      "title": "15 S07 Globalhealth Lab (Spring 2013)",
+      "url": "https://ocw.mit.edu/courses/15-s07-globalhealth-lab-spring-2013/",
+      "item": " Lecture 9 Slides: Finance and Revenue Models"
+    },
+    {
+      "number": "6.849",
+      "title": "6.849 Geometric Folding Algorithms Linkages Origami Polyhedra (Fall 2012)",
+      "url": "https://ocw.mit.edu/courses/6-849-geometric-folding-algorithms-linkages-origami-polyhedra-fall-2012/",
+      "item": "Lecture 11 Slides: Rigidity Theory, 6.849 Fall 2010"
+    }
+  ],
+  "assignments": [],
+  "exams": [],
+  "related": {
+    "courses": [
+      {
+        "number": "RES.18",
+        "title": "RES.18 006 Calculus Revisited Single Variable Calculus (Fall 2010)",
+        "url": "https://ocw.mit.edu/courses/res-18-006-calculus-revisited-single-variable-calculus-fall-2010/"
+      },
+      {
+        "number": "6.186",
+        "title": "6.186 Mobile Autonomous Systems Laboratory January (Iap 2005)",
+        "url": "https://ocw.mit.edu/courses/6-186-mobile-autonomous-systems-laboratory-january-iap-2005/"
+      },
+      {
+        "number": "6.163",
+        "title": "6.163 Strobe Project Laboratory (Fall 2005)",
+        "url": "https://ocw.mit.edu/courses/6-163-strobe-project-laboratory-fall-2005/"
+      },
+      {
+        "number": "21",
+        "title": "21G.801 Portuguese I (Fall 2011)",
+        "url": "https://ocw.mit.edu/courses/21g-801-portuguese-i-fall-2011/"
+      },
+      {
+        "number": "6.005",
+        "title": "6.005 Elements Of Software Construction (Fall 2008)",
+        "url": "https://ocw.mit.edu/courses/6-005-elements-of-software-construction-fall-2008/"
+      },
+      {
+        "number": "EC.050",
+        "title": "EC.050 Recreate Experiments From History Inform The Future From The Past Galileo January (Iap 2010)",
+        "url": "https://ocw.mit.edu/courses/ec-050-recreate-experiments-from-history-inform-the-future-from-the-past-galileo-january-iap-2010/"
+      }
+    ],
+    "same_course": []
+  },
+  "watched": {},
+  "position": 0,
+  "built": "2026-09-11"
+}

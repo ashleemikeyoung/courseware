@@ -1,0 +1,110 @@
+{
+  "subject": "linear algebra",
+  "project": "linear-algebra-check",
+  "course": {
+    "slug": "18-06sc-linear-algebra-fall-2011",
+    "number": "18.06SC",
+    "title": "18.06SC Linear Algebra (Fall 2011)",
+    "url": "https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/"
+  },
+  "synthesis": "",
+  "lectures": [
+    {
+      "n": 1,
+      "title": "ZoomNotes for Linear Algebra",
+      "url": "https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/resources/mit18_06scf11_zoomnotes/",
+      "role": "core",
+      "seq": 999,
+      "course": "18.06SC Linear Algebra (Fall 2011)",
+      "course_url": "https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/",
+      "origin": "MIT OpenCourseWare \u00b7 18.06SC Linear Algebra (Fall 2011)",
+      "resolve": "ocw_page",
+      "kind": "lecture",
+      "file": "",
+      "status": "pending: opens when reached",
+      "alternates": [],
+      "video": {
+        "youtube_id": "lUUte2o2Sn8",
+        "title": "Gil Strang's Final 18.06 Linear Algebra Lecture",
+        "description": "",
+        "url": "https://www.youtube.com/watch?v=lUUte2o2Sn8",
+        "course": "18-06sc-linear-algebra-fall-2011",
+        "seconds": 0
+      }
+    }
+  ],
+  "module_video": {
+    "youtube_id": "lUUte2o2Sn8",
+    "title": "Gil Strang's Final 18.06 Linear Algebra Lecture",
+    "description": "",
+    "url": "https://www.youtube.com/watch?v=lUUte2o2Sn8",
+    "course": "18-06sc-linear-algebra-fall-2011",
+    "seconds": 0
+  },
+  "sources": [],
+  "also_covered": [
+    {
+      "number": "18.06",
+      "title": "18.06 Linear Algebra (Spring 2010)",
+      "url": "https://ocw.mit.edu/courses/18-06-linear-algebra-spring-2010/",
+      "item": "ZoomNotes for Linear Algebra"
+    },
+    {
+      "number": "18.065",
+      "title": "18.065 Matrix Methods In Data Analysis Signal Processing And Machine Learning (Spring 2018)",
+      "url": "https://ocw.mit.edu/courses/18-065-matrix-methods-in-data-analysis-signal-processing-and-machine-learning-spring-2018/",
+      "item": "ZoomNotes for Linear Algebra"
+    },
+    {
+      "number": "2.086",
+      "title": "2.086 Numerical Computation For Mechanical Engineers (Spring 2013)",
+      "url": "https://ocw.mit.edu/courses/2-086-numerical-computation-for-mechanical-engineers-spring-2013/",
+      "item": "2.086 Numerical Computation for Mechanical Engineers, Lecture 10: Linear Algebra I: Overdetermined Systems and Least-Squares Approximation"
+    }
+  ],
+  "assignments": [],
+  "exams": [
+    {
+      "title": "Final Course Review",
+      "url": "https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/pages/final-course-review/"
+    }
+  ],
+  "related": {
+    "courses": [
+      {
+        "number": "18",
+        "title": "18 S096 Topics In Mathematics With Applications In Finance (Fall 2013)",
+        "url": "https://ocw.mit.edu/courses/18-s096-topics-in-mathematics-with-applications-in-finance-fall-2013/"
+      },
+      {
+        "number": "18.06",
+        "title": "18.06 Linear Algebra (Spring 2010)",
+        "url": "https://ocw.mit.edu/courses/18-06-linear-algebra-spring-2010/"
+      },
+      {
+        "number": "18.085",
+        "title": "18.085 Computational Science And Engineering I (Fall 2008)",
+        "url": "https://ocw.mit.edu/courses/18-085-computational-science-and-engineering-i-fall-2008/"
+      },
+      {
+        "number": "18.065",
+        "title": "18.065 Matrix Methods In Data Analysis Signal Processing And Machine Learning (Spring 2018)",
+        "url": "https://ocw.mit.edu/courses/18-065-matrix-methods-in-data-analysis-signal-processing-and-machine-learning-spring-2018/"
+      },
+      {
+        "number": "3.024",
+        "title": "3.024 Electronic Optical And Magnetic Properties Of Materials (Spring 2013)",
+        "url": "https://ocw.mit.edu/courses/3-024-electronic-optical-and-magnetic-properties-of-materials-spring-2013/"
+      },
+      {
+        "number": "2.086",
+        "title": "2.086 Numerical Computation For Mechanical Engineers (Spring 2013)",
+        "url": "https://ocw.mit.edu/courses/2-086-numerical-computation-for-mechanical-engineers-spring-2013/"
+      }
+    ],
+    "same_course": []
+  },
+  "watched": {},
+  "position": 0,
+  "built": "2026-09-10"
+}

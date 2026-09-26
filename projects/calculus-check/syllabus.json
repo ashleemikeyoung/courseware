@@ -1,0 +1,62 @@
+{
+  "subject": "calculus",
+  "project": "calculus-check",
+  "course": {
+    "slug": "res-18-007-calculus-revisited-multivariable-calculus-fall-2011",
+    "number": "RES.18",
+    "title": "RES.18 007 Calculus Revisited Multivariable Calculus (Fall 2011)",
+    "url": "https://ocw.mit.edu/courses/res-18-007-calculus-revisited-multivariable-calculus-fall-2011/"
+  },
+  "synthesis": "",
+  "lectures": [],
+  "module_video": {
+    "youtube_id": "UGKL1wHouho",
+    "title": "Lecture 2: Calculus of Several Variables",
+    "description": "<p><strong>Video Description:</strong> Herb Gross introduces us to the traditional Calculus of Several Variables. He defines and explains the properties of partial derivatives and shows how to draw a graph of a function of several variables. He finds the normal vector (using the cross product) and the tangent plane at a point in terms of partial derivatives. Finally, Prof. Gross shows the change of a function w in the tangent plane as an approximation to the differential of w.</p>\n<p><strong>Instructor/speaker:</strong> Prof. Herbert Gross</p>\n",
+    "url": "https://www.youtube.com/watch?v=UGKL1wHouho",
+    "course": "res-18-007-calculus-revisited-multivariable-calculus-fall-2011",
+    "seconds": 0
+  },
+  "sources": [],
+  "also_covered": [],
+  "assignments": [],
+  "exams": [],
+  "related": {
+    "courses": [
+      {
+        "number": "RES.18",
+        "title": "RES.18 001 Calculus (Fall 2023)",
+        "url": "https://ocw.mit.edu/courses/res-18-001-calculus-fall-2023/"
+      },
+      {
+        "number": "16.323",
+        "title": "16.323 Principles Of Optimal Control (Spring 2008)",
+        "url": "https://ocw.mit.edu/courses/16-323-principles-of-optimal-control-spring-2008/"
+      },
+      {
+        "number": "18",
+        "title": "18 S096 Topics In Mathematics With Applications In Finance (Fall 2013)",
+        "url": "https://ocw.mit.edu/courses/18-s096-topics-in-mathematics-with-applications-in-finance-fall-2013/"
+      },
+      {
+        "number": "RES.18",
+        "title": "RES.18 006 Calculus Revisited Single Variable Calculus (Fall 2010)",
+        "url": "https://ocw.mit.edu/courses/res-18-006-calculus-revisited-single-variable-calculus-fall-2010/"
+      },
+      {
+        "number": "18.02SC",
+        "title": "18.02SC Multivariable Calculus (Fall 2010)",
+        "url": "https://ocw.mit.edu/courses/18-02sc-multivariable-calculus-fall-2010/"
+      },
+      {
+        "number": "18.01",
+        "title": "18.01 Single Variable Calculus (Fall 2005)",
+        "url": "https://ocw.mit.edu/courses/18-01-single-variable-calculus-fall-2005/"
+      }
+    ],
+    "same_course": []
+  },
+  "watched": {},
+  "position": 0,
+  "built": "2026-09-11"
+}
