@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}{{ q or "Search" }} · ElRoi Bible{% endblock %}
+{% block body %}
+{% if kind == "strong" %}
+  <h1><span class="pill">{{ entry.code }}</span>
+    <span class="{{ 'heb' if entry.code.startswith('H') else 'grc' }}" style="font-family:var(--{{ 'hebrew' if entry.code.startswith('H') else 'greek' }})">{{ entry.word }}</span></h1>
+  <p style="font-family:var(--sans);color:var(--ink-soft);margin:0 0 6px">
+    {{ entry.translit }}{% if entry.gloss %} · {{ entry.gloss }}{% endif %} ·
+    {{ total }} occurrence{{ "" if total==1 else "s" }} in {{ verses }} verse{{ "" if verses==1 else "s" }}</p>
+  {% if entry.meaning %}<details><summary style="cursor:pointer;font-family:var(--sans);font-size:13px">Lexicon entry</summary>
+    <div style="font-size:15px;line-height:1.55;margin:8px 0">{{ entry.meaning|safe }}</div></details>{% endif %}
+  {% for r in results %}
+    <div class="result">
+      <h4><a href="/read/{{ r.code }}/{{ r.ch }}#v{{ r.vs }}">{{ r.label }}</a></h4>
+      <div class="orig-line {{ r.lang }}" dir="{{ 'rtl' if r.lang=='heb' else 'ltr' }}" lang="{{ 'he' if r.lang=='heb' else 'grc' }}">
+        {% for w in r.words %}<span class="w plain{{ ' match' if w.strong==r.hit }}" tabindex="0" role="button"
+          data-lang="{{ r.lang }}" data-ref="{{ w.ref }}" data-pos="{{ w.pos }}"><span class="orig">{{ w.surface }}</span></span>{% endfor %}
+      </div>
+    </div>
+  {% else %}<p class="note">No occurrences found for {{ entry.code }}.</p>{% endfor %}
+  {% if pages > 1 %}<nav class="pager">
+    {% if page > 1 %}<a href="/search?q={{ q|urlencode }}&page={{ page-1 }}">&larr; previous</a>{% endif %}
+    <span>page {{ page }} of {{ pages }}</span>
+    {% if page < pages %}<a href="/search?q={{ q|urlencode }}&page={{ page+1 }}">next &rarr;</a>{% endif %}</nav>{% endif %}
+
+{% elif kind == "text" %}
+  <h1>“{{ q }}”</h1>
+  {% for r in results %}
+    <div class="result"><h4><a href="/read/{{ r.code }}/{{ r.ch }}#v{{ r.vs }}">{{ r.label }}</a> <span class="pill">{{ r.version }}</span></h4>
+      <div class="en">{{ r.snippet|safe }}</div></div>
+  {% else %}<p class="note">No matches.</p>{% endfor %}
+
+{% elif kind == "no-english" %}
+  <h1>“{{ q }}”</h1>
+  <p class="note">Word search needs an English text, and none is loaded yet. You can still search by Strong's number
+    (for example <a href="/search?q=G3056">G3056</a> or <a href="/search?q=H7225">H7225</a>) or jump to a passage like
+    <a href="/go?q=John 3:16">John 3:16</a>.</p>
+{% else %}
+  <h1>Search</h1><p class="note">Type a Strong's number such as G3056 or H7225, a passage, or (once English is loaded) words.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,37 @@
+Loading embedding model...
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 50610.74it/s]
+Vector DB path:  /Users/ash/Development/RAG/lancedb
+Documents path:  /Users/ash/Development/RAG/documents
+Chunks in index: 11631
+
+  Ask Ash on http://127.0.0.1:5111
+  Index: 11631 chunks across 25 project(s)
+  Drafter: gemma4:e4b
+  Ask retry guard: active
+
+ * Serving Flask app 'app'
+ * Debug mode: off
+WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on http://127.0.0.1:5111
+Press CTRL+C to quit
+127.0.0.1 - - [07/Oct/2026 17:39:08] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [07/Oct/2026 17:39:08] "GET /static/vendor/katex/katex.min.css HTTP/1.1" 200 -
+127.0.0.1 - - [07/Oct/2026 17:39:08] "GET /static/vendor/katex/auto-render.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Oct/2026 17:39:08] "GET /static/vendor/katex/katex.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Oct/2026 17:39:08] "GET /apple-touch-icon-precomposed.png HTTP/1.1" 404 -
+127.0.0.1 - - [07/Oct/2026 17:39:08] "GET /apple-touch-icon-precomposed.png HTTP/1.1" 404 -
+127.0.0.1 - - [07/Oct/2026 17:39:08] "GET /apple-touch-icon.png HTTP/1.1" 404 -
+127.0.0.1 - - [07/Oct/2026 17:39:08] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [07/Oct/2026 17:39:08] "GET /static/logo-light.png HTTP/1.1" 200 -
+127.0.0.1 - - [07/Oct/2026 17:39:08] "GET /static/logo-light.png HTTP/1.1" 200 -
+127.0.0.1 - - [07/Oct/2026 17:39:08] "GET /apple-touch-icon.png HTTP/1.1" 404 -
+127.0.0.1 - - [07/Oct/2026 17:39:08] "GET /static/logo-light.png HTTP/1.1" 200 -
+127.0.0.1 - - [07/Oct/2026 17:39:09] "GET /api/projects HTTP/1.1" 200 -
+127.0.0.1 - - [07/Oct/2026 17:39:10] "GET /api/status?project=__all__ HTTP/1.1" 200 -
+127.0.0.1 - - [07/Oct/2026 17:39:10] "POST /api/ask/conversation/new HTTP/1.1" 200 -
+127.0.0.1 - - [07/Oct/2026 17:39:10] "GET /api/ask/conversations?project=__all__ HTTP/1.1" 200 -
+127.0.0.1 - - [07/Oct/2026 17:39:10] "GET /api/plans?project=__all__ HTTP/1.1" 200 -
+127.0.0.1 - - [07/Oct/2026 17:39:10] "GET /api/ask/conversations/all?limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [07/Oct/2026 17:39:10] "GET /api/update/status HTTP/1.1" 200 -
+127.0.0.1 - - [07/Oct/2026 17:39:10] "GET /api/update/status HTTP/1.1" 200 -
+127.0.0.1 - - [07/Oct/2026 17:39:10] "GET /api/update/history HTTP/1.1" 200 -

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}ElRoi Bible{% endblock %}</title>
+<link rel="icon" href="/static/logo-light.png">
+<script>
+/* Same keys and same pre-paint logic as El Roi, so a theme chosen there carries over. */
+(function(){var t;try{t=localStorage.getItem("theme")}catch(e){}
+if(!t)t=(window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";
+document.documentElement.setAttribute("data-theme",t);
+var s;try{s=localStorage.getItem("scripture_size")}catch(e){}
+document.documentElement.setAttribute("data-scripture-size",s||"medium");})();
+</script>
+<link rel="stylesheet" href="/assets/elroi_bible.css">
+</head>
+<body>
+<header class="rail">
+  <a class="brand" href="/" aria-label="ElRoi Bible home">
+    {% for t in ["light","dark","pink","grass","ocean"] %}<img class="mark" data-for="{{t}}" src="/static/logo-{{t}}.png" alt="">{% endfor %}
+    <span class="wordmark">Bible</span>
+  </a>
+  <form class="go" action="/go" method="get">
+    <input name="q" value="{{ request.args.get('q','') if request.endpoint=='search' else '' }}"
+      placeholder="John 3:16 · Gen 1 · G3056 · H7225 · words" autocomplete="off" aria-label="Passage, Strong's number, or words">
+    <button>Go</button>
+  </form>
+  <div class="tools">
+    <select id="theme" aria-label="Theme">
+      <option value="light">Light</option><option value="dark">Dark</option><option value="pink">Ballet pink</option>
+      <option value="grass">Grass</option><option value="ocean">Ocean</option></select>
+    <select id="size" aria-label="Scripture size">
+      <option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select>
+  </div>
+</header>
+<main>{% block body %}{% endblock %}</main>
+<aside id="panel" hidden aria-live="polite"><button class="close" aria-label="Close">&times;</button><div id="panel-body"></div></aside>
+<footer>{{ credit }}</footer>
+<script src="/assets/elroi_bible.js"></script>
+</body>
+</html>

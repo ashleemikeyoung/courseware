@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ NAME[code] }} {{ chapter }} · ElRoi Bible{% endblock %}
+{% macro word(w, lang, lines, extra="") %}
+<span class="w{{ extra }}" tabindex="0" role="button" data-lang="{{ lang }}" data-ref="{{ w.ref }}" data-pos="{{ w.pos }}">
+  <span class="orig">{{ w.surface }}</span>
+  {%- if "t" in lines and w.translit %}<span class="tr">{{ w.translit }}</span>{% endif -%}
+  {%- if "g" in lines and w.gloss %}<span class="gl">{{ w.gloss }}</span>{% endif -%}
+  {%- if "s" in lines and w.strong %}<span class="st">{{ w.strong }}</span>{% endif -%}
+  {%- if "m" in lines and w.grammar %}<span class="gr">{{ w.grammar }}</span>{% endif -%}
+</span>
+{% endmacro %}
+{% block body %}
+<div class="chap-nav">
+  {% if prev_link %}<a href="{{ prev_link }}" aria-label="Previous chapter">&larr; prev</a>{% endif %}
+  <h1>{{ NAME[code] }} {{ chapter }}</h1>
+  {% if next_link %}<a href="{{ next_link }}" aria-label="Next chapter">next &rarr;</a>{% endif %}
+  <span class="spacer"></span>
+  <span style="font-family:var(--sans);font-size:13px;color:var(--ink-faint)">{{ "Hebrew · Masoretic text (Leningrad Codex)" if lang=="heb" else "Greek · Textus Receptus (Scrivener 1894)" }}</span>
+</div>
+
+<form class="controls" method="get" id="controls">
+  <label>View
+    <select name="view"><option value="interlinear" {{ "selected" if view=="interlinear" }}>Interlinear</option>
+      <option value="text" {{ "selected" if view=="text" }}>Original text only</option></select></label>
+  <label><input type="checkbox" name="l" value="g" {{ "checked" if "g" in lines }}> Gloss</label>
+  <label><input type="checkbox" name="l" value="t" {{ "checked" if "t" in lines }}> Transliteration</label>
+  <label><input type="checkbox" name="l" value="s" {{ "checked" if "s" in lines }}> Strong's</label>
+  <label><input type="checkbox" name="l" value="m" {{ "checked" if "m" in lines }}> Grammar</label>
+  {% for v in avail %}<label><input type="checkbox" name="vv" value="{{ v.code }}" {{ "checked" if v.code in versions }}> {{ v.code }}</label>{% endfor %}
+  <input type="hidden" name="lines" id="lines-field" value="{{ lines }}">
+  <input type="hidden" name="v" id="v-field" value="{{ versions|join(',') }}">
+</form>
+{% if not avail %}<p class="note">English columns (KJV, YLT) aren't loaded yet, so the gloss line is the only English here. It comes from STEP's per-word glosses, which are not a translation.</p>{% endif %}
+
+{% for vs, words in verses.items() %}
+<section class="verse{{ ' hl' if hl and hl[0] <= vs <= hl[1] }}" id="v{{ vs }}">
+  <div class="orig-line {{ lang }}" dir="{{ 'rtl' if lang=='heb' else 'ltr' }}" lang="{{ 'he' if lang=='heb' else 'grc' }}">
+    <button class="vnum" type="button" data-lang="{{ lang }}" data-ref="{{ code }}.{{ chapter }}.{{ vs }}" title="Vocabulary of this verse">{{ vs }}</button>
+    {% for w in words %}{{ word(w, lang, lines if view=="interlinear" else "", " plain" if view!="interlinear" else "") }}{% endfor %}
+  </div>
+  {% for vcode, text in eng.get(code ~ "." ~ chapter ~ "." ~ vs, {}).items() %}
+  <p class="en"><b>{{ vcode }}</b>{{ text }}</p>{% endfor %}
+</section>
+{% endfor %}
+{% endblock %}

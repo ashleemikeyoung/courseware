@@ -857,3 +857,36 @@ def analyze_text(lang: str, text: str, current_ref: str | None = None) -> list[d
         data["same_root_refs"] = _same_root_refs(lang, data.get("root", ""), current_ref)
         items.append(data)
     return items
+
+
+# --- bible_store bridge ------------------------------------------------------------------
+def analyze_tagged(lang: str, tagged: list, current_ref: str | None = None) -> list[dict]:
+    """
+    Same output shape as analyze_text(), but built from word-level tags that already say which word
+    each token is (bible_store.morph_items), instead of guessing from the spelling.
+
+    The tags win for lemma, parsing and definition. The hand-written grammar note in the seed
+    lexicon still wins over the generated one, and the Genesis 1:1 contextual override still applies.
+    """
+    if lang == "he":
+        key_fn, lexicon = _hebrew_key, _HEBREW_LEXICON
+    elif lang == "grc":
+        key_fn, lexicon = _greek_key, _GREEK_LEXICON
+    else:
+        return []
+    items = []
+    for t in tagged:
+        data = {k: t[k] for k in ("lemma", "root", "part_of_speech", "parsing", "definition", "strongs")
+                if t.get(k)}
+        key = key_fn(t["surface"])
+        seed_note = (lexicon.get(key) or {}).get("grammar")
+        data["grammar"] = seed_note or _grammar_note(lang, data.get("part_of_speech", ""),
+                                                     data.get("parsing", ""))
+        if lang == "he":
+            data = _apply_contextual_hebrew_overrides(data, key, current_ref)
+        data["surface"] = t["surface"]
+        data.setdefault("root", data.get("lemma") or key)
+        data["same_form_refs"] = list(t.get("same_form_refs") or [])
+        data["same_root_refs"] = list(t.get("same_root_refs") or [])
+        items.append(data)
+    return items

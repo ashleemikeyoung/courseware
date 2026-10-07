@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block body %}
+{% if notfound %}<p class="note">That page isn't here. Try a passage like <a href="/go?q=John 3:16">John 3:16</a>.</p>{% endif %}
+<h1>ElRoi Bible</h1>
+<p>Read the Hebrew (Masoretic) and Greek (Textus Receptus) word by word, click any word for its lexicon entry and parsing, and find every place a word occurs.</p>
+<form class="go" action="/go" method="get" style="max-width:520px;margin:14px 0">
+  <input name="q" placeholder="John 3:16 · Gen 1 · G3056 · H7225" autocomplete="off"><button>Go</button></form>
+<p class="note">Loaded: {{ counts.get('heb',0) }} Hebrew words, {{ counts.get('grc',0) }} Greek words.
+{% if versions %}English: {% for v in versions %}{{ v.code }}{% if not loop.last %}, {% endif %}{% endfor %}.
+{% else %}No English text loaded yet. Add KJV and YLT with <code>import_english.py</code> (see README).{% endif %}</p>
+{% for t, label in (("OT","Old Testament"),("NT","New Testament")) %}
+<h3 style="font-family:var(--sans);font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint)">{{ label }}</h3>
+<div class="books">{% for code, name, _ in BOOKS if testament(code)==t %}<a href="/read/{{ code }}/1">{{ name }}</a>{% endfor %}</div>
+{% endfor %}
+{% endblock %}

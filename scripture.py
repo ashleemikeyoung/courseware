@@ -25,6 +25,11 @@ sys.path.insert(0, str(BASE_DIR / "memory"))
 
 from memory_client import get_setting
 
+try:  # bible_store bridge: the ElRoi-Bible database (Masoretic Hebrew, Scrivener Greek, word-level tags)
+    import bible_store
+except Exception:  # optional: without it /bible uses Sefaria and bible-api.com exactly as before
+    bible_store = None
+
 
 def _strip_html(value: str) -> str:
     # Tags stripped to nothing, not to a space: a space was safe for DDG's
@@ -580,6 +585,21 @@ def transliterate_greek(text: str) -> str:
     return " ".join(_transliterate_greek_word(w) for w in words if w)
 
 
+def _morph_items(lang: str, orig_text: str, ref: str) -> list:
+    """
+    Word-level tags from the ElRoi-Bible database when ORIG is exactly the stored verse; otherwise the
+    spelling-based analysis in morphology.py, exactly as before. (bible_store bridge)
+    """
+    if bible_store is not None and ref:
+        try:
+            tagged = bible_store.morph_items(ref, lang, orig_text)
+            if tagged:
+                return morphology.analyze_tagged(lang, tagged, current_ref=ref)
+        except Exception as e:
+            print(f"  [Warning: tagged morphology unavailable, using fallback: {e}]")
+    return morphology.analyze_text(lang, orig_text, current_ref=ref)
+
+
 def _render_scripture_block(ref: str, translation: str, lang: str,
                             en_text: str, orig_text: str) -> str:
     lines = [f'[SCRIPTURE ref="{ref}" translation="{translation}" lang="{lang}"]']
@@ -595,7 +615,7 @@ def _render_scripture_block(ref: str, translation: str, lang: str,
             translit = ""
         if translit:
             lines.append(f"TRANS: {translit}")
-        morph = morphology.analyze_text(lang, orig_text, current_ref=ref)
+        morph = _morph_items(lang, orig_text, ref)
         if morph:
             lines.append(
                 "MORPH: " + json.dumps(morph, ensure_ascii=False, separators=(",", ":"))
@@ -702,7 +722,7 @@ def enrich_scripture_morphology(text: str) -> str:
             elif lang == "grc":
                 trans = transliterate_greek(orig)
         if orig and not morph:
-            items = morphology.analyze_text(lang, orig, current_ref=current["ref"])
+            items = _morph_items(lang, orig, current["ref"])
             if items:
                 morph = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
         out.append(current["start"])
@@ -928,6 +948,44 @@ def _bible_api_fetch_range(book: str, chapter: int, start_verse: int,
     return out
 
 
+def _local_bible_blocks(query: str, translation: str) -> list:
+    """
+    /bible from the ElRoi-Bible database: Masoretic Hebrew or Scrivener Greek, tagged word by word,
+    with no network needed for the original text. English comes from the same database once KJV or
+    YLT are loaded there, otherwise from bible-api.com as before; if that is unreachable the block
+    still shows the original with its parsing. Returns [] whenever it cannot answer, so the existing
+    Sefaria / bible-api path then runs unchanged. (bible_store bridge)
+    """
+    if bible_store is None:
+        return []
+    try:
+        verses = bible_store.passages(query)
+    except Exception as e:
+        print(f"  [Warning: local Bible lookup failed, using online sources: {e}]")
+        return []
+    if not verses:
+        return []
+    groups = {}
+    for v in verses:
+        groups.setdefault((v["code"], v["book"], v["chapter"]), []).append(v["verse"])
+    english = {}
+    for (code, book, chapter), nums in groups.items():
+        try:
+            by_verse, label = bible_store.english(translation, code, chapter, nums)
+        except Exception:
+            by_verse, label = {}, ""
+        if not by_verse:
+            by_verse = _bible_api_fetch_range(book, chapter, min(nums), max(nums), translation)
+            label = by_verse.get(None) or translation.upper()
+        english[(code, chapter)] = (by_verse, label)
+    blocks = []
+    for v in verses:
+        by_verse, label = english[(v["code"], v["chapter"])]
+        blocks.append(_render_scripture_block(
+            v["ref"], label, v["lang"], by_verse.get(v["verse"], ""), v["orig"]))
+    return blocks
+
+
 def _answer_bible_command(question: str) -> dict:
     if not _is_bible_command(question):
         return None
@@ -938,7 +996,9 @@ def _answer_bible_command(question: str) -> dict:
         return scripture_mode_entry_response()
 
     translation = _configured_bible_translation()
-    blocks = []
+    # Local first (bible_store bridge): one database serves the reader app and /bible. Anything it
+    # does not hold (rabbinic texts, free-text queries, a missing database) falls through below.
+    blocks = _local_bible_blocks(query, translation)
 
     # Deterministic parser tried FIRST for anything it recognizes (plain
     # "Book C", "Book C:V", or "Book C:V-V" patterns) -- Sefaria's linker is
@@ -947,7 +1007,7 @@ def _answer_bible_command(question: str) -> dict:
     # "verse by verse, with addresses" display this command exists for.
     # The linker is only consulted as a fallback for reference shapes this
     # simple regex doesn't cover at all (Talmud/Mishnah, unusual phrasing).
-    range_info = _bible_cmd_ot_range(query)
+    range_info = None if blocks else _bible_cmd_ot_range(query)
     if range_info:
         data = _sefaria_fetch_ref(range_info["ref"])
         if data:
