@@ -35,3 +35,6 @@ Press CTRL+C to quit
 127.0.0.1 - - [07/Oct/2026 17:39:10] "GET /api/update/status HTTP/1.1" 200 -
 127.0.0.1 - - [07/Oct/2026 17:39:10] "GET /api/update/status HTTP/1.1" 200 -
 127.0.0.1 - - [07/Oct/2026 17:39:10] "GET /api/update/history HTTP/1.1" 200 -
+127.0.0.1 - - [07/Oct/2026 17:39:18] "POST /api/update/apply HTTP/1.1" 200 -
+/opt/anaconda3/envs/rag/lib/python3.11/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
