@@ -7,7 +7,7 @@ import re
 import subprocess
 import time
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email import policy
 from email.parser import BytesParser
 from email.utils import parsedate_to_datetime
@@ -217,7 +217,10 @@ class LanceCollection:
         self.path = path
         self.name = name
         self.dimension = dimension
-        self.db = lancedb.connect(path)
+        # Without read_consistency_interval, LanceDB never notices writes
+        # from other processes, so a long-lived mcp_server.py would keep
+        # serving the snapshot it opened at startup. 0 = check every read.
+        self.db = lancedb.connect(path, read_consistency_interval=timedelta(0))
 
         if name in self.db.table_names():
             self.table = self.db.open_table(name)
