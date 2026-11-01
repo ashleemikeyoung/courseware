@@ -4,6 +4,7 @@ import json
 import hashlib
 import math
 import re
+import functools
 import subprocess
 import time
 import requests
@@ -286,18 +287,20 @@ class LanceCollection:
             return -1
 
     def _rows(self, ids: list = None, where: dict = None) -> list:
-        if self.count() == 0:
+        n = self.count()
+        if n == 0:
             return []
         expr = self._where_expr(where)
         if ids:
             id_expr = "id IN (" + ", ".join(self._quote(i) for i in ids) + ")"
             expr = f"{expr} AND {id_expr}" if expr else id_expr
-        query = self.table
+        query = self.table.search()
         if expr:
-            query = query.search().where(expr)
-        else:
-            query = query.search()
-        return query.limit(self.count()).to_list()
+            query = query.where(expr)
+        # get() never returns embeddings, so don't read the vector column --
+        # it is most of each row's bytes.
+        columns = [f for f in self.table.schema.names if f != "vector"]
+        return query.select(columns).limit(n).to_list()
 
     def get(self, ids: list = None, where: dict = None, include: list = None) -> dict:
         include = include or []
@@ -1902,12 +1905,24 @@ def _search_criteria_rows() -> list:
         return list(_SEARCH_CRITERIA_CACHE["rows"])
 
 
+_CRITERIA_TERMS_CACHE = {"loaded_at": None, "terms": {}}
+
+
 def _criteria_terms(criteria_type: str) -> set:
-    return {
-        (row.get("term") or "").lower()
-        for row in _search_criteria_rows()
-        if row.get("criteria_type") == criteria_type and row.get("term")
-    }
+    # Called once per chunk per query inside retrieve(); rebuild the set only
+    # when _search_criteria_rows() has actually reloaded.
+    rows = _search_criteria_rows()
+    if _CRITERIA_TERMS_CACHE["loaded_at"] != _SEARCH_CRITERIA_CACHE["loaded_at"]:
+        _CRITERIA_TERMS_CACHE["loaded_at"] = _SEARCH_CRITERIA_CACHE["loaded_at"]
+        _CRITERIA_TERMS_CACHE["terms"] = {}
+    terms = _CRITERIA_TERMS_CACHE["terms"]
+    if criteria_type not in terms:
+        terms[criteria_type] = {
+            (row.get("term") or "").lower()
+            for row in rows
+            if row.get("criteria_type") == criteria_type and row.get("term")
+        }
+    return terms[criteria_type]
 
 
 def _criteria_group_terms(criteria_type: str, group_name: str) -> set:
@@ -1946,6 +1961,7 @@ def _compact(text: str) -> str:
     return "".join(_terms(text))
 
 
+@functools.lru_cache(maxsize=4096)
 def _term_pattern(term: str):
     parts = _terms(term)
     if not parts:
@@ -1954,9 +1970,20 @@ def _term_pattern(term: str):
     return re.compile(rf"(?<![a-z0-9]){joined}(?![a-z0-9])", re.I)
 
 
+@functools.lru_cache(maxsize=4096)
+def _term_first_part(term: str) -> str:
+    parts = _terms(term)
+    return parts[0] if parts else ""
+
+
 def _term_count(text: str, term: str) -> int:
-    pattern = _term_pattern(term)
-    return len(pattern.findall(text or "")) if pattern else 0
+    # retrieve() scores every in-scope chunk against every query word, and
+    # most words are absent from most chunks. A plain substring test rules
+    # those out far faster than the boundary-aware regex below can.
+    first = _term_first_part(term)
+    if not first or first not in (text or "").lower():
+        return 0
+    return len(_term_pattern(term).findall(text))
 
 
 def _term_present(text: str, term: str) -> bool:
@@ -2297,7 +2324,8 @@ def mine_document_store(question: str, project: str = None,
     return matches[:limit]
 
 
-def _registry_candidates(words: list, project: str = None) -> list:
+def _registry_candidates(words: list, project: str = None,
+                         chunks_by_source: dict = None) -> list:
     project = _project_scope(project)
     if not MEMORY_AVAILABLE or search_synopses is None or not words:
         return []
@@ -2314,7 +2342,10 @@ def _registry_candidates(words: list, project: str = None) -> list:
         synopsis = hit.get("synopsis") or ""
         if not source:
             continue
-        chunks = _source_chunks(source)
+        # chunks_by_source covers the whole index, so a source missing
+        # from it simply isn't indexed (memory-db can list removed files).
+        chunks = (chunks_by_source.get(source, []) if chunks_by_source is not None
+                  else _source_chunks(source))
         if not chunks:
             continue
         ranked = sorted(
@@ -2333,7 +2364,8 @@ def _registry_candidates(words: list, project: str = None) -> list:
     return out
 
 
-def _citation_candidates(words: list, project: str = None) -> list:
+def _citation_candidates(words: list, project: str = None,
+                         chunks_by_source: dict = None) -> list:
     project = _project_scope(project)
     if not MEMORY_AVAILABLE or search_citations is None or not words:
         return []
@@ -2351,7 +2383,10 @@ def _citation_candidates(words: list, project: str = None) -> list:
         if not source or source in seen_sources:
             continue
         seen_sources.add(source)
-        chunks = _source_chunks(source)
+        # chunks_by_source covers the whole index, so a source missing
+        # from it simply isn't indexed (memory-db can list removed files).
+        chunks = (chunks_by_source.get(source, []) if chunks_by_source is not None
+                  else _source_chunks(source))
         if not chunks:
             continue
         citation_text = (
@@ -2413,8 +2448,15 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
     allow_reference_chunks = _query_allows_reference_chunks(question)
     candidates = {}
     all_data = collection.get(include=["metadatas", "documents"])
+    # The citation and registry passes each need a matched document's chunks;
+    # they are all in all_data already, so index them once rather than
+    # re-querying the table per document.
+    chunks_by_source = {}
+    for doc, meta in zip(all_data["documents"], all_data["metadatas"]):
+        chunks_by_source.setdefault(meta.get("source"), []).append((doc, meta))
 
-    for item in _citation_candidates(words, project=project):
+    for item in _citation_candidates(words, project=project,
+                                     chunks_by_source=chunks_by_source):
         _add_candidate(
             candidates,
             item["document"],
@@ -2424,7 +2466,8 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
             item.get("id"),
         )
 
-    for item in _registry_candidates(words, project=project):
+    for item in _registry_candidates(words, project=project,
+                                     chunks_by_source=chunks_by_source):
         _add_candidate(
             candidates,
             item["document"],
@@ -2521,6 +2564,88 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
     return selected
 
 
+def retrieve_scoped(question: str, n_results: int = 5, project: str = None) -> list:
+    """retrieve() for any scope: a nested folder ("GCU/DBA-831/Week 3") or
+    folder alias is retrieved under its top-level project, then filtered."""
+    scope = normalize_scope(project)
+    root = scope_search_root(scope)
+    if scope == root:
+        return retrieve(question, n_results=n_results, project=root)
+    # Over-fetch so the path filter still leaves n_results behind.
+    return [
+        r for r in retrieve(question, n_results=max(50, n_results), project=root)
+        if source_in_scope(r["metadata"].get("source", ""), scope)
+    ][:n_results]
+
+
+# ---------------------------------------------------------------------------
+# Chunk windows -- continuous passages for drafting
+#
+# Chunks are sized for Q&A snippets; prose drafting needs the surrounding
+# argument too. These widen retrieved chunks to their neighbours and stitch
+# them back into continuous text, so writer.py (the Ask tab, Compare, and
+# drafting) shares retrieval with search() instead of querying the table
+# itself.
+# ---------------------------------------------------------------------------
+
+def parse_chunk_id(chunk_id: str):
+    """Chunk ids are '<source>::<index>'; split on the last '::'."""
+    source, _, idx = str(chunk_id).rpartition("::")
+    return source, int(idx)
+
+
+def stitch_chunks(chunks: list, overlap: int = None) -> str:
+    """Rejoin consecutive chunks, removing the deliberate word overlap."""
+    if overlap is None:
+        overlap = _memory_int_setting("rag_chunk_overlap", 100)
+    if not chunks:
+        return ""
+    out = [chunks[0]]
+    for c in chunks[1:]:
+        words = c.split()
+        out.append(" ".join(words[overlap:]) if len(words) > overlap else "")
+    return " ".join(p for p in out if p)
+
+
+def source_chunk_texts(source: str) -> dict:
+    """{chunk_index: text} for one source, without vectors."""
+    rows = collection.column_rows(["chunk_index", "document"],
+                                  where={"source": source})
+    return {int(r["chunk_index"]): r.get("document") or "" for r in rows}
+
+
+def chunk_windows(hits: dict, window: int = 1) -> list:
+    """Expand {source: {chunk_index, ...}} to +/- `window` neighbours, merge
+    overlapping ranges, and stitch each range into one passage. Returns
+    [{"source", "start", "end", "text"}] in the order sources were given."""
+    out = []
+    for source, indices in hits.items():
+        indices = sorted(i for i in indices if i >= 0)
+        if not indices:
+            continue
+        texts = source_chunk_texts(source)
+        if not texts:
+            continue
+        spans = [(max(0, i - window), i + window) for i in indices]
+        merged = [list(spans[0])]
+        for lo, hi in spans[1:]:
+            if lo <= merged[-1][1] + 1:
+                merged[-1][1] = max(merged[-1][1], hi)
+            else:
+                merged.append([lo, hi])
+        for lo, hi in merged:
+            present = [j for j in range(lo, hi + 1) if j in texts]
+            if not present:
+                continue
+            out.append({
+                "source": source,
+                "start": present[0],
+                "end": present[-1],
+                "text": stitch_chunks([texts[j] for j in present]),
+            })
+    return out
+
+
 def search(question: str, n_results: int = 5, project: str = None):
     """
     Compatibility wrapper around retrieve().
@@ -2534,16 +2659,7 @@ def search(question: str, n_results: int = 5, project: str = None):
     """
     if collection.count() == 0:
         return {"documents": [[]], "metadatas": [[]]}
-    scope = normalize_scope(project)
-    root = scope_search_root(scope)
-    if scope == root:
-        results = retrieve(question, n_results=n_results, project=root)
-    else:
-        # Over-fetch so the path filter still leaves n_results behind.
-        results = [
-            r for r in retrieve(question, n_results=50, project=root)
-            if source_in_scope(r["metadata"].get("source", ""), scope)
-        ][:n_results]
+    results = retrieve_scoped(question, n_results=n_results, project=project)
     return {
         "documents": [[r["document"] for r in results]],
         "metadatas": [[r["metadata"] for r in results]],

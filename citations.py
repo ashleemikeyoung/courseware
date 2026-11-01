@@ -8,20 +8,15 @@ a small, curated, exact lookup that doesn't have that ranking problem, so
 every retrieval path checks it too, regardless of whether chroma's own
 search already found the source.
 
-This used to be duplicated three ways -- orchestrator.py's get_rag_context(),
-mcp_server.py's handle_search(), and (in a more integrated form, alongside
-real content pulls) writer.py's gather_evidence(). This module is now the
-one copy that orchestrator.py and mcp_server.py both call, so the logic can
-only drift out of sync in one place instead of two.
+This module is the one copy of the top-up, called through
+rag.search_with_citations() by both orchestrator.py and mcp_server.py.
 
-writer.py's version stays separate deliberately: gather_evidence() also
-pulls real passage content for the matched source (not just the citation
-metadata) and registers everything through CitationRegistry/Evidence, which
-this module has no reason to know about. Merging that one in too would mean
-either dragging writer.py's dataclasses in here or dumbing gather_evidence
-down to this module's plain-dict shape -- not worth it for the one path
-(ask.py + writer.py's own outline/draft loop) that already shares a single
-implementation of its own.
+writer.py's gather_evidence() (the Ask tab, Compare, and drafting) gets
+the same correction a different way: it retrieves through
+rag.retrieve_scoped(), whose own citation pass (_citation_candidates, via
+memory-db's search_citations) surfaces the verified record, and
+gather_evidence() then pulls the cited source's full text into its
+CitationRegistry.
 """
 
 import sys

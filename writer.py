@@ -38,38 +38,14 @@ import requests
 
 import quality
 import projects
-from rag import collection, embedder, BASE_DIR
-try:
-    from rag import retrieve as hybrid_retrieve
-except ImportError:
-    hybrid_retrieve = None
-try:
-    from rag import meaningful_words
-except ImportError:
-    # rag.py hasn't had patch_meaningful_words.py applied yet. Fall back to
-    # an equivalent inline rather than let an import error take down the
-    # whole app over a retrieval-quality improvement. Apply
-    # patch_meaningful_words.py to rag.py to share the real one instead.
-    _FALLBACK_STOPWORDS = {
-        "a", "an", "the", "and", "or", "but", "if", "of", "in", "on", "at",
-        "to", "for", "with", "from", "by", "as", "is", "are", "was", "were",
-        "be", "been", "being", "do", "does", "did", "done", "has", "have",
-        "had", "having", "not", "no", "so", "than", "then", "this", "that",
-        "these", "those", "it", "its", "it's", "you", "your", "yours", "he",
-        "she", "they", "we", "i", "me", "my", "him", "her", "them", "us",
-        "our", "their", "who", "what", "when", "where", "why", "how",
-        "which", "can", "could", "should", "would", "will", "shall",
-        "about", "into", "over", "under", "again", "also", "just", "up",
-        "out", "off", "all", "any", "some", "such", "own",
-    }
-
-    def meaningful_words(text: str) -> list:
-        words = []
-        for w in text.lower().split():
-            clean = "".join(ch for ch in w if ch.isalnum())
-            if clean and len(clean) >= 2 and clean not in _FALLBACK_STOPWORDS:
-                words.append(clean)
-        return words
+# Retrieval lives in rag.py. collection/BASE_DIR stay importable from here
+# because app.py imports them via writer; _stitch/_parse_id because
+# test_summarize.py does.
+from rag import (
+    collection, BASE_DIR, retrieve_scoped, chunk_windows,
+    source_chunk_texts, normalize_scope,
+    stitch_chunks as _stitch, parse_chunk_id as _parse_id,
+)
 
 # .env is already loaded by the time we get here -- importing rag above
 # (which imports config) triggers it. See config.py's docstring.
@@ -79,7 +55,7 @@ except ImportError:
 # ~/Development/RAG/memory/README.md for what this stores and why it's kept
 # separate from chroma_db.
 sys.path.insert(0, str(BASE_DIR / "memory"))
-from memory_client import start_session, pii_redaction_enabled, find_citation
+from memory_client import start_session, pii_redaction_enabled
 
 # pii.py sits at RAG root, same place writer.py itself runs from -- no extra
 # sys.path entry needed. Not wrapped in try/except: if Presidio isn't
@@ -115,8 +91,6 @@ def output_dir(name: str = None) -> Path:
 def plan_path(name: str = None) -> Path:
     return project_paths(name)["plan"]
 
-# Must match rag.chunk_text's overlap, or stitched passages will repeat text.
-CHUNK_OVERLAP_WORDS = 100
 
 
 # ---------------------------------------------------------------------------
@@ -380,65 +354,7 @@ class CitationRegistry:
         return "\n".join(lines)
 
 
-def _stitch(chunks: list, overlap: int = CHUNK_OVERLAP_WORDS) -> str:
-    """Rejoin consecutive chunks, removing the deliberate word overlap."""
-    if not chunks:
-        return ""
-    out = [chunks[0]]
-    for c in chunks[1:]:
-        words = c.split()
-        out.append(" ".join(words[overlap:]) if len(words) > overlap else "")
-    return " ".join(p for p in out if p)
-
-
-def _parse_id(chunk_id: str):
-    """rag.py writes ids as 'filename.ext::7'. Filenames can contain ::-free text."""
-    source, _, idx = chunk_id.rpartition("::")
-    return source, int(idx)
-
-
-def _hybrid_evidence(
-    query: str,
-    registry: CitationRegistry,
-    per_query: int,
-    project: str = None,
-) -> list:
-    """
-    Adapt rag.retrieve()'s hybrid results into writer Evidence objects.
-
-    The Ask tab and writer previously had their own Chroma-first retrieval path,
-    so improvements to rag.search()/retrieve() -- document registry hits,
-    citation lookup, filename/source matching, and source diversity -- did not
-    reach grounded chat answers. Keeping this adapter here lets the older
-    window-expansion code remain as a fallback while putting the shared hybrid
-    retriever first.
-    """
-    if hybrid_retrieve is None:
-        return []
-    try:
-        results = hybrid_retrieve(query, n_results=per_query, project=project)
-    except Exception as e:
-        print(f"  [Warning: hybrid retrieval failed: {e}]")
-        return []
-
-    evidence = []
-    for offset, item in enumerate(results):
-        meta = item.get("metadata") or {}
-        source = meta.get("source")
-        if not source:
-            continue
-        chunk_index = -1000 - offset
-        chunk_id = item.get("id") or ""
-        if "::" in chunk_id:
-            try:
-                _, chunk_index = _parse_id(chunk_id)
-            except Exception:
-                chunk_index = 0
-        text = item.get("document") or ""
-        if not text.strip():
-            continue
-        evidence.append(registry.register(source, chunk_index, chunk_index, text))
-    return evidence
+_PROFILE_SPLIT = "\n\n[Matched passage]\n"
 
 
 def gather_evidence(
@@ -449,224 +365,93 @@ def gather_evidence(
     project: str = None,
 ) -> list:
     """
-    Multi-query retrieval with parent-window expansion, plus an exact-match
-    keyword pass alongside the semantic one.
+    Evidence for the Ask tab (via ask.py), Compare, and drafting.
 
-    Your chunk_size=500 is tuned for Q&A snippets. Paper prose needs continuous
-    argument, so we retrieve on the small chunks (precision) then return the
-    neighbours around each hit (context). Merging overlapping windows per source
-    means the same paragraph is never handed to the model twice.
+    Retrieval itself is rag.retrieve_scoped() -- the same hybrid semantic +
+    keyword + full-text + document-registry + verified-citation ranking that
+    search_documents, ask_local and the terminal use, so a retrieval fix in
+    rag.py reaches every interface. This function only adapts the results
+    for drafting:
 
-    The keyword pass exists because pure semantic search is unreliable on
-    short proper nouns and specific terms: a person's name mentioned in a few
-    chunks can rank below chunks that never mention them at all, purely on
-    embedding proximity. rag.py's search() was patched to catch this with a
-    content-keyword check; this mirrors that fix here, since gather_evidence
-    is a separate retrieval path that search() never touches (this function
-    calls collection.query() directly, not rag.search()). Without this, a
-    fix to search() has no effect on the Ask tab, Compare, or drafting, all
-    of which go through this function instead.
+    - Each retrieved chunk is widened to +/- `window` neighbours and
+      stitched (rag.chunk_windows), because paper prose needs continuous
+      argument, not 500-word Q&A snippets. Overlapping windows from one
+      source are merged, so the same paragraph is never handed over twice.
+    - A verified citation hit (memory-db's curated citations table) is
+      registered as its own short record (start=end=-1, outside any real
+      chunk range so it can't collide with chunk 0 in the registry's dedup
+      key), followed by every chunk of that source: the record answers "who
+      wrote this" but a "summarize it" follow-up needs the article itself.
+      evidence_block()'s char_budget still caps the prompt.
+    - A document-registry hit's profile/synopsis is kept as a short record
+      (start=end=-2) next to its windowed passage.
+
+    Order matters: evidence_block() stops at its char budget rather than
+    skipping ahead, and the Ask tab's budget is only 10-14k characters --
+    about one stitched window. So the list is: short citation/profile
+    records, then the retrieved chunks in rank order (several sources fit),
+    then full cited sources, then the wider windows, which a drafting
+    budget may still have room for.
     """
     if collection.count() == 0:
         return []
 
     scope = None if project == projects.ALL else (project or CURRENT_PROJECT)
-    hits: dict = {}
-    hybrid_first = []
+    scope = normalize_scope(scope)
+
+    hits: dict = {}            # source -> set of chunk indexes, in rank order
+    records: list = []         # citation / profile records
+    ranked: list = []          # the retrieved chunks themselves, in rank order
+    full_sources: list = []    # sources with a verified citation hit
 
     for q in queries:
-        hybrid_first.extend(_hybrid_evidence(q, registry, per_query, project=scope))
-        emb = embedder.encode([q])[0]
-        kwargs = {
-            "query_embeddings": [emb.tolist()],
-            "n_results": min(per_query, collection.count()),
-        }
-        # Scope retrieval to the project. Without this a thesis section would
-        # happily cite a client contract that happens to embed nearby.
-        if scope:
-            kwargs["where"] = {"project": scope}
-        res = collection.query(**kwargs)
-        for cid in res["ids"][0]:
-            source, idx = _parse_id(cid)
-            hits.setdefault(source, set()).add(idx)
-
-    # Exact-match pass: any chunk whose own text contains a meaningful word
-    # from any of the queries gets pulled in too, project-scoped the same
-    # way. One collection.get() covers every query at once rather than
-    # re-fetching per query.
-    #
-    # Capped, and this cap is load-bearing, not cosmetic. A name that's
-    # genuinely discussed throughout the corpus can match dozens or hundreds
-    # of chunks -- an earlier version of this pass added every single one
-    # unconditionally, and a person mentioned across ~124 chunks blew the
-    # evidence set past a hundred registered citation markers. That doesn't
-    # just bloat the prompt; it destabilizes generation entirely, and a
-    # local model handed a wall of a hundred-plus numbered markers can
-    # degenerate into reciting marker numbers instead of answering, which is
-    # worse than not finding the term at all. Two chunks per matching file
-    # keeps every relevant source represented; a modest total cap keeps this
-    # pass from dominating the evidence budget the way the semantic pass's
-    # per_query cap already does for it.
-    all_words = set()
-    for q in queries:
-        all_words.update(meaningful_words(q))
-    if all_words:
-        PER_SOURCE_CAP = 2
-        TOTAL_CAP = max(per_query * 2, 12)
-        all_data = collection.get(include=["metadatas", "documents"])
-        added_per_source: dict = {}
-        added_total = 0
-        for cid, meta, doc in zip(all_data["ids"], all_data["metadatas"],
-                                  all_data["documents"]):
-            if added_total >= TOTAL_CAP:
-                break
-            if scope and meta.get("project") != scope:
-                continue
-            source, idx = _parse_id(cid)
-            if idx in hits.get(source, set()):
-                continue  # the semantic pass already has this one
-            if added_per_source.get(source, 0) >= PER_SOURCE_CAP:
-                continue
-            if any(len(w) >= 3 and w in doc.lower() for w in all_words):
-                hits.setdefault(source, set()).add(idx)
-                added_per_source[source] = added_per_source.get(source, 0) + 1
-                added_total += 1
-
-    evidence = []
-    for source, indices in hits.items():
-        # Merge each hit's +/- window into non-overlapping ranges.
-        spans = sorted((max(0, i - window), i + window) for i in indices)
-        merged = [list(spans[0])]
-        for lo, hi in spans[1:]:
-            if lo <= merged[-1][1] + 1:
-                merged[-1][1] = max(merged[-1][1], hi)
-            else:
-                merged.append([lo, hi])
-
-        for lo, hi in merged:
-            ids = [f"{source}::{j}" for j in range(lo, hi + 1)]
-            got = collection.get(ids=ids, include=["documents"])
-            ordered = sorted(
-                zip(got["ids"], got["documents"]), key=lambda p: _parse_id(p[0])[1]
-            )
-            if not ordered:
-                continue
-            real_lo = _parse_id(ordered[0][0])[1]
-            real_hi = _parse_id(ordered[-1][0])[1]
-            text = _stitch([d for _, d in ordered])
-            evidence.append(registry.register(source, real_lo, real_hi, text))
-
-    # Citation correlation: this is the ONE retrieval path shared by both
-    # ask.py's chat (app.py's Ask tab) and this module's own outline/draft
-    # loop, so fixing it here -- rather than duplicating a third time --
-    # covers both. Same reasoning as orchestrator.py's get_rag_context()
-    # and mcp_server.py's handle_search(): chroma's ranking can lose a real
-    # source to documents that merely cite it (the Tye case), memory-db's
-    # curated citations table doesn't have that problem. Reuses all_words,
-    # already computed above for the exact-match chunk pass -- no need to
-    # re-tokenize the same queries twice.
-    #
-    # Registered with start=end=-1, a sentinel outside any real chunk index
-    # range (which are always >= 0), so a citation hit can never collide
-    # with a genuine chunk 0 from the same source in the registry's dedup key.
-    #
-    # Collected into a SEPARATE list and prepended to `evidence` (not
-    # appended) before returning. This matters more than it looks: callers
-    # like ask.py truncate the rendered evidence block at a char_budget,
-    # and evidence_block() walks the list in order, stopping dead the
-    # moment the budget is hit -- it doesn't skip ahead to find shorter
-    # items further down. Windowed real chunks can each run several
-    # thousand characters, so appending citation records at the END of the
-    # list (as an earlier version of this did) meant they could get pushed
-    # past the budget entirely by whatever large chunks happened to be
-    # retrieved first, and simply never reach the model -- not randomly,
-    # but deterministically, depending on which chunks came back. Citation
-    # records are short and highest-value for exactly the kind of question
-    # that triggers them, so they go first and are the last thing dropped,
-    # not the first.
-    citation_evidence = []
-    if all_words:
-        # Tracks sources already processed within THIS loop, so the same
-        # citation isn't fetched twice when two different matched words
-        # (e.g. "tye" and, on a later call, "jordyn") resolve to the same
-        # article. Deliberately NOT seeded from the regular `evidence`
-        # sources collected above (an earlier version did this). Seeding
-        # from `evidence` meant a citation source got skipped here
-        # entirely whenever the ordinary exact-match pass above had already
-        # grabbed even one or two chunks from it for some unrelated
-        # generic word ("article", "summarize") -- which starved exactly
-        # the "summarize it" follow-up this block exists to answer: the
-        # rich source-scoped query and lead-chunk pull below never ran,
-        # because the source LOOKED already covered by chunks that weren't
-        # actually useful for summarizing anything. registry.register()'s
-        # own (source, start, end) dedup already prevents any real
-        # double-counting if the regular pass and this one land on the
-        # same chunk, so there's no cost to running this unconditionally.
-        seen_sources = set()
         try:
-            for word in all_words:
-                if len(word) < 3:
-                    continue
-                for hit in find_citation(author=word):
-                    if scope and not hit["source"].startswith(f"{scope}/"):
-                        continue
-                    if hit["source"] in seen_sources:
-                        continue
-                    seen_sources.add(hit["source"])
-                    citation_text = (
-                        "[Verified citation record, from memory-db not chroma_db]\n"
-                        f"File: {hit['source']}\n"
-                        f"Title: {hit['title']}\n"
-                        f"Author(s): {hit['authors']}\n"
-                        f"Source: {hit['source_line']}"
-                    )
-                    citation_evidence.append(
-                        registry.register(hit["source"], -1, -1, citation_text))
-
-                    # The citation record above answers "who wrote this" but
-                    # has none of the article's actual substance -- a
-                    # follow-up like "summarize it" has nothing real to draw
-                    # on unless real content gets pulled too. Every chunk
-                    # for this exact source gets pulled directly by
-                    # metadata filter, not by an embedding-ranked query --
-                    # collection.query() with a `where` filter can raise
-                    # when the filtered subset has fewer chunks than
-                    # n_results asks for (a real chromadb quirk: it was
-                    # requesting min(4, collection.count()) using the
-                    # WHOLE collection's count, not this one source's,
-                    # so a short article with only 2-3 chunks indexed
-                    # triggered exactly that error on every single
-                    # "summarize" follow-up). That exception was caught by
-                    # the try/except below and only ever printed a warning
-                    # to stderr -- invisible in the chat UI -- so this
-                    # failed completely silently. collection.get() with a
-                    # where filter has no such requirement: it returns
-                    # whatever exists, nothing more, nothing raised for
-                    # "not enough." For an article-length document this
-                    # pulls the whole thing, which is exactly what
-                    # "summarize it" needs anyway -- evidence_block()'s
-                    # char_budget still caps the final prompt size, so an
-                    # unusually long source can't blow the budget on its
-                    # own.
-                    try:
-                        source_data = collection.get(
-                            where={"source": hit["source"]},
-                            include=["documents"],
-                        )
-                        ordered = sorted(
-                            zip(source_data["ids"], source_data["documents"]),
-                            key=lambda p: _parse_id(p[0])[1],
-                        )
-                        for cid, doc in ordered:
-                            _, cidx = _parse_id(cid)
-                            citation_evidence.append(
-                                registry.register(hit["source"], cidx, cidx, doc))
-                    except Exception as e:
-                        print(f"  [Warning: source-scoped content pull failed: {e}]")
+            results = retrieve_scoped(q, n_results=per_query, project=scope)
         except Exception as e:
-            print(f"  [Warning: citation lookup failed: {e}]")
+            print(f"  [Warning: retrieval failed: {e}]")
+            continue
+        for item in results:
+            meta = item.get("metadata") or {}
+            source = meta.get("source")
+            if not source:
+                continue
+            signals = item.get("signals") or set()
+            doc = item.get("document") or ""
 
-    return hybrid_first + citation_evidence + evidence
+            if "citation" in signals or "document_registry" in signals:
+                header = doc.split(_PROFILE_SPLIT, 1)[0].strip()
+                marker = -1 if "citation" in signals else -2
+                if header:
+                    records.append(registry.register(source, marker, marker, header))
+                if "citation" in signals and source not in full_sources:
+                    full_sources.append(source)
+
+            idx = meta.get("chunk_index")
+            if idx is None and "::" in str(item.get("id") or ""):
+                _, idx = _parse_id(item["id"])
+            if idx is None:
+                continue
+            idx = int(idx)
+            hits.setdefault(source, set()).add(idx)
+            passage = doc.split(_PROFILE_SPLIT, 1)[-1]
+            if passage.strip():
+                ranked.append(registry.register(source, idx, idx, passage))
+
+    sources_text = []
+    for source in full_sources:
+        try:
+            for idx, text in sorted(source_chunk_texts(source).items()):
+                sources_text.append(registry.register(source, idx, idx, text))
+        except Exception as e:
+            print(f"  [Warning: source-scoped content pull failed: {e}]")
+
+    windows = [
+        registry.register(w["source"], w["start"], w["end"], w["text"])
+        for w in chunk_windows(
+            {s: i for s, i in hits.items() if s not in full_sources}, window=window)
+        if w["start"] != w["end"]   # a lone chunk is already in `ranked`
+    ]
+    return records + ranked + sources_text + windows
 
 
 def evidence_block(evidence: list, char_budget: int = 24000) -> str:
