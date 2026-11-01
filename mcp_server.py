@@ -29,16 +29,19 @@ import projects
 # is a full model pass, and MCP clients time out (Goose defaults to 300s).
 SUMMARIZE_MAX_FILES = 5
 from rag import (
-    search,
+    search_with_citations,
     scan_documents,
     scan_mailboxes,
-    get_indexed_sources,
     collection,
     DOCUMENTS_FOLDER,
     ingest_content,
     read_indexed_source_text,
+    normalize_scope as _project_scope,
+    source_in_scope as _source_in_scope,
+    scope_search_root as _scope_search_root,
+    scoped_indexed_sources,
+    resolve_indexed_source as _resolve_indexed_source,
 )
-import citations
 
 # orchestrator.py, ask.py, and summarize.py are intentionally NOT imported
 # up here at module load time. All three pull in pii.py (which
@@ -80,64 +83,9 @@ server = Server(
 )
 
 
-def _project_scope(project: str | None) -> str | None:
-    """Normalize a user-supplied project/folder scope."""
-    scope = (project or "").strip().strip("/")
-    if not scope or scope == projects.ALL:
-        return None
-    return scope
+# Folder-scope helpers (_project_scope, _source_in_scope, ...) are imported
+# from rag.py above so every front end scopes searches the same way.
 
-
-def _scope_root(scope: str | None) -> str | None:
-    if not scope:
-        return None
-    return Path(scope).parts[0] if Path(scope).parts else scope
-
-
-def _scope_search_root(scope: str | None) -> str | None:
-    """Best top-level project to search before applying the final scope filter."""
-    scope = _project_scope(scope)
-    if not scope:
-        return None
-    parts = Path(scope).parts
-    if len(parts) > 1:
-        return parts[0]
-    indexed = get_indexed_sources()
-    if any(projects.project_of(source) == scope for source in indexed):
-        return scope
-    roots = {
-        projects.project_of(source)
-        for source in indexed
-        if scope in Path(source).parts
-    }
-    return next(iter(roots)) if len(roots) == 1 else None
-
-
-def _source_in_scope(source: str, scope: str | None) -> bool:
-    """Accept top-level projects, nested folders, and unique folder aliases."""
-    scope = _project_scope(scope)
-    if not scope:
-        return True
-    source_norm = source.strip("/")
-    scope_norm = scope.strip("/")
-    if "/" not in scope_norm:
-        return (
-            projects.project_of(source_norm) == scope_norm
-            or scope_norm in Path(source_norm).parts
-        )
-    return source_norm == scope_norm or source_norm.startswith(f"{scope_norm}/")
-
-
-def _filter_indexed_by_scope(indexed: dict, scope: str | None) -> dict:
-    scope = _project_scope(scope)
-    if not scope:
-        return indexed
-    return {k: v for k, v in indexed.items() if _source_in_scope(k, scope)}
-
-
-# ---------------------------------------------------------------------------
-# Tool: search_documents
-# ---------------------------------------------------------------------------
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
@@ -1106,32 +1054,15 @@ async def handle_search(arguments: dict) -> CallToolResult:
         )
 
     try:
-        search_project = _scope_search_root(project)
-        search_limit = n_results if project == search_project else 50
-        results = search(query, n_results=search_limit, project=search_project)
-        docs = results["documents"][0]
-        metas = results["metadatas"][0]
-        if project and project != search_project:
-            scoped = [
-                (doc, meta)
-                for doc, meta in zip(docs, metas)
-                if _source_in_scope(meta.get("source", ""), project)
-            ][:n_results]
-            docs = [doc for doc, _meta in scoped]
-            metas = [meta for _doc, meta in scoped]
-
-        # Citation correlation, via the shared helper in citations.py -- see
-        # that module's docstring for the full reasoning. This used to be
-        # an inline duplicate of the same logic in orchestrator.py; both
-        # now call the one shared implementation.
-        seen_sources = {m.get("source") for m in metas}
-        citation_blocks = []
-        for hit in citations.topup(query, seen_sources, project=search_project):
-            if "_warning" in hit:
-                citation_blocks.append(f"[Warning: citation lookup failed: {hit['_warning']}]")
-                continue
-            if project and not _source_in_scope(hit.get("source", ""), project):
-                continue
+        # Retrieval, nested-folder scoping, and the memory-db citation top-up
+        # all live in rag.search_with_citations(), shared with orchestrator.py.
+        results = search_with_citations(query, n_results=n_results, project=project)
+        docs = results["documents"]
+        metas = results["metadatas"]
+        citation_blocks = [
+            f"[Warning: citation lookup failed: {w}]" for w in results["warnings"]
+        ]
+        for hit in results["citations"]:
             citation_blocks.append(
                 "--- Verified citation record (from memory-db, not chroma_db) ---\n"
                 f"Source: {hit['source']}\n"
@@ -1183,7 +1114,7 @@ async def handle_projects() -> CallToolResult:
 
 async def handle_document_list(arguments: dict) -> CallToolResult:
     project = _project_scope(arguments.get("project"))
-    indexed = _filter_indexed_by_scope(get_indexed_sources(), project)
+    indexed = scoped_indexed_sources(project)
 
     if not indexed:
         return CallToolResult(
@@ -1450,42 +1381,6 @@ async def handle_ask_local(arguments: dict) -> CallToolResult:
         )
 
 
-def _resolve_indexed_source(source_query: str, project: str = None):
-    indexed = _filter_indexed_by_scope(get_indexed_sources(), project)
-
-    needle = (source_query or "").strip()
-    needle_lower = needle.lower()
-    if not needle_lower:
-        return None, []
-
-    for source in indexed:
-        if source.lower() == needle_lower:
-            return source, []
-
-    exact_name = [source for source in indexed
-                  if Path(source).name.lower() == needle_lower]
-    if len(exact_name) == 1:
-        return exact_name[0], []
-    if len(exact_name) > 1:
-        return None, sorted(exact_name)
-
-    contained = [source for source in indexed if needle_lower in source.lower()]
-    if len(contained) == 1:
-        return contained[0], []
-    if len(contained) > 1:
-        return None, sorted(contained)
-
-    try:
-        import summarize
-        detected = summarize.detect_file_reference(needle, project=project)
-    except Exception:
-        detected = None
-    if detected:
-        return detected, []
-
-    return None, []
-
-
 async def handle_read_document(arguments: dict) -> CallToolResult:
     source_query = (arguments.get("source") or "").strip()
     project = _project_scope(arguments.get("project"))
@@ -1498,7 +1393,7 @@ async def handle_read_document(arguments: dict) -> CallToolResult:
             content=[TextContent(type="text", text="Error: source cannot be empty")]
         )
 
-    source, candidates = _resolve_indexed_source(source_query, project=project)
+    source, candidates = _resolve_indexed_source(source_query, scope=project)
     if not source:
         if candidates:
             lines = [

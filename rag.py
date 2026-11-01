@@ -309,6 +309,19 @@ class LanceCollection:
             result["metadatas"] = [self._metadata_from_row(row) for row in rows]
         return result
 
+    def column_rows(self, columns: list, where: dict = None,
+                    limit: int = None) -> list:
+        """Rows with only `columns` -- skips the vector and chunk text, which
+        is what makes full-table scans like get_indexed_sources() slow."""
+        n = self.count()
+        if n == 0:
+            return []
+        query = self.table.search()
+        expr = self._where_expr(where)
+        if expr:
+            query = query.where(expr)
+        return query.select(columns).limit(min(limit or n, n)).to_list()
+
     def add(self, ids: list, embeddings: list, documents: list, metadatas: list):
         if not ids:
             return
@@ -675,19 +688,146 @@ def _metadata_source_type(meta: dict) -> str:
         "email" if source.startswith(EMAIL_SOURCE_PREFIX) else "file")
 
 
-def get_indexed_sources(source_type: str = None) -> dict:
-    if collection.count() == 0:
-        return {}
-    results = collection.get(include=["metadatas"])
+def get_indexed_sources(source_type: str = None, project: str = None) -> dict:
+    """{source: file_hash} for every indexed source.
+
+    `project` here is a top-level project only (it is pushed down as a
+    column filter); use filter_sources_by_scope() for nested folders.
+    """
+    columns = ["source", "file_hash"]
+    if source_type:
+        # source_type only lives inside metadata_json, so only pay to read
+        # that column when a caller actually filters on it.
+        columns.append("metadata_json")
+    project = _project_scope(project)
+    rows = collection.column_rows(
+        columns, where={"project": project} if project else None)
     indexed = {}
-    for meta in results["metadatas"]:
-        if source_type and _metadata_source_type(meta) != source_type:
+    for row in rows:
+        source = row.get("source")
+        hash_val = row.get("file_hash")
+        if not (source and hash_val) or source in indexed:
             continue
-        source = meta.get("source")
-        hash_val = meta.get("file_hash")
-        if source and hash_val:
-            indexed[source] = hash_val
+        if source_type:
+            try:
+                meta = json.loads(row.get("metadata_json") or "{}")
+            except Exception:
+                meta = {}
+            meta["source"] = source
+            if _metadata_source_type(meta) != source_type:
+                continue
+        indexed[source] = hash_val
     return indexed
+
+
+# ---------------------------------------------------------------------------
+# Folder scopes
+#
+# A scope can be a top-level project ("GCU"), a nested folder path
+# ("GCU/DBA-831/Week 3"), or a folder name that is unique across the index
+# ("DBA-831"). The vector table only stores the top-level project, so a
+# nested scope is searched under its root and then filtered by path. These
+# used to live in mcp_server.py; they are here so every front end
+# (mcp_server.py, orchestrator.py, app.py) scopes the same way.
+# ---------------------------------------------------------------------------
+
+def normalize_scope(scope: str = None):
+    """Strip slashes and map ''/projects.ALL to None (= everything)."""
+    scope = (scope or "").strip().strip("/")
+    if not scope or scope == projects.ALL:
+        return None
+    return scope
+
+
+def source_in_scope(source: str, scope: str = None) -> bool:
+    scope = normalize_scope(scope)
+    if not scope:
+        return True
+    source_norm = (source or "").strip("/")
+    if "/" not in scope:
+        return (
+            projects.project_of(source_norm) == scope
+            or scope in Path(source_norm).parts
+        )
+    return source_norm == scope or source_norm.startswith(f"{scope}/")
+
+
+def filter_sources_by_scope(indexed: dict, scope: str = None) -> dict:
+    scope = normalize_scope(scope)
+    if not scope:
+        return indexed
+    return {k: v for k, v in indexed.items() if source_in_scope(k, scope)}
+
+
+def scope_search_root(scope: str = None):
+    """Top-level project to search before applying the full scope filter.
+
+    None means search everything -- either no scope was given, or a folder
+    alias matches under more than one project.
+    """
+    scope = normalize_scope(scope)
+    if not scope:
+        return None
+    parts = Path(scope).parts
+    if len(parts) > 1:
+        return parts[0]
+    if collection.column_rows(["source"], where={"project": scope}, limit=1):
+        return scope
+    roots = {
+        projects.project_of(row["source"])
+        for row in collection.column_rows(["source"])
+        if scope in Path(row.get("source") or "").parts
+    }
+    return next(iter(roots)) if len(roots) == 1 else None
+
+
+def scoped_indexed_sources(scope: str = None, source_type: str = None) -> dict:
+    """get_indexed_sources() narrowed to any kind of scope."""
+    scope = normalize_scope(scope)
+    root = scope_search_root(scope) if scope else None
+    indexed = get_indexed_sources(source_type=source_type, project=root)
+    return filter_sources_by_scope(indexed, scope)
+
+
+def resolve_indexed_source(source_query: str, scope: str = None):
+    """Match a user-typed path or filename to one indexed source.
+
+    Returns (source, []) on a unique match, (None, candidates) when it is
+    ambiguous, and (None, []) when nothing matches.
+    """
+    indexed = scoped_indexed_sources(scope)
+
+    needle_lower = (source_query or "").strip().lower()
+    if not needle_lower:
+        return None, []
+
+    for source in indexed:
+        if source.lower() == needle_lower:
+            return source, []
+
+    exact_name = [source for source in indexed
+                  if Path(source).name.lower() == needle_lower]
+    if len(exact_name) == 1:
+        return exact_name[0], []
+    if len(exact_name) > 1:
+        return None, sorted(exact_name)
+
+    contained = [source for source in indexed if needle_lower in source.lower()]
+    if len(contained) == 1:
+        return contained[0], []
+    if len(contained) > 1:
+        return None, sorted(contained)
+
+    try:
+        # Lazy: summarize.py imports this module.
+        import summarize
+        detected = summarize.detect_file_reference(source_query.strip(), project=scope)
+    except Exception:
+        detected = None
+    if detected:
+        return detected, []
+
+    return None, []
 
 
 def remove_source(filename: str):
@@ -2388,14 +2528,55 @@ def search(question: str, n_results: int = 5, project: str = None):
     The return shape intentionally matches Chroma's collection.query() shape
     because mcp_server.py, orchestrator.py, summarize.py, Claude Desktop, and
     Codex already depend on it.
+
+    `project` may be any scope (see the Folder scopes section): a nested
+    folder is retrieved under its top-level project and then filtered.
     """
     if collection.count() == 0:
         return {"documents": [[]], "metadatas": [[]]}
-    results = retrieve(question, n_results=n_results, project=project)
+    scope = normalize_scope(project)
+    root = scope_search_root(scope)
+    if scope == root:
+        results = retrieve(question, n_results=n_results, project=root)
+    else:
+        # Over-fetch so the path filter still leaves n_results behind.
+        results = [
+            r for r in retrieve(question, n_results=50, project=root)
+            if source_in_scope(r["metadata"].get("source", ""), scope)
+        ][:n_results]
     return {
         "documents": [[r["document"] for r in results]],
         "metadatas": [[r["metadata"] for r in results]],
     }
+
+
+def search_with_citations(question: str, n_results: int = 5,
+                          project: str = None) -> dict:
+    """search() plus the verified-citation top-up from memory-db.
+
+    Both mcp_server.py's search_documents and orchestrator.py's terminal
+    loop call this, so they retrieve and cite identically. Returns
+    {"documents": [...], "metadatas": [...], "citations": [...],
+    "warnings": [...]} -- flat lists, not search()'s nested shape.
+    """
+    # Lazy: citations.py imports this module.
+    import citations
+
+    scope = normalize_scope(project)
+    results = search(question, n_results=n_results, project=scope)
+    docs = results["documents"][0]
+    metas = results["metadatas"][0]
+
+    hits, warnings = [], []
+    seen_sources = {m.get("source") for m in metas}
+    for hit in citations.topup(question, seen_sources,
+                               project=scope_search_root(scope)):
+        if "_warning" in hit:
+            warnings.append(hit["_warning"])
+        elif source_in_scope(hit.get("source", ""), scope):
+            hits.append(hit)
+    return {"documents": docs, "metadatas": metas,
+            "citations": hits, "warnings": warnings}
 
 
 # ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ except ImportError:
     readline = None
 
 from rag import (
-    search,
+    search_with_citations,
     scan_documents,
     get_indexed_sources,
     collection,
@@ -22,7 +22,6 @@ from rag import (
     SUPPORTED_EXTENSIONS,
     ignored_dirs,
 )
-import citations
 import summarize
 
 # Reuses ask.py's pronoun-reference resolution rather than re-implementing
@@ -582,22 +581,20 @@ def get_rag_context(question: str, project: str = None) -> tuple:
     if collection.count() == 0:
         return "", [], {}
 
-    results = search(question, project=project)
+    # Same retrieval + citation top-up as mcp_server.py's search_documents --
+    # both call rag.search_with_citations(), so they can't drift apart.
+    results = search_with_citations(question, project=project)
     context = ""
     sources = []
 
-    for i, doc in enumerate(results["documents"][0]):
-        source = results["metadatas"][0][i]["source"]
+    for doc, meta in zip(results["documents"], results["metadatas"]):
+        source = meta["source"]
         context += f"[From {source}]\n{doc}\n\n"
         sources.append(source)
 
-    # Citation correlation -- see citations.py's module docstring for the
-    # full "Tye" reasoning. This used to be an inline duplicate of the same
-    # logic in mcp_server.py; both now call the one shared implementation.
-    for hit in citations.topup(question, set(sources), project=project):
-        if "_warning" in hit:
-            print(f"  [Warning: citation lookup failed: {hit['_warning']}]", flush=True)
-            continue
+    for warning in results["warnings"]:
+        print(f"  [Warning: citation lookup failed: {warning}]", flush=True)
+    for hit in results["citations"]:
         context += (
             f"[Verified citation record for {hit['source']}]\n"
             f"Title: {hit['title']}\n"
@@ -607,7 +604,7 @@ def get_rag_context(question: str, project: str = None) -> tuple:
         sources.append(hit["source"])
 
     stats = {
-        "chunks_retrieved": len(results["documents"][0]),
+        "chunks_retrieved": len(results["documents"]),
         "chunk_chars": len(context),
         "sources": list(set(sources)),
     }
