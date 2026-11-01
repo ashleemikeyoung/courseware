@@ -13,6 +13,7 @@ except ImportError:
 
 from rag import (
     search_with_citations,
+    recent_activity,
     scan_documents,
     get_indexed_sources,
     collection,
@@ -222,6 +223,39 @@ def _record_recent_turn(question: str, answer: str):
         return
     _recent_turns.append({"question": question or "", "answer": answer or ""})
     del _recent_turns[:-_RECENT_TURNS_KEEP]
+
+
+def _restore_recent_context():
+    """
+    Refill the rolling context buffer from memory-db after a restart and
+    print what was last worked on, via the same rag.recent_activity() the
+    MCP recent_activity tool uses. Only real questions with answers are
+    restored -- "[search_documents] ..." lookups and slash commands are not
+    conversation. Skipped in incognito, same as _record_recent_turn().
+    """
+    if _incognito:
+        return
+    try:
+        activity = recent_activity(_memory_project(), n=10)
+    except Exception as e:
+        print(f"  [Warning: could not load recent activity: {e}]", flush=True)
+        return
+    turns, seen = [], set()
+    for t in activity["turns"]:
+        question = " ".join(t["question"].lower().split())
+        if (t.get("answer") and not question.startswith(("[", "/"))
+                and question not in seen):
+            seen.add(question)
+            turns.append(t)
+    turns = turns[:_RECENT_TURNS_KEEP]
+    for t in reversed(turns):  # recent_turns() is newest first
+        _record_recent_turn(t["question"], t["answer"])
+
+    if turns:
+        print(f"\nLast question ({turns[0]['asked_at']}): {turns[0]['question'][:120]}")
+    if activity["documents"]:
+        d = activity["documents"][0]
+        print(f"Last indexed   ({d['indexed_at']}): {d['source']}")
 
 
 def _recent_context_text() -> str:
@@ -1214,6 +1248,7 @@ if __name__ == "__main__":
 
     start_file_watcher()
     _new_session(incognito=False)
+    _restore_recent_context()
 
     print("\nOrchestrated RAG — fully local")
     print(HELP_TEXT)

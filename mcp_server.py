@@ -41,6 +41,8 @@ from rag import (
     scope_search_root as _scope_search_root,
     scoped_indexed_sources,
     resolve_indexed_source as _resolve_indexed_source,
+    recent_activity,
+    log_turn,
 )
 
 # orchestrator.py, ask.py, and summarize.py are intentionally NOT imported
@@ -76,6 +78,9 @@ server = Server(
         "target sections, locked sections, and revision history so future turns "
         "preserve the requested scope instead of repeatedly shortening unrelated "
         "sections. "
+        "At the start of a conversation, or when the user asks what they "
+        "were last working on, call recent_activity to see recent questions, "
+        "newly indexed documents, revision cases, and worksets. "
         "IMPORTANT: When you need to read a document's full content (especially .docx, .pdf, .txt files), "
         "ALWAYS call read_document with the exact source path. Do not attempt to use "
         "external command-line tools like docx2txt - the read_document tool handles all formats."
@@ -159,6 +164,30 @@ async def list_tools() -> list[Tool]:
                 "or to resolve which project they mean before searching."
             ),
             inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="recent_activity",
+            description=(
+                "What the user worked on recently: questions asked in the "
+                "terminal, the web UI, and over MCP; documents newly indexed; "
+                "active document revision cases; and worksets. Call this at the "
+                "start of a conversation, or when the user asks what they were "
+                "last working on, to pick up where they left off."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project": {
+                        "type": "string",
+                        "description": "Optional project or folder scope, e.g. 'GCU' or 'GCU/DBA-831'",
+                    },
+                    "n": {
+                        "type": "integer",
+                        "description": "Items per section (default 10, max 25)",
+                    },
+                },
+                "required": [],
+            },
         ),
         Tool(
             name="rescan_documents",
@@ -784,8 +813,103 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> CallToolResult:
+    result = await _dispatch_tool(name, arguments or {})
+    _log_tool_turn(name, arguments or {}, result)
+    return result
 
-    if name == "search_documents":
+
+# Tools whose calls are recorded as memory-db turns (mode "mcp"), so
+# recent_activity can answer "what were we working on" for Claude Desktop
+# and ElRoi sessions too. Each entry maps the call to (question, answer).
+# Lookups get a "[tool]" prefix so they never exact-match a real question in
+# find_cached_answer(), and read_document stores only its header -- the
+# document text is already in the index.
+def _result_text(result: CallToolResult) -> str:
+    return "\n".join(c.text for c in result.content if hasattr(c, "text"))
+
+
+def _result_sources(text: str) -> str:
+    return "\n".join(
+        line for line in text.splitlines()
+        if line.startswith("--- Result") or line.startswith("Source: ")
+    )
+
+
+_LOGGED_TOOLS = {
+    "ask_local": lambda a, t: (a.get("question", ""), t),
+    "search_documents": lambda a, t: (
+        f"[search_documents] {a.get('query', '')}", _result_sources(t)),
+    "read_document": lambda a, t: (
+        f"[read_document] {a.get('source', '')}", t.split("--- Document text ---")[0].strip()),
+    "summarize_documents": lambda a, t: (
+        f"[summarize_documents] {a.get('query', '')}", t[:4000]),
+}
+
+
+def _log_tool_turn(name: str, arguments: dict, result: CallToolResult) -> None:
+    describe = _LOGGED_TOOLS.get(name)
+    if not describe:
+        return
+    try:
+        question, answer = describe(arguments, _result_text(result))
+        log_turn(question, answer, project=_project_scope(arguments.get("project")))
+    except Exception as e:
+        print(f"  [Warning] could not log {name} turn: {e}", file=sys.stderr)
+
+
+async def handle_recent_activity(arguments: dict) -> CallToolResult:
+    project = _project_scope(arguments.get("project"))
+    n = max(1, min(int(arguments.get("n", 10) or 10), 25))
+    activity = recent_activity(project, n=n)
+
+    scope = f" in '{project}'" if project else " across all projects"
+    lines = [f"Recent activity{scope}:"]
+
+    def clip(text, limit=160):
+        text = " ".join((text or "").split())
+        return text if len(text) <= limit else text[:limit - 1] + "…"
+
+    lines.append("\nQuestions and lookups (terminal = qa, MCP = mcp):")
+    for t in activity["turns"]:
+        lines.append(f"  {t['asked_at']}  [{t.get('mode') or '?'}] {clip(t['question'])}")
+    if not activity["turns"]:
+        lines.append("  (none)")
+
+    if activity["conversations"]:
+        lines.append("\nWeb UI Ask conversations:")
+        for c in activity["conversations"]:
+            lines.append(f"  {c['updated_at']}  {c['project']}: {clip(c['last_question'])}"
+                         f" ({c['messages']} messages)")
+
+    lines.append("\nRecently indexed documents:")
+    for d in activity["documents"]:
+        lines.append(f"  {d['indexed_at']}  {d['source']}")
+    if not activity["documents"]:
+        lines.append("  (none)")
+
+    if activity["revision_cases"]:
+        lines.append("\nActive revision cases:")
+        for c in activity["revision_cases"]:
+            lines.append(f"  {c['updated_at']}  {c['case_name']} ({c['case_id']}): "
+                         f"{c.get('source_document') or ''}")
+
+    if activity["worksets"]:
+        lines.append("\nWorksets:")
+        for w in activity["worksets"]:
+            lines.append(f"  {w['updated_at']}  {w['name']} ({w['doc_count']} docs)")
+
+    for warning in activity["warnings"]:
+        lines.append(f"\n[Warning: {warning}]")
+
+    return CallToolResult(content=[TextContent(type="text", text="\n".join(lines))])
+
+
+async def _dispatch_tool(name: str, arguments: dict) -> CallToolResult:
+
+    if name == "recent_activity":
+        return await handle_recent_activity(arguments)
+
+    elif name == "search_documents":
         return await handle_search(arguments)
 
     elif name == "get_document_list":

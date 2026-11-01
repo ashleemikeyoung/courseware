@@ -2579,6 +2579,131 @@ def search_with_citations(question: str, n_results: int = 5,
             "citations": hits, "warnings": warnings}
 
 
+# Turn logging for front ends that don't manage their own memory-db session
+# (mcp_server.py). orchestrator.py keeps its own because /flag needs the
+# turn id back synchronously. Writes go through one background thread so a
+# slow or unreachable memory-db never delays a tool call, and set
+# RAG_INCOGNITO=1 to turn logging off entirely.
+_turn_log_sessions = {}
+_turn_log_executor = None
+
+
+def _write_turn(key, question, answer, model, sources):
+    import memory_client
+    session = _turn_log_sessions.get(key)
+    if session is None:
+        project, mode = key
+        session = memory_client.start_session(project=project, machine="mac",
+                                              mode=mode)
+        _turn_log_sessions[key] = session
+    session.log_turn(question=question, answer=answer, model=model,
+                     chunk_ids=sources)
+
+
+def _close_turn_log_sessions():
+    for session in _turn_log_sessions.values():
+        try:
+            session.close()
+        except Exception:
+            pass
+
+
+def log_turn(question: str, answer: str = None, project: str = None,
+             mode: str = "mcp", model: str = None, sources: list = None):
+    """Record one question/answer in memory-db's turns table, in a session
+    keyed by (top-level project, mode). Never raises and never blocks."""
+    global _turn_log_executor
+    if not MEMORY_AVAILABLE or os.environ.get("RAG_INCOGNITO") == "1":
+        return
+    if not (question or "").strip():
+        return
+    if _turn_log_executor is None:
+        import atexit
+        from concurrent.futures import ThreadPoolExecutor
+        _turn_log_executor = ThreadPoolExecutor(max_workers=1,
+                                                thread_name_prefix="turn-log")
+        atexit.register(_close_turn_log_sessions)
+    root = scope_search_root(project) if normalize_scope(project) else None
+
+    def run():
+        try:
+            _write_turn((root, mode), question, answer, model, sources)
+        except Exception as e:
+            print(f"  [Warning] could not log turn to memory-db: {e}",
+                  file=sys.stderr)
+    _turn_log_executor.submit(run)
+
+
+def recent_activity(project: str = None, n: int = 10) -> dict:
+    """What was worked on recently: questions asked (terminal, MCP, and the
+    web UI's Ask tab), documents newly indexed, active revision cases, and
+    worksets. One implementation so mcp_server.py's recent_activity tool and
+    orchestrator.py's session start see the same picture.
+
+    `project` may be any scope. Turns and web conversations are only stored
+    per top-level project, so for a nested scope they are matched on its
+    root; documents and revision cases are filtered to the exact folder.
+    Each section fails independently -- an unreachable memory-db leaves
+    worksets intact -- and failures are listed under "warnings".
+    """
+    scope = normalize_scope(project)
+    root = scope_search_root(scope) if scope else None
+    out = {"scope": scope, "turns": [], "conversations": [], "documents": [],
+           "revision_cases": [], "worksets": [], "warnings": []}
+
+    def section(name, fn):
+        try:
+            out[name] = fn()
+        except Exception as e:
+            out["warnings"].append(f"{name}: {e}")
+
+    if MEMORY_AVAILABLE:
+        import memory_client
+
+        section("turns", lambda: memory_client.recent_turns(n, project=root))
+        section("conversations",
+                lambda: memory_client.recent_ask_conversations(min(n, 5), project=root))
+
+        def documents():
+            prefix = f"{scope}/" if scope and "/" in scope else (
+                f"{root}/" if root else None)
+            rows = memory_client.recent_documents(n * 10 if scope else n,
+                                                  project_prefix=prefix)
+            return [r for r in rows if source_in_scope(r["source"], scope)][:n]
+        section("documents", documents)
+
+        def revision_cases():
+            rows = memory_client.list_document_revision_cases(limit=n * 5)
+            return [
+                r for r in rows
+                if not scope
+                or r.get("project") in (scope, root)
+                or source_in_scope(r.get("source_document") or "", scope)
+            ][:n]
+        section("revision_cases", revision_cases)
+    else:
+        out["warnings"].append("memory-db unavailable; only worksets shown")
+
+    def recent_worksets():
+        # Lazy: worksets.py imports this module.
+        import worksets
+        rows = []
+        for ws in worksets.list_worksets():
+            manifest = worksets.WORKSETS_DIR / ws["name"] / worksets.MANIFEST
+            try:
+                updated = datetime.fromtimestamp(
+                    manifest.stat().st_mtime, tz=timezone.utc
+                ).strftime("%Y-%m-%d %H:%M:%S")
+            except OSError:
+                updated = ""
+            rows.append({"name": ws["name"], "doc_count": ws["doc_count"],
+                         "updated_at": updated})
+        return sorted(rows, key=lambda r: r["updated_at"], reverse=True)[:n]
+    section("worksets", recent_worksets)
+
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Entry point for standalone use
 # ---------------------------------------------------------------------------

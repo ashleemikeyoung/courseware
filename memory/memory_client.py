@@ -107,19 +107,66 @@ def recent_turns(n: int = 10, project: str = None):
     try:
         if project:
             result = client.execute(
-                "SELECT t.asked_at, s.project, t.question, t.answer "
+                "SELECT t.asked_at, s.project, s.mode, t.question, t.answer "
                 "FROM turns t JOIN sessions s ON s.id = t.session_id "
                 "WHERE s.project = ? ORDER BY t.asked_at DESC LIMIT ?",
                 [project, n],
             )
         else:
             result = client.execute(
-                "SELECT t.asked_at, s.project, t.question, t.answer "
+                "SELECT t.asked_at, s.project, s.mode, t.question, t.answer "
                 "FROM turns t JOIN sessions s ON s.id = t.session_id "
                 "ORDER BY t.asked_at DESC LIMIT ?",
                 [n],
             )
         return [dict(zip(result.columns, row)) for row in result.rows]
+    finally:
+        client.close()
+
+
+def recent_documents(n: int = 10, project_prefix: str = None):
+    """Most recently indexed documents. documents.indexed_at is set when a
+    file is first indexed (or re-synopsized); updated_at is bumped on every
+    rescan, so it says nothing about new work and is not used here."""
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        sql = "SELECT source, indexed_at FROM documents WHERE indexed_at IS NOT NULL"
+        params = []
+        if project_prefix:
+            sql += " AND source LIKE ?"
+            params.append(f"{project_prefix}%")
+        result = client.execute(sql + " ORDER BY indexed_at DESC LIMIT ?",
+                                params + [int(n)])
+        return [dict(zip(result.columns, row)) for row in result.rows]
+    finally:
+        client.close()
+
+
+def recent_ask_conversations(n: int = 5, project: str = None):
+    """Live web-UI Ask conversations, newest first, with the last question
+    asked in each. The web UI keeps its history here, not in turns."""
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        sql = ("SELECT project, messages, updated_at FROM ask_conversations "
+               "WHERE messages != '[]'")
+        params = []
+        if project:
+            sql += " AND project = ?"
+            params.append(project)
+        result = client.execute(sql + " ORDER BY updated_at DESC LIMIT ?",
+                                params + [int(n)])
+        rows = []
+        for project_name, raw, updated_at in result.rows:
+            messages = _decode_json_array(raw)
+            questions = [m.get("content", "") for m in messages
+                         if isinstance(m, dict) and m.get("role") == "user"]
+            rows.append({
+                "project": project_name,
+                "updated_at": updated_at,
+                "messages": len(messages),
+                "last_question": questions[-1] if questions else "",
+            })
+        return rows
     finally:
         client.close()
 
