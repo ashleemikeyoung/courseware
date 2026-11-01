@@ -2411,6 +2411,37 @@ def _citation_candidates(words: list, project: str = None,
     return out
 
 
+FOLDER_MATCH_BONUS = 12.0
+
+
+def _named_folders(question: str, metadatas: list, project: str = None) -> set:
+    """Folder paths the question names, e.g. "the Week 3 readings" names
+    every ".../Week 3" folder, "DBA-831" names "GCU/DBA-831".
+
+    Only distinctive folder names count -- ones containing a digit or made
+    of several words ("Week 3", "DBA-831", "Case Study") -- so a folder
+    called "notes" or "data" isn't triggered by ordinary vocabulary.
+    Separators are loose: "DBA 831" and "dba-831" both name "DBA-831".
+    """
+    q = (question or "").lower()
+    folders = {}
+    for meta in metadatas:
+        if project and meta.get("project") != project:
+            continue
+        parts = Path(meta.get("source") or "").parts[:-1]
+        for depth, name in enumerate(parts):
+            folders.setdefault(name, set()).add("/".join(parts[:depth + 1]))
+    named = set()
+    for name, paths in folders.items():
+        tokens = _terms(name)
+        if not tokens or not (len(tokens) > 1 or any(ch.isdigit() for ch in name)):
+            continue
+        pattern = r"(?<![a-z0-9])" + r"[^a-z0-9]*".join(map(re.escape, tokens)) + r"(?![a-z0-9])"
+        if re.search(pattern, q):
+            named.update(paths)
+    return named
+
+
 def _diversify(ranked: list, n_results: int, max_per_source: int = 2) -> list:
     selected = []
     per_source = {}
@@ -2527,6 +2558,18 @@ def retrieve(question: str, n_results: int = 5, project: str = None) -> list:
             "semantic",
             item.get("id"),
         )
+
+    # "What do the Week 3 readings say..." -- "week" alone matches every
+    # week folder's path and the "3" is too short to be a search word, so
+    # without this the right folder's documents can rank below drafts that
+    # merely discuss the topic more.
+    named_folders = _named_folders(question, all_data["metadatas"], project)
+    if named_folders:
+        for c in candidates.values():
+            source = c["metadata"].get("source") or ""
+            if any(source.startswith(f"{folder}/") for folder in named_folders):
+                c["score"] += FOLDER_MATCH_BONUS
+                c["signals"].add("folder")
 
     ranked = sorted(
         [

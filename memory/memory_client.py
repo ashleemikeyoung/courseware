@@ -1972,6 +1972,17 @@ DEFAULT_SEARCH_CRITERIA = [
                 "theme", "themes", "metadata",
             ],
             "content_search": ["which", "what", "find", "show", "identify"],
+            # What a content_search word must point at to count as "find me
+            # documents" -- see ask.py's _is_content_search().
+            "search_target": [
+                "documents", "document", "files", "file", "sources", "source",
+                "articles", "article", "papers", "paper", "readings",
+                "reading", "studies", "study", "books", "book", "chapters",
+                "chapter", "reports", "report", "pdfs", "pdf", "notes",
+                "emails", "email", "messages", "message", "mail",
+                "citations", "citation", "references", "slides", "lectures",
+                "transcripts", "ones",
+            ],
             "local_source_reference": [
                 "documents", "document", "files", "file", "sources", "source",
                 "citations", "citation", "library", "index", "indexed",

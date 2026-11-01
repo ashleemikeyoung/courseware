@@ -343,6 +343,54 @@ def _has_ask_term(text: str, group_name: str, fallback=None) -> bool:
     ).search(text or ""))
 
 
+# Used only if memory-db has no ask_route/search_target rows yet (they are
+# not re-seeded automatically); mirrors memory_client.DEFAULT_SEARCH_CRITERIA.
+_SEARCH_TARGET_FALLBACK = {
+    "documents", "document", "files", "file", "sources", "source",
+    "articles", "article", "papers", "paper", "readings", "reading",
+    "studies", "study", "books", "book", "chapters", "chapter", "reports",
+    "report", "pdfs", "pdf", "notes", "emails", "email", "messages",
+    "message", "mail", "citations", "citation", "references", "slides",
+    "lectures", "transcripts", "ones",
+}
+# Words that may sit between the search word and what it points at:
+# "which OF MY articles", "find ME ALL THE papers", "show ME emails".
+_SEARCH_FILLER = (
+    r"(?:of|me|us|my|our|your|the|a|an|all|any|some|these|those|other)"
+)
+
+
+def _is_content_search(text: str) -> bool:
+    """
+    "Which articles mention Tye?" / "Find me the papers on X" -- a request
+    for a list of matching documents, answered from the document store.
+
+    A content_search word ("which", "what", "find", "show", "identify")
+    only counts when it points at a search_target ("documents", "articles",
+    "readings", ...): filler words and at most one descriptive word may sit
+    between them ("which academic articles"). The bare word used to be
+    enough, so any question containing "what" -- "What data cleaning
+    techniques do the Week 3 readings describe?" -- was answered with a
+    list of files instead of an answer.
+    """
+    verbs = _ask_terms("ask_route", "content_search")
+    targets = (_ask_terms("ask_route", "search_target")
+               or _SEARCH_TARGET_FALLBACK)
+    if not verbs or not targets:
+        return False
+    alt = lambda terms: "|".join(
+        re.escape(t).replace(r"\ ", r"\s+")
+        for t in sorted(terms, key=len, reverse=True))
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9])(?:{alt(verbs)})"
+        rf"(?:\s+{_SEARCH_FILLER})*"
+        rf"(?:\s+[A-Za-z0-9][\w'’-]*)?"
+        rf"\s+(?:{alt(targets)})(?![A-Za-z0-9])",
+        re.I,
+    )
+    return bool(pattern.search(text or ""))
+
+
 def _has_requirement_trigger(text: str, group_name: str, fallback=None) -> bool:
     """
     Same shape as _has_ask_term, against criteria_type="requirement_trigger"
@@ -587,7 +635,7 @@ def _plan_query(question: str, context: str = "") -> dict:
     elif SUMMARIZE_RE.search(q) and _has_known_source_reference(q, context):
         intent = "document_content"
         primary = "document_store"
-    elif _has_ask_term(q, "content_search") or (
+    elif _is_content_search(q) or (
         EMAIL_LOOKUP_RE.search(q) and EVIDENCE_LOOKUP_RE.search(q)
     ):
         intent = "cross_document_search"
@@ -649,7 +697,7 @@ def _should_ground_with_local_evidence(question: str, plan: dict,
     q = question or ""
     return bool(
         EMAIL_LOOKUP_RE.search(q)
-        or _has_ask_term(q, "content_search")
+        or _is_content_search(q)
         or _has_known_source_reference(q, context)
         or _has_ask_term(q, "local_source_reference")
     )
@@ -2568,7 +2616,7 @@ def _source_has_terms(source: str, terms: list, require_all: bool = False) -> bo
 
 def _answer_document_store_search(question: str, context: str = "",
                                   project: str = None):
-    if not _has_ask_term(question, "content_search"):
+    if not _is_content_search(question):
         return None
     if FILENAME_LIST_RE.search(question or "") or re.search(r"\bhow many\b", question or "", re.I):
         return None
@@ -2858,7 +2906,7 @@ def _citation_for_source(source: str) -> dict:
 def _answer_document_metadata(question: str, context: str, project: str = None):
     if not _has_ask_term(question, "document_metadata"):
         return None
-    if _has_ask_term(question, "content_search") and _has_topic_filter(question):
+    if _is_content_search(question) and _has_topic_filter(question):
         return None
 
     sources = _sources_from_context(
