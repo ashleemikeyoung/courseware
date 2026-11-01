@@ -2690,6 +2690,14 @@ def finish_turn_logging():
     _close_turn_log_sessions()
 
 
+def recent_checkpoints(project: str = None, n: int = 10) -> list:
+    """Newest first; `project` matches that folder and anything under it."""
+    if not MEMORY_AVAILABLE:
+        return []
+    import memory_client
+    return memory_client.recent_work_checkpoints(n, project=normalize_scope(project))
+
+
 def resume_work(project: str = None, n: int = 10) -> dict:
     """The newest checkpoint (plus two before it) and recent_activity(), with
     the turns logged after that checkpoint split out as "since"."""
@@ -2699,9 +2707,7 @@ def resume_work(project: str = None, n: int = 10) -> dict:
     if not MEMORY_AVAILABLE:
         return out
     try:
-        import memory_client
-        out["checkpoints"] = memory_client.recent_work_checkpoints(
-            3, project=normalize_scope(project))
+        out["checkpoints"] = recent_checkpoints(project, n=3)
     except Exception as e:
         out["warnings"].append(f"checkpoints: {e}")
     if out["checkpoints"]:

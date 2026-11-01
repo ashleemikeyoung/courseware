@@ -1180,6 +1180,58 @@ def api_ask_conversations():
     return jsonify({"conversations": list_ask_conversations(proj)})
 
 
+@app.get("/api/checkpoints")
+def api_checkpoints():
+    """
+    Work checkpoints -- "where I left off" -- shared with Claude Desktop,
+    ElRoi, Claude Code (via mcp_server.py's save_progress/resume_work) and
+    the terminal's /save. Cross-project unless ?project= is given, the same
+    way the sidebar's Chats list is.
+    """
+    unavailable = _memory_required()
+    if unavailable:
+        return unavailable
+    from rag import recent_checkpoints
+    try:
+        limit = max(1, min(int(request.args.get("limit") or 10), 50))
+    except ValueError:
+        limit = 10
+    try:
+        rows = recent_checkpoints(request.args.get("project") or None, n=limit)
+    except Exception as e:
+        return jsonify({"error": f"could not load checkpoints: {e}"}), 500
+    return jsonify({"checkpoints": rows})
+
+
+@app.post("/api/checkpoints")
+def api_checkpoint_save():
+    unavailable = _memory_required()
+    if unavailable:
+        return unavailable
+    from rag import save_checkpoint
+    payload = request.get_json(silent=True) or {}
+    task = (payload.get("task") or "").strip()
+    if not task:
+        return jsonify({"error": "task is required"}), 400
+    files = payload.get("files") or []
+    if isinstance(files, str):
+        files = [files]
+    project = (payload.get("project") or "").strip() or None
+    if project == "__all__":
+        project = None
+    try:
+        checkpoint_id = save_checkpoint(
+            task, project=project,
+            status=(payload.get("status") or "").strip(),
+            next_steps=(payload.get("next_steps") or "").strip(),
+            files=[str(f) for f in files][:25],
+            client="web",
+        )
+    except Exception as e:
+        return jsonify({"error": f"could not save checkpoint: {e}"}), 500
+    return jsonify({"id": checkpoint_id})
+
+
 @app.get("/api/ask/conversations/all")
 def api_ask_conversations_all():
     """

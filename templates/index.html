@@ -1040,6 +1040,33 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
   border:1px solid var(--rule);border-radius:2px;padding:1px 5px;flex:0 0 auto;
 }
 .sidebar-empty{font-size:12px;color:var(--ink-faint);padding:4px}
+/* --- checkpoints ---------------------------------------------------------
+   "Where I left off", shared with Claude Desktop, ElRoi, Claude Code and the
+   terminal through memory-db. The resume card shows itself only on an empty
+   home view; opened from the sidebar it is .pinned and shows over a chat. */
+.checkpoint-form{display:grid;gap:6px;margin:0 2px 10px}
+.checkpoint-form[hidden],.resume-card[hidden]{display:none}
+.checkpoint-form input[type=text],.checkpoint-form textarea{
+  font-size:13px;padding:7px 9px;font-family:var(--sans)}
+.checkpoint-form textarea{min-height:54px}
+.checkpoint-form .row{gap:6px}
+.resume-card{
+  border:1px solid var(--rule);border-left:3px solid var(--blue);background:var(--paper-2);
+  border-radius:2px;padding:14px 16px;margin:0 0 22px;font-size:14px;line-height:1.45;
+}
+body:not(.ask-empty) .resume-card:not(.pinned){display:none}
+.resume-card .resume-head{
+  display:flex;justify-content:space-between;align-items:baseline;gap:10px;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ink-faint);margin-bottom:6px}
+.resume-card .resume-task{font-weight:600;font-size:15px;margin-bottom:4px}
+.resume-card .resume-meta{font-size:12px;color:var(--ink-faint);margin-bottom:8px}
+.resume-card .resume-label{
+  font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ink-faint);margin-top:8px}
+.resume-card .resume-text{white-space:pre-wrap;color:var(--ink-soft)}
+.resume-card ul{margin:2px 0 0 18px;padding:0;color:var(--ink-soft);font-size:13px}
+.resume-card .row{margin-top:12px;gap:8px}
 </style>
 <!-- KaTeX, vendored under static/vendor/katex rather than pulled from a CDN.
      Everything else in this app runs without the network and the math should
@@ -1122,6 +1149,21 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     </div>
     <div class="sidebar-section">
       <div class="sidebar-head">
+        <span>Checkpoints</span>
+        <button class="sidebar-add" id="btnSaveCheckpoint" title="Save where you are">+</button>
+      </div>
+      <form class="checkpoint-form" id="checkpointForm" hidden>
+        <input type="text" id="checkpointTask" placeholder="What you're working on" required>
+        <textarea id="checkpointNext" placeholder="Next steps when you come back"></textarea>
+        <div class="row">
+          <button class="btn small" type="submit">Save</button>
+          <button class="btn ghost small" type="button" id="btnCancelCheckpoint">Cancel</button>
+        </div>
+      </form>
+      <div id="sidebarCheckpoints"></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-head">
         <span>Chats</span>
         <button class="sidebar-add" id="btnNewChatSidebar" title="New conversation">+</button>
       </div>
@@ -1133,6 +1175,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <span class="word"><svg class="spark" viewBox="0 0 457 562" aria-hidden="true" focusable="false"><path fill="currentColor" d="M361.00 557.91 C212.51 518.64 77.16 407.49 23.20 280.50 C7.86 244.41 1.06 215.37 1.02 185.80 C0.92 113.11 39.36 51.52 105.84 17.88 C137.89 1.66 174.63 -3.52 212.00 2.92 C245.53 8.70 278.96 24.36 308.53 48.15 C329.83 65.29 356.13 95.72 376.41 126.70 C440.35 224.38 467.83 352.98 452.97 485.03 C449.99 511.58 448.96 516.43 446.25 516.82 C444.65 517.05 442.90 515.91 440.13 512.82 C434.69 506.75 314.30 361.94 293.54 336.50 C284.12 324.95 271.71 309.20 265.97 301.50 C254.86 286.60 242.65 273.03 241.45 274.23 C239.73 275.93 248.46 295.27 260.56 316.62 C270.72 334.54 278.93 351.24 363.68 526.32 C372.01 543.53 377.99 557.07 377.81 558.32 C377.36 561.49 374.24 561.41 361.00 557.91 Z"/></svg><span id="askWelcome">El<span class="accent">Roi</span><span class="tm" aria-hidden="true">™</span></span></span>
   </h1>
   <p class="lede" id="askLede">Data-driven insights, your data, your insights.</p>
+  <div class="resume-card" id="resumeCard" hidden></div>
 
   <div class="askbar">
     <label class="toggle" data-hint="Use passages from the current project's indexed documents. Turn this off for a plain conversation.">
@@ -2958,6 +3001,175 @@ function renderSidebarChats(conversations){
     wrap.appendChild(row);
   });
 }
+
+/* --- checkpoints ---------------------------------------------------------
+   Read and written through /api/checkpoints (rag.recent_checkpoints /
+   rag.save_checkpoint), the same store mcp_server.py's resume_work and
+   save_progress use, so a checkpoint saved in Claude Desktop shows up here
+   and one saved here is what Claude resumes from. */
+STATE.checkpoints = [];
+STATE.resumeDismissed = null;
+
+function checkpointWhen(cp){
+  const d = new Date((cp.created_at || "").replace(" ", "T") + "Z");
+  return isNaN(d) ? (cp.created_at || "") : d.toLocaleString();
+}
+
+function checkpointSource(cp){
+  if (cp.automatic) return "auto-saved when a session closed";
+  const c = cp.client || "";
+  if (c === "web") return "saved here";
+  if (c === "terminal") return "saved in the terminal";
+  if (c.startsWith("mcp:")) return `saved in ${c.slice(4)}`;
+  return c ? `saved in ${c}` : "saved";
+}
+
+async function loadCheckpoints(){
+  const wrap = $("#sidebarCheckpoints"); if (!wrap) return;
+  try {
+    const j = await (await fetch("/api/checkpoints?limit=8")).json();
+    STATE.checkpoints = j.checkpoints || [];
+  } catch(e){
+    STATE.checkpoints = [];
+  }
+  renderSidebarCheckpoints();
+  const latest = STATE.checkpoints[0];
+  const card = $("#resumeCard");
+  if (latest && STATE.resumeDismissed !== latest.id && !(card && card.classList.contains("pinned")))
+    renderResumeCard(latest, false);
+}
+
+function renderSidebarCheckpoints(){
+  const wrap = $("#sidebarCheckpoints"); if (!wrap) return;
+  wrap.innerHTML = "";
+  if (!STATE.checkpoints.length){
+    wrap.appendChild(el("div", "sidebar-empty", "No checkpoints yet."));
+    return;
+  }
+  STATE.checkpoints.forEach(cp => {
+    const row = el("div", "sidebar-item sidebar-chat");
+    row.appendChild(el("span", "sidebar-icon", cp.automatic ? "◇" : "◆"));
+    row.appendChild(el("span", "sidebar-chat-title", cp.task));
+    if (cp.project) row.appendChild(el("span", "chat-tag", cp.project.split("/")[0]));
+    row.title = `${checkpointWhen(cp)} · ${checkpointSource(cp)}` +
+      (cp.next_steps ? `\nNext: ${cp.next_steps}` : "");
+    row.onclick = () => renderResumeCard(cp, true);
+    wrap.appendChild(row);
+  });
+}
+
+function renderResumeCard(cp, pinned){
+  const card = $("#resumeCard"); if (!card) return;
+  card.innerHTML = "";
+  card.classList.toggle("pinned", !!pinned);
+  const head = el("div", "resume-head");
+  head.appendChild(el("span", "", pinned ? "Checkpoint" : "Pick up where you left off"));
+  head.appendChild(el("span", "", checkpointWhen(cp)));
+  card.appendChild(head);
+  card.appendChild(el("div", "resume-task", cp.task));
+  card.appendChild(el("div", "resume-meta",
+    [cp.project, checkpointSource(cp)].filter(Boolean).join(" · ")));
+  const section = (label, text) => {
+    if (!text) return;
+    card.appendChild(el("div", "resume-label", label));
+    card.appendChild(el("div", "resume-text", text));
+  };
+  section("Status", cp.status);
+  section("Next steps", cp.next_steps);
+  if ((cp.files || []).length){
+    card.appendChild(el("div", "resume-label", "Files"));
+    const ul = el("ul");
+    cp.files.forEach(f => ul.appendChild(el("li", "", f)));
+    card.appendChild(ul);
+  }
+  const row = el("div", "row");
+  const go = el("button", "btn small", "Continue");
+  go.type = "button";
+  go.onclick = () => continueFromCheckpoint(cp);
+  const dismiss = el("button", "btn ghost small", "Dismiss");
+  dismiss.type = "button";
+  dismiss.onclick = () => {
+    STATE.resumeDismissed = cp.id;
+    card.hidden = true; card.classList.remove("pinned");
+  };
+  row.appendChild(go); row.appendChild(dismiss);
+  card.appendChild(row);
+  card.hidden = false;
+}
+
+async function continueFromCheckpoint(cp){
+  const root = (cp.project || "").split("/")[0];
+  if (root && root !== STATE.project &&
+      (STATE.projects || []).some(p => p.name === root)){
+    $("#projSel").value = root;
+    await switchProject(root);
+  }
+  const lines = [`Let's continue: ${cp.task}`];
+  if (cp.project && cp.project !== root) lines.push(`Folder: ${cp.project}`);
+  if (cp.status) lines.push(`Where it stands: ${cp.status}`);
+  if (cp.next_steps) lines.push(`Next steps: ${cp.next_steps}`);
+  const input = $("#askInput");
+  input.value = lines.join("\n");
+  autoResize(input);
+  STATE.resumeDismissed = cp.id;
+  const card = $("#resumeCard");
+  card.hidden = true; card.classList.remove("pinned");
+  input.focus();
+}
+
+function openCheckpointForm(){
+  const form = $("#checkpointForm");
+  const firstQuestion = (STATE.chat.messages || []).find(m => m.role === "user");
+  if (!$("#checkpointTask").value && firstQuestion)
+    $("#checkpointTask").value = firstQuestion.content.split("\n")[0].slice(0, 120);
+  form.hidden = false;
+  $("#checkpointTask").focus();
+}
+
+async function saveCheckpointFromForm(e){
+  e.preventDefault();
+  const task = $("#checkpointTask").value.trim();
+  if (!task) return;
+  const userTurns = (STATE.chat.messages || []).filter(m => m.role === "user");
+  const files = [...new Set(Object.values(STATE.evidence || {})
+    .map(ev => ev && ev.source).filter(Boolean))];
+  const body = {
+    task,
+    next_steps: $("#checkpointNext").value.trim(),
+    status: userTurns.length
+      ? `From an Ask conversation (${userTurns.length} question${userTurns.length === 1 ? "" : "s"}). ` +
+        `Last question: ${userTurns[userTurns.length - 1].content.slice(0, 300)}`
+      : "",
+    files,
+    project: STATE.project,
+  };
+  try {
+    const r = await fetch("/api/checkpoints", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+  } catch(err){
+    alert(`Could not save checkpoint: ${err.message}`);
+    return;
+  }
+  $("#checkpointTask").value = ""; $("#checkpointNext").value = "";
+  $("#checkpointForm").hidden = true;
+  await loadCheckpoints();
+  const card = $("#resumeCard");
+  card.hidden = true; card.classList.remove("pinned");
+  STATE.resumeDismissed = STATE.checkpoints[0] && STATE.checkpoints[0].id;
+}
+
+$("#btnSaveCheckpoint").onclick = openCheckpointForm;
+$("#btnCancelCheckpoint").onclick = () => { $("#checkpointForm").hidden = true; };
+$("#checkpointForm").addEventListener("submit", saveCheckpointFromForm);
+// A checkpoint saved in Claude Desktop or Claude Code while this tab sat in
+// the background should be there when you come back to it.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") loadCheckpoints();
+});
 
 async function openChatFromSidebar(id, project){
   if (project && project !== STATE.project){
@@ -5120,6 +5332,7 @@ if (newChatSidebar) newChatSidebar.onclick = () => $("#btnNewChat").click();
   // list or the saved-conversations dropdown -- nothing is lost, it just
   // isn't dropped back in your lap without being asked for.
   await newAskConversation();
+  loadCheckpoints();
   checkUpdateStatus();
   setInterval(checkUpdateStatus, 15000);
   if (STATE.project){
