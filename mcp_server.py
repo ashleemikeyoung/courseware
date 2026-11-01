@@ -43,6 +43,9 @@ from rag import (
     resolve_indexed_source as _resolve_indexed_source,
     recent_activity,
     log_turn,
+    save_checkpoint,
+    resume_work,
+    finish_turn_logging,
 )
 
 # orchestrator.py, ask.py, and summarize.py are intentionally NOT imported
@@ -79,8 +82,13 @@ server = Server(
         "preserve the requested scope instead of repeatedly shortening unrelated "
         "sections. "
         "At the start of a conversation, or when the user asks what they "
-        "were last working on, call recent_activity to see recent questions, "
-        "newly indexed documents, revision cases, and worksets. "
+        "were last working on or wants to pick up where they left off, call "
+        "resume_work and continue from its checkpoint instead of asking the "
+        "user to re-explain. Call save_progress whenever a meaningful step is "
+        "finished, a decision is made, or the user says they are stopping, "
+        "with the task, its status, the next steps, and the files involved, "
+        "so the next session (in Claude Desktop, ElRoi, Claude Code, or the "
+        "terminal) can resume it. "
         "IMPORTANT: When you need to read a document's full content (especially .docx, .pdf, .txt files), "
         "ALWAYS call read_document with the exact source path. Do not attempt to use "
         "external command-line tools like docx2txt - the read_document tool handles all formats."
@@ -164,6 +172,45 @@ async def list_tools() -> list[Tool]:
                 "or to resolve which project they mean before searching."
             ),
             inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="resume_work",
+            description=(
+                "Where the user left off: the last saved checkpoint (task, "
+                "status, next steps, files), anything done after it, and recent "
+                "activity. Call at the start of a conversation and continue "
+                "from the checkpoint without making the user re-explain."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project": {
+                        "type": "string",
+                        "description": "Optional project or folder scope, e.g. 'GCU/DBA-831'",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="save_progress",
+            description=(
+                "Save a checkpoint of the current work so a later session can "
+                "resume it. Call after finishing a meaningful step, after a "
+                "decision, and whenever the user says they are stopping. Write "
+                "it so someone with no other context could pick the work up."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "What is being worked on, e.g. 'DBA-831 Week 3 discussion post on data cleaning'"},
+                    "status": {"type": "string", "description": "What is done so far and any decisions made"},
+                    "next_steps": {"type": "string", "description": "What to do next when resuming"},
+                    "files": {"type": "array", "items": {"type": "string"}, "description": "Indexed source paths or local files involved"},
+                    "project": {"type": "string", "description": "Project or folder scope, e.g. 'GCU/DBA-831/Week 3'"},
+                },
+                "required": ["task"],
+            },
         ),
         Tool(
             name="recent_activity",
@@ -835,15 +882,36 @@ def _result_sources(text: str) -> str:
     )
 
 
+def _first_source(text: str) -> str:
+    """The indexed path a result came from ('Source: ...' or '(from ...)')."""
+    for line in text.splitlines():
+        if line.startswith("Source: "):
+            return line[len("Source: "):].strip()
+        if line.startswith("--- Result") and "(from " in line:
+            return line.split("(from ", 1)[1].rsplit(")", 1)[0].strip()
+    return ""
+
+
 _LOGGED_TOOLS = {
     "ask_local": lambda a, t: (a.get("question", ""), t),
     "search_documents": lambda a, t: (
         f"[search_documents] {a.get('query', '')}", _result_sources(t)),
     "read_document": lambda a, t: (
-        f"[read_document] {a.get('source', '')}", t.split("--- Document text ---")[0].strip()),
+        f"[read_document] {_first_source(t) or a.get('source', '')}",
+        t.split("--- Document text ---")[0].strip()),
     "summarize_documents": lambda a, t: (
         f"[summarize_documents] {a.get('query', '')}", t[:4000]),
 }
+
+
+def _client_mode() -> str:
+    """'mcp:<client>' from the MCP handshake, e.g. 'mcp:claude-ai' for
+    Claude Desktop or 'mcp:claude-code', so history shows which app it was."""
+    try:
+        info = server.request_context.session.client_params.clientInfo
+        return f"mcp:{info.name}" if info and info.name else "mcp"
+    except Exception:
+        return "mcp"
 
 
 def _log_tool_turn(name: str, arguments: dict, result: CallToolResult) -> None:
@@ -851,8 +919,15 @@ def _log_tool_turn(name: str, arguments: dict, result: CallToolResult) -> None:
     if not describe:
         return
     try:
-        question, answer = describe(arguments, _result_text(result))
-        log_turn(question, answer, project=_project_scope(arguments.get("project")))
+        text = _result_text(result)
+        question, answer = describe(arguments, text)
+        # No scope given (e.g. read_document by bare filename): file the turn
+        # under the folder of the document it actually hit, so a scoped
+        # resume_work / recent_activity still finds it.
+        project = _project_scope(arguments.get("project"))
+        if not project and "/" in _first_source(text):
+            project = str(Path(_first_source(text)).parent)
+        log_turn(question, answer, project=project, mode=_client_mode())
     except Exception as e:
         print(f"  [Warning] could not log {name} turn: {e}", file=sys.stderr)
 
@@ -904,9 +979,74 @@ async def handle_recent_activity(arguments: dict) -> CallToolResult:
     return CallToolResult(content=[TextContent(type="text", text="\n".join(lines))])
 
 
+async def handle_save_progress(arguments: dict) -> CallToolResult:
+    task = (arguments.get("task") or "").strip()
+    if not task:
+        return CallToolResult(content=[TextContent(
+            type="text", text="Error: task cannot be empty")])
+    files = arguments.get("files") or []
+    if isinstance(files, str):
+        files = [files]
+    try:
+        checkpoint_id = save_checkpoint(
+            task,
+            project=_project_scope(arguments.get("project")),
+            status=arguments.get("status") or "",
+            next_steps=arguments.get("next_steps") or "",
+            files=[str(f) for f in files],
+            client=_client_mode(),
+        )
+    except Exception as e:
+        return CallToolResult(content=[TextContent(
+            type="text", text=f"Could not save checkpoint: {e}")])
+    return CallToolResult(content=[TextContent(
+        type="text", text=f"Checkpoint {checkpoint_id} saved: {task}")])
+
+
+async def handle_resume_work(arguments: dict) -> CallToolResult:
+    project = _project_scope(arguments.get("project"))
+    work = resume_work(project)
+    lines = []
+    if work["checkpoints"]:
+        cp = work["checkpoints"][0]
+        kind = "automatic, session closed without saving" if cp["automatic"] else cp["client"] or "saved"
+        lines += [
+            f"Last checkpoint ({cp['created_at']} UTC, {kind}):",
+            f"  Task:       {cp['task']}",
+        ]
+        if cp["project"]:
+            lines.append(f"  Project:    {cp['project']}")
+        if cp["status"]:
+            lines.append("  Status:\n    " + cp["status"].replace("\n", "\n    "))
+        if cp["next_steps"]:
+            lines.append("  Next steps:\n    " + cp["next_steps"].replace("\n", "\n    "))
+        if cp["files"]:
+            lines.append("  Files:")
+            lines += [f"    {f}" for f in cp["files"]]
+        if work["since"]:
+            lines.append("\nDone after that checkpoint:")
+            lines += [f"  {t['asked_at']}  [{t.get('mode') or '?'}] {t['question'][:160]}"
+                      for t in work["since"]]
+        if len(work["checkpoints"]) > 1:
+            lines.append("\nEarlier checkpoints:")
+            lines += [f"  {c['created_at']}  {c['task']}" for c in work["checkpoints"][1:]]
+    else:
+        lines.append("No saved checkpoint yet. Recent activity is below; call "
+                     "save_progress once the current task is clear.")
+    activity = await handle_recent_activity({"project": project, "n": 8})
+    lines += ["", activity.content[0].text]
+    return CallToolResult(content=[TextContent(type="text", text="\n".join(lines))])
+
+
 async def _dispatch_tool(name: str, arguments: dict) -> CallToolResult:
 
-    if name == "recent_activity":
+    if name == "resume_work":
+        return await handle_resume_work(arguments)
+
+    elif name == "save_progress":
+        return await handle_save_progress(arguments)
+
+    elif name == "recent_activity":
         return await handle_recent_activity(arguments)
 
     elif name == "search_documents":
@@ -1811,18 +1951,35 @@ async def handle_synthesize_workset(arguments: dict) -> CallToolResult:
 # ---------------------------------------------------------------------------
 
 async def main():
+    # MCP clients disconnect by closing stdin and then sending SIGTERM. Turn
+    # SIGTERM into a cancel of this task, and ignore any later one, so the
+    # finally block below always gets to flush logged turns and save an
+    # automatic checkpoint (rag.finish_turn_logging) before the process ends.
+    import signal
+    loop = asyncio.get_running_loop()
+    main_task = asyncio.current_task()
+
+    def on_sigterm():
+        loop.add_signal_handler(signal.SIGTERM, lambda: None)
+        main_task.cancel()
+    loop.add_signal_handler(signal.SIGTERM, on_sigterm)
     print("RAG MCP Server starting...", file=sys.stderr)
     print(f"Documents folder: {Path(DOCUMENTS_FOLDER).resolve()}", file=sys.stderr)
     print(f"Projects:         {', '.join(projects.discover()) or 'none'}", file=sys.stderr)
     print(f"Chunks in index:  {collection.count()}", file=sys.stderr)
     print("Waiting for an MCP client to connect...\n", file=sys.stderr)
 
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options(),
-        )
+    try:
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                server.create_initialization_options(),
+            )
+    except asyncio.CancelledError:
+        pass
+    finally:
+        await asyncio.to_thread(finish_turn_logging)
 
 
 if __name__ == "__main__":

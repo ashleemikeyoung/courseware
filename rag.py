@@ -2586,6 +2586,9 @@ def search_with_citations(question: str, n_results: int = 5,
 # RAG_INCOGNITO=1 to turn logging off entirely.
 _turn_log_sessions = {}
 _turn_log_executor = None
+# What this process has logged since its last saved checkpoint, so exiting
+# without one (closing Claude Desktop mid-task) still leaves a resume point.
+_unsaved_turns = []
 
 
 def _write_turn(key, question, answer, model, sources):
@@ -2613,7 +2616,8 @@ def log_turn(question: str, answer: str = None, project: str = None,
     """Record one question/answer in memory-db's turns table, in a session
     keyed by (top-level project, mode). Never raises and never blocks."""
     global _turn_log_executor
-    if not MEMORY_AVAILABLE or os.environ.get("RAG_INCOGNITO") == "1":
+    if (not MEMORY_AVAILABLE or _turn_log_finished
+            or os.environ.get("RAG_INCOGNITO") == "1"):
         return
     if not (question or "").strip():
         return
@@ -2622,8 +2626,11 @@ def log_turn(question: str, answer: str = None, project: str = None,
         from concurrent.futures import ThreadPoolExecutor
         _turn_log_executor = ThreadPoolExecutor(max_workers=1,
                                                 thread_name_prefix="turn-log")
-        atexit.register(_close_turn_log_sessions)
-    root = scope_search_root(project) if normalize_scope(project) else None
+        atexit.register(finish_turn_logging)
+    scope = normalize_scope(project)
+    root = scope_search_root(scope) if scope else None
+    _unsaved_turns.append({"question": question.strip(), "scope": scope,
+                           "mode": mode})
 
     def run():
         try:
@@ -2632,6 +2639,75 @@ def log_turn(question: str, answer: str = None, project: str = None,
             print(f"  [Warning] could not log turn to memory-db: {e}",
                   file=sys.stderr)
     _turn_log_executor.submit(run)
+
+
+def save_checkpoint(task: str, project: str = None, status: str = "",
+                    next_steps: str = "", files: list = None,
+                    client: str = "", automatic: bool = False) -> int:
+    """Record where work stands so a later session can resume it."""
+    if not MEMORY_AVAILABLE:
+        raise RuntimeError("memory-db is unavailable; checkpoint not saved")
+    import memory_client
+    checkpoint_id = memory_client.save_work_checkpoint(
+        task, project=normalize_scope(project), status=status,
+        next_steps=next_steps, files=files, client_name=client,
+        automatic=automatic)
+    if not automatic:
+        _unsaved_turns.clear()
+    return checkpoint_id
+
+
+_turn_log_finished = False
+
+
+def finish_turn_logging():
+    """Flush pending turn writes; if this process did work but never saved a
+    checkpoint, save an automatic one from what it logged; close sessions.
+    Idempotent. mcp_server.py calls it when its client disconnects, and it
+    is also registered with atexit as a backstop."""
+    global _turn_log_finished
+    if _turn_log_finished:
+        return
+    _turn_log_finished = True
+    if _turn_log_executor is not None:
+        _turn_log_executor.shutdown(wait=True)
+    if _unsaved_turns and os.environ.get("RAG_INCOGNITO") != "1":
+        last = _unsaved_turns[-1]
+        scope = next((t["scope"] for t in reversed(_unsaved_turns) if t["scope"]), None)
+        files = [t["question"].split("] ", 1)[1] for t in _unsaved_turns
+                 if t["question"].startswith("[read_document] ")]
+        try:
+            save_checkpoint(
+                task=f"Session ended without a saved checkpoint ({last['mode']})",
+                project=scope,
+                status="Last activity:\n" + "\n".join(
+                    f"- {t['question'][:200]}" for t in _unsaved_turns[-8:]),
+                files=list(dict.fromkeys(files))[-10:],
+                client=last["mode"], automatic=True)
+        except Exception as e:
+            print(f"  [Warning] could not save exit checkpoint: {e}",
+                  file=sys.stderr)
+    _close_turn_log_sessions()
+
+
+def resume_work(project: str = None, n: int = 10) -> dict:
+    """The newest checkpoint (plus two before it) and recent_activity(), with
+    the turns logged after that checkpoint split out as "since"."""
+    out = recent_activity(project, n=n)
+    out["checkpoints"] = []
+    out["since"] = []
+    if not MEMORY_AVAILABLE:
+        return out
+    try:
+        import memory_client
+        out["checkpoints"] = memory_client.recent_work_checkpoints(
+            3, project=normalize_scope(project))
+    except Exception as e:
+        out["warnings"].append(f"checkpoints: {e}")
+    if out["checkpoints"]:
+        saved_at = out["checkpoints"][0]["created_at"]
+        out["since"] = [t for t in out["turns"] if t["asked_at"] > saved_at]
+    return out
 
 
 def recent_activity(project: str = None, n: int = 10) -> dict:

@@ -14,6 +14,8 @@ except ImportError:
 from rag import (
     search_with_citations,
     recent_activity,
+    resume_work,
+    save_checkpoint,
     scan_documents,
     get_indexed_sources,
     collection,
@@ -236,7 +238,7 @@ def _restore_recent_context():
     if _incognito:
         return
     try:
-        activity = recent_activity(_memory_project(), n=10)
+        activity = resume_work(_memory_project(), n=10)
     except Exception as e:
         print(f"  [Warning: could not load recent activity: {e}]", flush=True)
         return
@@ -251,11 +253,33 @@ def _restore_recent_context():
     for t in reversed(turns):  # recent_turns() is newest first
         _record_recent_turn(t["question"], t["answer"])
 
+    if activity["checkpoints"]:
+        cp = activity["checkpoints"][0]
+        print(f"\nLast checkpoint ({cp['created_at']}, {cp['client'] or 'saved'}): {cp['task']}")
+        if cp["next_steps"]:
+            print("  Next: " + cp["next_steps"].replace("\n", "\n        "))
     if turns:
         print(f"\nLast question ({turns[0]['asked_at']}): {turns[0]['question'][:120]}")
     if activity["documents"]:
         d = activity["documents"][0]
         print(f"Last indexed   ({d['indexed_at']}): {d['source']}")
+
+
+def cmd_save(arg: str = ""):
+    """/save <task> | <next steps> -- the terminal's save_progress."""
+    task, _, next_steps = (arg or "").partition("|")
+    if not task.strip():
+        print("\nUsage: /save <what you're working on> | <next steps>\n")
+        return
+    if _incognito:
+        print("\nIncognito is on; nothing saved.\n")
+        return
+    try:
+        checkpoint_id = save_checkpoint(task.strip(), project=_memory_project(),
+                                        next_steps=next_steps.strip(), client="terminal")
+        print(f"\nCheckpoint {checkpoint_id} saved.\n")
+    except Exception as e:
+        print(f"\nCould not save checkpoint: {e}\n")
 
 
 def _recent_context_text() -> str:
@@ -1219,6 +1243,7 @@ Commands:
   /clearbenchmark  — clear benchmark history
   /incognito       — toggle session logging off/on for what follows
   /flag            — mark the last answer as wrong, for later review
+  /save <task> | <next steps> — save a checkpoint to resume from in any app
   /review          — list turns/drafts auto-flagged by defect checks
   /redact          — toggle PII redaction on answers (and writer.py output)
   /help            — show this message
@@ -1293,6 +1318,10 @@ if __name__ == "__main__":
 
         if q.lower() in COMMANDS:
             COMMANDS[q.lower()]()
+            continue
+
+        if q.lower() == "/save" or q.lower().startswith("/save "):
+            cmd_save(q[len("/save"):].strip())
             continue
 
         if q.lower() == "/project" or q.lower().startswith("/project "):

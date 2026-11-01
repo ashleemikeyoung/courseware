@@ -124,6 +124,72 @@ def recent_turns(n: int = 10, project: str = None):
         client.close()
 
 
+# ---------------------------------------------------------------------------
+# Work checkpoints -- "where I left off", so a closed Claude Desktop, ElRoi,
+# Claude Code, or terminal session can be resumed. Append-only: the newest
+# row is the resume point, older rows are the trail. Created lazily (like
+# document_revision_cases) so no init_schema.py run is needed.
+# ---------------------------------------------------------------------------
+
+def _ensure_work_checkpoint_schema(client):
+    client.execute("""
+        CREATE TABLE IF NOT EXISTS work_checkpoints (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            project     TEXT NOT NULL DEFAULT '',
+            task        TEXT NOT NULL,
+            status      TEXT NOT NULL DEFAULT '',
+            next_steps  TEXT NOT NULL DEFAULT '',
+            files       TEXT NOT NULL DEFAULT '[]',
+            client      TEXT NOT NULL DEFAULT '',
+            automatic   INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    client.execute(
+        "CREATE INDEX IF NOT EXISTS idx_work_checkpoints_project_created "
+        "ON work_checkpoints(project, created_at)")
+
+
+def save_work_checkpoint(task: str, project: str = None, status: str = "",
+                         next_steps: str = "", files: list = None,
+                         client_name: str = "", automatic: bool = False) -> int:
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        _ensure_work_checkpoint_schema(client)
+        result = client.execute(
+            "INSERT INTO work_checkpoints "
+            "(project, task, status, next_steps, files, client, automatic) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [project or "", task, status or "", next_steps or "",
+             json.dumps(list(files or [])), client_name or "", int(automatic)],
+        )
+        return result.last_insert_rowid
+    finally:
+        client.close()
+
+
+def recent_work_checkpoints(n: int = 5, project: str = None) -> list:
+    """Newest first. `project` matches that folder and anything under it."""
+    client = libsql_client.create_client_sync(LIBSQL_URL, auth_token=LIBSQL_AUTH_TOKEN)
+    try:
+        _ensure_work_checkpoint_schema(client)
+        sql = ("SELECT id, project, task, status, next_steps, files, client, "
+               "automatic, created_at FROM work_checkpoints")
+        params = []
+        if project:
+            sql += " WHERE project = ? OR project LIKE ?"
+            params += [project, f"{project}/%"]
+        result = client.execute(sql + " ORDER BY created_at DESC, id DESC LIMIT ?",
+                                params + [int(n)])
+        rows = [dict(zip(result.columns, row)) for row in result.rows]
+        for row in rows:
+            row["files"] = _decode_json_array(row.get("files"))
+            row["automatic"] = bool(row.get("automatic"))
+        return rows
+    finally:
+        client.close()
+
+
 def recent_documents(n: int = 10, project_prefix: str = None):
     """Most recently indexed documents. documents.indexed_at is set when a
     file is first indexed (or re-synopsized); updated_at is bumped on every
