@@ -136,6 +136,7 @@ DEFAULT_SUPPORTED_EXTENSIONS = set(filter(None, [
     ".docx" if DOCX_AVAILABLE else None,
     ".xlsx" if XLSX_AVAILABLE else None,
     ".pptx" if PPTX_AVAILABLE else None,
+    ".odt", ".ods", ".odp", ".odg", ".fodt", ".fods", ".fodp", ".fodg",
     ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".bmp",
     ".cr2", ".cr3", ".nef", ".arw", ".orf", ".raf", ".rw2",
     ".dng" if RAW_AVAILABLE else None,
@@ -522,6 +523,86 @@ def extract_raw_metadata(file: Path) -> str:
 # File loading
 # ---------------------------------------------------------------------------
 
+# LibreOffice/OpenDocument formats: zipped (.odt) and flat-XML (.fodt). Both
+# are plain XML underneath, so the stdlib reads them without odfpy.
+ODF_EXTENSIONS = {".odt", ".ods", ".odp", ".odg", ".fodt", ".fods", ".fodp", ".fodg"}
+_ODF_NS = {
+    "office": "urn:oasis:names:tc:opendocument:xmlns:office:1.0",
+    "text": "urn:oasis:names:tc:opendocument:xmlns:text:1.0",
+    "table": "urn:oasis:names:tc:opendocument:xmlns:table:1.0",
+    "draw": "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0",
+    "presentation": "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0",
+}
+
+
+def _odf_tag(prefix: str, name: str) -> str:
+    return f"{{{_ODF_NS[prefix]}}}{name}"
+
+
+def _odf_inline_text(el) -> str:
+    """Text of a paragraph, honouring <text:s/>, tabs and line breaks."""
+    parts = [el.text or ""]
+    for child in el:
+        if child.tag == _odf_tag("text", "s"):
+            parts.append(" " * int(child.get(_odf_tag("text", "c"), "1")))
+        elif child.tag == _odf_tag("text", "tab"):
+            parts.append("\t")
+        elif child.tag == _odf_tag("text", "line-break"):
+            parts.append("\n")
+        elif child.tag != _odf_tag("office", "annotation"):
+            parts.append(_odf_inline_text(child))
+        parts.append(child.tail or "")
+    return "".join(parts)
+
+
+def _odf_blocks(el, parts: list):
+    """Paragraphs, headings and table rows, in document order."""
+    for child in el:
+        if child.tag in (_odf_tag("text", "p"), _odf_tag("text", "h")):
+            line = _odf_inline_text(child).strip()
+            if line:
+                parts.append(line)
+        elif child.tag == _odf_tag("table", "table-row"):
+            cells = []
+            for cell in child:
+                cell_lines = []
+                _odf_blocks(cell, cell_lines)
+                text = " ".join(cell_lines).strip()
+                repeat = int(cell.get(_odf_tag("table", "number-columns-repeated"), "1"))
+                if text:
+                    cells.extend([text] * min(repeat, 50))
+            if cells:
+                parts.append("\t".join(cells))
+        elif child.tag == _odf_tag("draw", "page"):
+            parts.append(f"Slide {sum(1 for p in parts if p.startswith('Slide ')) + 1}:")
+            _odf_blocks(child, parts)
+        elif child.tag == _odf_tag("presentation", "notes"):
+            notes = []
+            _odf_blocks(child, notes)
+            if notes:
+                parts.append("Notes: " + " ".join(notes))
+        elif child.tag == _odf_tag("table", "table") and child.get(_odf_tag("table", "name")) \
+                and el.tag == _odf_tag("office", "spreadsheet"):
+            parts.append(f"Sheet: {child.get(_odf_tag('table', 'name'))}")
+            _odf_blocks(child, parts)
+        elif child.tag != _odf_tag("office", "annotation"):
+            _odf_blocks(child, parts)
+
+
+def load_odf(file: Path) -> str:
+    import zipfile
+    import xml.etree.ElementTree as ET
+    if file.suffix.lower().startswith(".fod"):
+        root = ET.parse(str(file)).getroot()
+    else:
+        with zipfile.ZipFile(str(file)) as zf:
+            root = ET.fromstring(zf.read("content.xml"))
+    body = root.find("office:body", _ODF_NS)
+    parts = []
+    _odf_blocks(body if body is not None else root, parts)
+    return "\n".join(parts)
+
+
 def load_file(file: Path) -> str:
     suffix = file.suffix.lower()
 
@@ -582,6 +663,13 @@ def load_file(file: Path) -> str:
             return "\n".join(parts)
         except Exception as e:
             print(f"  Warning: could not read Word file {file.name}: {e}")
+            return ""
+
+    elif suffix in ODF_EXTENSIONS:
+        try:
+            return load_odf(file)
+        except Exception as e:
+            print(f"  Warning: could not read OpenDocument file {file.name}: {e}")
             return ""
 
     elif suffix in [".xlsx", ".xls"]:
@@ -1579,12 +1667,12 @@ def _document_genres(source: str, text: str) -> list:
         return genres
 
     presentation_terms = _criteria_group_terms("genre_marker", "presentation")
-    if suffix == ".pptx" or any(term in lower for term in presentation_terms):
+    if suffix in {".pptx", ".odp", ".fodp"} or any(term in lower for term in presentation_terms):
         add("presentation")
         return genres
 
     spreadsheet_terms = _criteria_group_terms("genre_marker", "spreadsheet")
-    if suffix in {".xlsx", ".xls"} or any(lower.startswith(term) for term in spreadsheet_terms):
+    if suffix in {".xlsx", ".xls", ".ods", ".fods"} or any(lower.startswith(term) for term in spreadsheet_terms):
         add("spreadsheet")
         return genres
 

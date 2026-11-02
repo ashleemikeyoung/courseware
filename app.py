@@ -890,7 +890,7 @@ def api_tuning():
                 "rag_topic_min_domain_hits", "5"),
             "rag_supported_extensions": get_setting(
                 "rag_supported_extensions",
-                ".arw,.bmp,.cr2,.cr3,.dng,.docx,.gif,.jpeg,.jpg,.md,.nef,.orf,.pdf,.png,.pptx,.raf,.rw2,.tiff,.txt,.xlsx",
+                ",".join(sorted(projects.DEFAULT_SUPPORTED_EXTENSIONS)),
             ),
             "rag_ignored_dirs": get_setting(
                 "rag_ignored_dirs",
