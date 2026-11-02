@@ -2721,7 +2721,7 @@ function renderDocument(title, thesis, bodies, report){
 function buildModelPicker(){
   const p = $("#modelpick"); p.innerHTML = "";
   STATE.models.forEach(m => {
-    const cloud = m.includes("cloud");
+    const cloud = m.includes("cloud") || m.startsWith("gemini/");
     const l = el("label", cloud ? "cloud" : "");
     const cb = el("input"); cb.type = "checkbox"; cb.value = m; cb.disabled = cloud;
     l.append(cb, el("span", "", m + (cloud ? "  leaves your machine" : "")));
@@ -3476,7 +3476,11 @@ function buildAskModel(){
   const keep = sel.value;
   sel.innerHTML = "";
   STATE.models.filter(m => !m.includes("cloud")).forEach(m => {
-    const o = el("option", "", m); o.value = m; sel.appendChild(o);
+    // Hosted Gemini models send the question and retrieved passages to
+    // Google (free tier: may be used to improve its products), so say so.
+    const label = m.startsWith("gemini/")
+      ? `${m.slice(7)} (Google, leaves your machine)` : m;
+    const o = el("option", "", label); o.value = m; sel.appendChild(o);
   });
   // Default to whatever Compare has already told you drafts best, if it's
   // in the list; otherwise whatever the drafter role is set to.

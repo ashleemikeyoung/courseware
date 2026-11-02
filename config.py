@@ -60,6 +60,24 @@ ASK_MODEL = os.getenv("OLLAMA_ASK_MODEL", DRAFT_MODEL)
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
 GOOGLE_SEARCH_MODEL = os.getenv("GOOGLE_SEARCH_MODEL", "gemini-2.5-flash")
 
+# --- Optional hosted answer models (Gemini) ------------------------------
+# With a key set, these appear in the Ask tab's "Response model" list as
+# "gemini/<name>", next to the local Ollama models. Only an answer you run
+# on one of them leaves this machine: the question, recent conversation,
+# and the retrieved passages go to Google. On the free tier Google may use
+# that content to improve its products and have people review it, so keep
+# a local model for drafts and feedback you don't want shared. The
+# "-latest" aliases follow Google's current Flash models; Lite is listed
+# first because on the free tier it starts answering in about a second,
+# where full Flash has taken one to three minutes. Set GEMINI_CHAT_MODELS
+# (comma-separated) to choose others.
+HOSTED_MODEL_PREFIX = "gemini/"
+GEMINI_CHAT_MODELS = [
+    m.strip() for m in os.getenv(
+        "GEMINI_CHAT_MODELS", "gemini-flash-lite-latest,gemini-flash-latest"
+    ).split(",") if m.strip()
+] if GOOGLE_API_KEY else []
+
 # --- orchestrator.py: terminal specialist routing -----------------------
 CODER_MODEL = os.getenv("OLLAMA_CODER_MODEL", "qwen2.5-coder:32b")
 GENERAL_MODEL = os.getenv("OLLAMA_GENERAL_MODEL", "qwen3:32b")

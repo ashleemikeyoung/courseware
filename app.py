@@ -591,7 +591,9 @@ def status():
         # actually happens on the next question -- one source of truth
         # instead of a checkbox label that just describes intent.
         "external_search_enabled": ask._external_search_enabled(),
-        "models": sorted(have),
+        # Hosted (Gemini) models follow the local ones; the UI labels them as
+        # leaving the machine. Empty when no Google API key is configured.
+        "models": sorted(have) + writer.hosted_models(),
         "roles": [{"role": r, "model": m, "var": v,
                    "ok": (m if ":" in m else f"{m}:latest") in normalized}
                   for r, m, v in roles],

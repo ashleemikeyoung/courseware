@@ -66,7 +66,10 @@ import pii
 # OLLAMA_URL and every *_MODEL name come from config.py now -- see that
 # module's docstring. This used to be its own load_dotenv() call plus
 # os.getenv() lines duplicated across rag.py/writer.py/orchestrator.py.
-from config import OLLAMA_URL, OUTLINE_MODEL, DRAFT_MODEL, NOTES_MODEL
+from config import (
+    OLLAMA_URL, OUTLINE_MODEL, DRAFT_MODEL, NOTES_MODEL,
+    GOOGLE_API_KEY, GEMINI_CHAT_MODELS, HOSTED_MODEL_PREFIX,
+)
 
 # The active project. Everything path-shaped and every retrieval derives from
 # this, so switching projects switches the whole working context at once.
@@ -97,6 +100,81 @@ def plan_path(name: str = None) -> Path:
 # Ollama, streaming, with explicit context and output budgets
 # ---------------------------------------------------------------------------
 
+def hosted_models() -> list:
+    """Hosted models offered alongside Ollama's, as 'gemini/<name>' ids.
+    Empty unless a Google API key is configured."""
+    return [f"{HOSTED_MODEL_PREFIX}{m}" for m in GEMINI_CHAT_MODELS]
+
+
+def is_hosted_model(model: str) -> bool:
+    return bool(model) and model.startswith(HOSTED_MODEL_PREFIX)
+
+
+def _ask_gemini_chat(messages: list, model: str, num_predict: int,
+                     temperature: float, on_token=None, echo: bool = True) -> tuple:
+    """
+    Streaming call to Gemini's OpenAI-compatible endpoint, returning the
+    same (text, metrics) shape as the Ollama path so callers can't tell the
+    difference. Only reached for a 'gemini/...' model the user picked.
+    """
+    start = time.time()
+    name = model[len(HOSTED_MODEL_PREFIX):]
+    metrics = {"model": model, "hosted": "google"}
+    try:
+        r = requests.post(
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            headers={"Authorization": f"Bearer {GOOGLE_API_KEY}"},
+            json={"model": name, "messages": messages, "stream": True,
+                  "max_tokens": num_predict, "temperature": temperature},
+            stream=True, timeout=(30, 600),
+        )
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError("Cannot reach Google's Gemini API. Check the "
+                           "internet connection, or pick a local model.") from None
+
+    parts = []
+    with r:
+        if r.status_code == 429:
+            raise RuntimeError(
+                f"Gemini's free-tier limit for {name} is used up for now. "
+                "Wait a minute (or until tomorrow for the daily limit), or "
+                "pick a local model.")
+        if r.status_code >= 400:
+            detail = r.text[:300].replace(GOOGLE_API_KEY, "***") if GOOGLE_API_KEY else r.text[:300]
+            raise RuntimeError(f"Gemini returned {r.status_code} for {name}: {detail}")
+        for line in r.iter_lines(decode_unicode=True):
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[len("data:"):].strip()
+            if data == "[DONE]":
+                break
+            chunk = json.loads(data)
+            for choice in chunk.get("choices") or []:
+                token = (choice.get("delta") or {}).get("content") or ""
+                if token:
+                    parts.append(token)
+                    if on_token:
+                        on_token(token)
+                    if echo:
+                        print(token, end="", flush=True)
+            usage = chunk.get("usage") or {}
+            if usage.get("completion_tokens"):
+                metrics["response_tokens"] = usage["completion_tokens"]
+            if usage.get("prompt_tokens"):
+                metrics["prompt_tokens"] = usage["prompt_tokens"]
+
+    metrics["elapsed_s"] = round(time.time() - start, 2)
+    if echo:
+        print()
+    if not parts:
+        # Gemini's thinking models count their reasoning against max_tokens,
+        # so a small num_predict can be spent before any answer text.
+        raise RuntimeError(
+            f"Gemini ({name}) returned no answer text within {num_predict} "
+            "tokens. Try again, raise the length limit, or pick another model.")
+    return "".join(parts), metrics
+
+
 def ask_ollama_chat(
     messages: list,
     model: str,
@@ -126,6 +204,11 @@ def ask_ollama_chat(
       A single blocking POST invites timeouts and gives zero progress feedback
       across a run that legitimately takes 20+ minutes.
     """
+    if is_hosted_model(model):
+        return _ask_gemini_chat(messages, model, num_predict=num_predict,
+                                temperature=temperature, on_token=on_token,
+                                echo=echo)
+
     start = time.time()
     parts = []
     metrics = {"model": model}
