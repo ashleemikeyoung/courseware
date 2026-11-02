@@ -49,6 +49,7 @@ DEFAULT_IGNORED = {
 DEFAULT_SUPPORTED_EXTENSIONS = {
     ".txt", ".md", ".pdf", ".docx", ".xlsx", ".pptx",
     ".odt", ".ods", ".odp", ".odg", ".fodt", ".fods", ".fodp", ".fodg",
+    ".doc", ".xls", ".ppt", ".rtf",
     ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".bmp",
     ".cr2", ".cr3", ".nef", ".arw", ".orf", ".raf", ".rw2", ".dng",
 }

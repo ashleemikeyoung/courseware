@@ -137,6 +137,7 @@ DEFAULT_SUPPORTED_EXTENSIONS = set(filter(None, [
     ".xlsx" if XLSX_AVAILABLE else None,
     ".pptx" if PPTX_AVAILABLE else None,
     ".odt", ".ods", ".odp", ".odg", ".fodt", ".fods", ".fodp", ".fodg",
+    ".doc", ".xls", ".ppt", ".rtf",
     ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".bmp",
     ".cr2", ".cr3", ".nef", ".arw", ".orf", ".raf", ".rw2",
     ".dng" if RAW_AVAILABLE else None,
@@ -603,8 +604,78 @@ def load_odf(file: Path) -> str:
     return "\n".join(parts)
 
 
+# Pre-2007 binary Office formats. LibreOffice converts them to the modern
+# format, which the readers below already handle; macOS's built-in textutil
+# reads .doc and .rtf directly and is much faster, so it goes first.
+LEGACY_OFFICE_TARGETS = {".doc": "docx", ".xls": "xlsx", ".ppt": "pptx", ".rtf": "docx"}
+TEXTUTIL_EXTENSIONS = {".doc", ".rtf"}
+
+
+def _soffice_path():
+    import shutil
+    candidates = [
+        os.getenv("SOFFICE_PATH"),
+        shutil.which("soffice"),
+        shutil.which("libreoffice"),
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    ]
+    return next((c for c in candidates if c and Path(c).is_file()), None)
+
+
+def _textutil_text(file: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["textutil", "-convert", "txt", "-stdout", str(file)],
+            capture_output=True, text=True, timeout=60,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return ""
+    return result.stdout if result.returncode == 0 else ""
+
+
+def load_legacy_office(file: Path) -> str:
+    suffix = file.suffix.lower()
+    if suffix in TEXTUTIL_EXTENSIONS:
+        text = _textutil_text(file)
+        if text.strip():
+            return text
+
+    soffice = _soffice_path()
+    if not soffice:
+        print(f"  Skipping {file.name}: LibreOffice (soffice) not found; set SOFFICE_PATH")
+        return ""
+    import tempfile
+    target = LEGACY_OFFICE_TARGETS[suffix]
+    # A per-process profile lets headless conversion run while LibreOffice
+    # is open on the desktop, and keeps the MCP server and web UI apart.
+    profile = Path(tempfile.gettempdir()) / f"rag-soffice-profile-{os.getpid()}"
+    with tempfile.TemporaryDirectory(prefix="rag-convert-") as out_dir:
+        try:
+            subprocess.run(
+                [soffice, f"-env:UserInstallation={profile.as_uri()}",
+                 "--headless", "--norestore", "--convert-to", target,
+                 "--outdir", out_dir, str(file)],
+                capture_output=True, text=True, timeout=180,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"  Warning: LibreOffice timed out converting {file.name}")
+            return ""
+        converted = Path(out_dir) / f"{file.stem}.{target}"
+        if not converted.is_file():
+            print(f"  Warning: LibreOffice could not convert {file.name}")
+            return ""
+        return load_file(converted)
+
+
 def load_file(file: Path) -> str:
     suffix = file.suffix.lower()
+
+    if suffix in LEGACY_OFFICE_TARGETS:
+        try:
+            return load_legacy_office(file)
+        except Exception as e:
+            print(f"  Warning: could not read {file.name}: {e}")
+            return ""
 
     if suffix in [".txt", ".md"]:
         return file.read_text(encoding="utf-8")
@@ -643,7 +714,7 @@ def load_file(file: Path) -> str:
             print(f"  Warning: could not read PDF {file.name}: {e}")
             return ""
 
-    elif suffix in [".docx", ".doc"]:
+    elif suffix == ".docx":
         if not DOCX_AVAILABLE:
             print(f"  Skipping {file.name}: python-docx not installed")
             return ""
@@ -672,7 +743,7 @@ def load_file(file: Path) -> str:
             print(f"  Warning: could not read OpenDocument file {file.name}: {e}")
             return ""
 
-    elif suffix in [".xlsx", ".xls"]:
+    elif suffix == ".xlsx":
         if not XLSX_AVAILABLE:
             print(f"  Skipping {file.name}: openpyxl not installed")
             return ""
@@ -692,7 +763,7 @@ def load_file(file: Path) -> str:
             print(f"  Warning: could not read Excel file {file.name}: {e}")
             return ""
 
-    elif suffix in [".pptx", ".ppt"]:
+    elif suffix == ".pptx":
         if not PPTX_AVAILABLE:
             print(f"  Skipping {file.name}: python-pptx not installed")
             return ""
@@ -1667,7 +1738,7 @@ def _document_genres(source: str, text: str) -> list:
         return genres
 
     presentation_terms = _criteria_group_terms("genre_marker", "presentation")
-    if suffix in {".pptx", ".odp", ".fodp"} or any(term in lower for term in presentation_terms):
+    if suffix in {".pptx", ".ppt", ".odp", ".fodp"} or any(term in lower for term in presentation_terms):
         add("presentation")
         return genres
 
