@@ -604,6 +604,91 @@ def load_odf(file: Path) -> str:
     return "\n".join(parts)
 
 
+# Word's XML read directly rather than through python-docx, which only sees
+# top-level paragraphs and tables: this keeps tables in document order and
+# picks up text boxes, content controls and footnotes/endnotes.
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
+
+
+def _docx_paragraph(p, boxes: list) -> str:
+    """A paragraph's text; text-box contents go to `boxes` as separate lines."""
+    parts = []
+
+    def walk(el):
+        for child in el:
+            tag = child.tag
+            if tag == _MC_FALLBACK:
+                continue  # legacy VML copy of a text box already read
+            if tag == f"{_W}t":
+                parts.append(child.text or "")
+            elif tag == f"{_W}tab":
+                parts.append("\t")
+            elif tag in (f"{_W}br", f"{_W}cr"):
+                parts.append("\n")
+            elif tag == f"{_W}noBreakHyphen":
+                parts.append("-")
+            elif tag == f"{_W}txbxContent":
+                _docx_blocks(child, boxes)
+            else:
+                walk(child)
+
+    walk(p)
+    return "".join(parts)
+
+
+def _docx_blocks(el, parts: list):
+    """Paragraphs and table rows, in document order."""
+    for child in el:
+        if child.tag == f"{_W}p":
+            boxes = []
+            line = _docx_paragraph(child, boxes).strip()
+            if line:
+                parts.append(line)
+            parts.extend(boxes)
+        elif child.tag == f"{_W}tbl":
+            for row in child.findall(f"{_W}tr"):
+                cells = []
+                for cell in row.findall(f"{_W}tc"):
+                    cell_lines = []
+                    _docx_blocks(cell, cell_lines)
+                    text = " ".join(cell_lines).strip()
+                    if text:
+                        cells.append(text)
+                if cells:
+                    parts.append("\t".join(cells))
+        elif child.tag in (f"{_W}sdt", f"{_W}sdtContent", f"{_W}customXml",
+                           f"{_W}smartTag", f"{_W}ins"):
+            _docx_blocks(child, parts)
+
+
+def load_docx(file: Path) -> str:
+    import zipfile
+    import xml.etree.ElementTree as ET
+    with zipfile.ZipFile(str(file)) as zf:
+        names = set(zf.namelist())
+        body = ET.fromstring(zf.read("word/document.xml")).find(f"{_W}body")
+        parts = []
+        _docx_blocks(body, parts)
+        for part, label, tag in (("word/footnotes.xml", "Footnotes:", "footnote"),
+                                 ("word/endnotes.xml", "Endnotes:", "endnote")):
+            if part not in names:
+                continue
+            notes = []
+            for note in ET.fromstring(zf.read(part)).findall(f"{_W}{tag}"):
+                if note.get(f"{_W}type") in ("separator", "continuationSeparator",
+                                             "continuationNotice"):
+                    continue
+                note_lines = []
+                _docx_blocks(note, note_lines)
+                if note_lines:
+                    notes.append(" ".join(note_lines))
+            if notes:
+                parts.append(label)
+                parts.extend(notes)
+    return "\n".join(parts)
+
+
 # Pre-2007 binary Office formats. LibreOffice converts them to the modern
 # format, which the readers below already handle; macOS's built-in textutil
 # reads .doc and .rtf directly and is much faster, so it goes first.
@@ -715,23 +800,8 @@ def load_file(file: Path) -> str:
             return ""
 
     elif suffix == ".docx":
-        if not DOCX_AVAILABLE:
-            print(f"  Skipping {file.name}: python-docx not installed")
-            return ""
         try:
-            doc = DocxDocument(str(file))
-            parts = []
-            for para in doc.paragraphs:
-                if para.text.strip():
-                    parts.append(para.text)
-            for table in doc.tables:
-                for row in table.rows:
-                    row_text = "\t".join(
-                        cell.text for cell in row.cells if cell.text.strip()
-                    )
-                    if row_text:
-                        parts.append(row_text)
-            return "\n".join(parts)
+            return load_docx(file)
         except Exception as e:
             print(f"  Warning: could not read Word file {file.name}: {e}")
             return ""
@@ -839,6 +909,12 @@ def chunk_text(text, chunk_size=None, overlap=None):
 # ---------------------------------------------------------------------------
 # Index management
 # ---------------------------------------------------------------------------
+
+def is_office_lock_file(file: Path) -> bool:
+    """Word's "~$name.docx" and LibreOffice's ".~lock.name#" owner files,
+    which exist only while a document is open and hold no content."""
+    return file.name.startswith(("~$", ".~lock."))
+
 
 def file_hash(file: Path) -> str:
     return hashlib.md5(file.read_bytes()).hexdigest()
@@ -1137,6 +1213,7 @@ def scan_documents(folder: str = None, verbose: bool = True,
         for f in folder_path.rglob("*")
         if f.is_file()
         and f.suffix.lower() in active_extensions
+        and not is_office_lock_file(f)
         and not any(part in active_ignored_dirs or part.startswith(".")
                     for part in f.relative_to(folder_path).parts[:-1])
     }
