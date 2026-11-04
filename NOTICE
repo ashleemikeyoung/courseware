@@ -1,0 +1,19 @@
+Courseware (the document index, search and ElRoi tools)
+Copyright (C) 2026 Qavats Ranch, LLC
+
+The code in this repository is free software: you can redistribute it and/or
+modify it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the License,
+or (at your option) any later version (see LICENSE). It is distributed
+WITHOUT ANY WARRANTY. It is the work and property of Qavats Ranch, LLC.
+
+Not covered by the AGPL:
+
+- static/vendor/katex: KaTeX, including its fonts, Copyright (c) Khan Academy
+  and other contributors, under the MIT License.
+- data/ and the databases and archives in temp/: Bible texts and lexical
+  data (Hebrew and Greek texts, morphology, Strong's numbers and glosses)
+  from third-party sources, under their own terms.
+- projects/Photos: photographs, not licensed; all rights reserved.
+- The names and marks Qavats and ElRoi, including their logos (for example in
+  static/qavats-original), which belong to Qavats Ranch, LLC.
