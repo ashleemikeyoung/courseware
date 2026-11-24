@@ -35,7 +35,7 @@ BASE_DIR = Path(__file__).parent.resolve()
 
 _docs_env = os.getenv("DOCUMENTS_FOLDER")
 DOCUMENTS_ROOT = (Path(_docs_env).resolve() if _docs_env
-                  else BASE_DIR / "documents")
+                  else (BASE_DIR / "documents").resolve())
 PROJECTS_ROOT = Path(os.getenv("PROJECTS_FOLDER", BASE_DIR / "projects"))
 
 # Files sitting loose at the documents root, belonging to no folder.

@@ -7,7 +7,10 @@ app-restart.log
 .env-bak
 chroma_db/
 lancedb/
+# documents may be a folder or a link to the file server
+/documents
 documents/
+documents_bak/
 logs/
 Claude outputs/
 Offline Email/

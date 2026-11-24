@@ -1405,6 +1405,11 @@ async def handle_document_list(arguments: dict) -> CallToolResult:
 async def handle_rescan() -> CallToolResult:
     try:
         summary = scan_documents(verbose=False)
+        if summary.get("unavailable"):
+            return CallToolResult(content=[TextContent(type="text", text=(
+                f"Rescan skipped: the documents folder ({DOCUMENTS_FOLDER}) is "
+                "not available or looks empty. Check that the file server is "
+                "mounted, then rescan. The index was left unchanged."))])
         lines = [
             "Rescan complete:",
             f"  New files indexed:    {len(summary['new'])}",

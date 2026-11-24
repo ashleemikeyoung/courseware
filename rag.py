@@ -128,7 +128,7 @@ _docs_env = os.getenv("DOCUMENTS_FOLDER")
 if _docs_env:
     DOCUMENTS_FOLDER = str(Path(_docs_env).resolve())
 else:
-    DOCUMENTS_FOLDER = str(BASE_DIR / "documents")
+    DOCUMENTS_FOLDER = str((BASE_DIR / "documents").resolve())
 
 DEFAULT_SUPPORTED_EXTENSIONS = set(filter(None, [
     ".txt", ".md",
@@ -1287,6 +1287,19 @@ def scan_documents(folder: str = None, verbose: bool = True,
     folder_path = Path(folder).resolve() if folder else Path(DOCUMENTS_FOLDER)
     active_extensions = supported_extensions()
     active_ignored_dirs = ignored_dirs()
+    unavailable = {"new": [], "updated": [], "removed": [], "unchanged": [],
+                   "unavailable": True}
+
+    # The documents folder can live on a file server. If it is not mounted,
+    # an empty or missing folder must not read as "every file was deleted",
+    # which would wipe the index. Only a brand-new, empty index gets a fresh
+    # folder created for it.
+    if not folder_path.is_dir() and get_indexed_sources(source_type="file"):
+        print(f"  [Warning] Documents folder {folder_path} is not available "
+              "(is the file server mounted?). Skipping the scan; the index "
+              "is unchanged.")
+        return unavailable
+
     storage_root_id = None
     scan_run_id = None
     if MEMORY_AVAILABLE and ensure_storage_root is not None:
@@ -1318,6 +1331,11 @@ def scan_documents(folder: str = None, verbose: bool = True,
     }
 
     indexed = get_indexed_sources(source_type="file")
+    if not current_files and indexed:
+        print(f"  [Warning] No documents found under {folder_path}, but "
+              f"{len(indexed)} are indexed. The file server may be "
+              "disconnected. Skipping the scan; the index is unchanged.")
+        return unavailable
     summary = {"new": [], "updated": [], "removed": [], "unchanged": []}
     file_identities = {}
 
