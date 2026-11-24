@@ -763,6 +763,11 @@ def load_file(file: Path) -> str:
             return ""
 
     if suffix in [".txt", ".md"]:
+        nw_root = novelwriter_project_root(file)
+        if nw_root is not None:
+            if file.name == "ToC.txt":
+                return ""
+            return load_novelwriter_document(file, nw_root)
         return file.read_text(encoding="utf-8")
 
     elif suffix == ".pdf":
@@ -914,6 +919,99 @@ def is_office_lock_file(file: Path) -> bool:
     """Word's "~$name.docx" and LibreOffice's ".~lock.name#" owner files,
     which exist only while a document is open and hold no content."""
     return file.name.startswith(("~$", ".~lock."))
+
+
+# --- novelWriter projects ---------------------------------------------------
+# A novelWriter (2.x+) project is a folder holding nwProject.nwx (the tree of
+# chapters, scenes and notes) and content/<handle>.md, one file per document,
+# each opening with a "+++" TOML block of novelWriter's own metadata. The
+# content files are plain novelWriter markup, so they index as Markdown once
+# that block is swapped for a readable "Project > Chapter > Scene" line.
+# Documents in the project's Trash are left out, and so is the generated
+# ToC.txt. Older projects use .nwd, which novelWriter converts to .md on open.
+
+NOVELWRITER_PROJECT_FILE = "nwProject.nwx"
+_NW_TREE_CACHE: dict = {}
+
+
+def novelwriter_project_root(file: Path):
+    """The project folder if file is a novelWriter document or ToC.txt."""
+    if file.parent.name == "content":
+        root = file.parent.parent
+    elif file.name == "ToC.txt":
+        root = file.parent
+    else:
+        return None
+    return root if (root / NOVELWRITER_PROJECT_FILE).is_file() else None
+
+
+def _novelwriter_tree(root: Path) -> dict:
+    """{"name": project name, "items": {handle: (parent, name, class)}},
+    cached until nwProject.nwx changes."""
+    import xml.etree.ElementTree as ET
+    nwx = root / NOVELWRITER_PROJECT_FILE
+    try:
+        stamp = nwx.stat().st_mtime_ns
+    except OSError:
+        return {"name": "", "items": {}}
+    cached = _NW_TREE_CACHE.get(nwx)
+    if cached and cached[0] == stamp:
+        return cached[1]
+    tree = {"name": "", "items": {}}
+    try:
+        xml = ET.parse(nwx).getroot()
+        tree["name"] = (xml.findtext("project/name") or "").strip()
+        for item in xml.iter("item"):
+            handle = item.get("handle")
+            if handle:
+                tree["items"][handle] = (
+                    item.get("parent"),
+                    (item.findtext("name") or "").strip(),
+                    item.get("class") or "",
+                )
+    except (ET.ParseError, OSError) as e:
+        print(f"  Warning: could not read {nwx}: {e}")
+    _NW_TREE_CACHE[nwx] = (stamp, tree)
+    return tree
+
+
+def _novelwriter_trail(root: Path, handle: str) -> list:
+    """(name, class) from the root folder down to the document."""
+    items = _novelwriter_tree(root)["items"]
+    trail, seen = [], set()
+    while handle in items and handle not in seen:
+        seen.add(handle)
+        parent, name, cls = items[handle]
+        trail.append((name, cls))
+        handle = parent
+    return trail[::-1]
+
+
+def is_skipped_novelwriter_file(file: Path) -> bool:
+    """ToC.txt, and documents sitting in the project's Trash."""
+    root = novelwriter_project_root(file)
+    if root is None:
+        return False
+    if file.name == "ToC.txt":
+        return True
+    trail = _novelwriter_trail(root, file.stem)
+    return bool(trail) and trail[0][1] == "TRASH"
+
+
+def load_novelwriter_document(file: Path, root: Path) -> str:
+    text = file.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    if lines and lines[0].strip() == "+++":
+        for i, line in enumerate(lines[1:], start=1):
+            if line.strip() == "+++":
+                text = "".join(lines[i + 1:])
+                break
+    trail = _novelwriter_trail(root, file.stem)
+    if trail and trail[0][1] == "TRASH":
+        return ""
+    names = [name for name, _ in trail if name]
+    project = _novelwriter_tree(root)["name"] or root.name
+    return f"novelWriter: {' > '.join([project, *names])}\n\n{text.lstrip()}"
 
 
 def file_hash(file: Path) -> str:
@@ -1214,6 +1312,7 @@ def scan_documents(folder: str = None, verbose: bool = True,
         if f.is_file()
         and f.suffix.lower() in active_extensions
         and not is_office_lock_file(f)
+        and not is_skipped_novelwriter_file(f)
         and not any(part in active_ignored_dirs or part.startswith(".")
                     for part in f.relative_to(folder_path).parts[:-1])
     }
