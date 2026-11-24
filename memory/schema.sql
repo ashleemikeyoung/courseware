@@ -617,3 +617,62 @@ CREATE TABLE IF NOT EXISTS response_feedback (
 
 CREATE INDEX IF NOT EXISTS idx_response_feedback_project_rating
     ON response_feedback(project, rating, rated_at);
+
+
+-- ---------------------------------------------------------------------------
+-- Accounts -- the users table is NOT defined in this file. It already exists
+-- in memory-db, created outside schema.sql, with an integer id plus username,
+-- password_hash, role, display_name, created_at, last_login_at, and disabled
+-- columns. It holds the existing login, so nothing here creates, alters, or
+-- drops it. The reading tables below reference users(id).
+--
+-- Not added yet on purpose: tenants and memberships for the ERP and accounting
+-- work, the sharing and verification tables from the early El Roi ERD, and a
+-- hash-chained event ledger, whose triggers contain semicolons that
+-- init_schema.py would split apart.
+-- ---------------------------------------------------------------------------
+
+
+-- ---------------------------------------------------------------------------
+-- ElRoi-Bible reading data -- per-user bookmarks, last position, and chapter
+-- progress. This is deliberately mutable and deletable, and it is NOT part of
+-- any shared or LLM-facing memory. Every query against these tables must
+-- filter on user_id, and that id must come from the server-side session,
+-- never from a request parameter.
+--
+-- References are STEP-style codes like Rom.2.1 and never hold verse text, so
+-- they survive rebuilds of the scripture database and changes of text version.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS bible_bookmarks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    start_ref   TEXT NOT NULL,
+    end_ref     TEXT NOT NULL,   -- same as start_ref for a single verse
+    label       TEXT,
+    note        TEXT,
+    color       TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    deleted_at  TEXT,            -- soft delete so an undo is possible
+    UNIQUE(user_id, start_ref, end_ref)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bible_bookmarks_user
+    ON bible_bookmarks(user_id, deleted_at, created_at);
+
+CREATE TABLE IF NOT EXISTS bible_reading_position (
+    user_id     INTEGER PRIMARY KEY REFERENCES users(id),
+    ref         TEXT NOT NULL,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS bible_chapter_progress (
+    user_id        INTEGER NOT NULL REFERENCES users(id),
+    book           TEXT NOT NULL,
+    chapter        INTEGER NOT NULL,
+    first_read_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    last_read_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    visits         INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (user_id, book, chapter)
+);
