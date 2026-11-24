@@ -89,6 +89,10 @@ server = Server(
         "with the task, its status, the next steps, and the files involved, "
         "so the next session (in Claude Desktop, ElRoi, Claude Code, or the "
         "terminal) can resume it. "
+        "If the user's message is /elroi or starts with /elroi (in any app, "
+        "including ones with no such slash command), call the elroi tool, "
+        "passing any words after /elroi as its request, and then follow what "
+        "it returns. "
         "IMPORTANT: When you need to read a document's full content (especially .docx, .pdf, .txt files), "
         "ALWAYS call read_document with the exact source path. Do not attempt to use "
         "external command-line tools like docx2txt - the read_document tool handles all formats."
@@ -187,6 +191,30 @@ async def list_tools() -> list[Tool]:
                     "project": {
                         "type": "string",
                         "description": "Optional project or folder scope, e.g. 'GCU/DBA-831'",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="elroi",
+            description=(
+                "Start an ElRoi session: what /elroi does in every app. Checks "
+                "that the NAS document share is mounted, waits briefly for "
+                "memory-db if it is still starting (e.g. right after a reboot), "
+                "then returns the last checkpoint and the working rules. Call "
+                "it whenever the user types /elroi, passing any words after "
+                "it as request, and continue from what it returns."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "request": {
+                        "type": "string",
+                        "description": (
+                            "Words typed after /elroi: a project such as 'Book' "
+                            "or 'GCU/DBA-831', or a task. Omit if none."
+                        ),
                     },
                 },
                 "required": [],
@@ -1038,9 +1066,106 @@ async def handle_resume_work(arguments: dict) -> CallToolResult:
     return CallToolResult(content=[TextContent(type="text", text="\n".join(lines))])
 
 
+ELROI_RULES = """Working rules:
+- Find and read material with search_documents, get_document_list and
+  read_document, not shell tools like docx2txt or pdftotext.
+- Save new documents on the file server under the project's folder,
+  ~/Development/RAG/documents/<Project>/... (a link to the NAS), never in the
+  repo root or in documents_bak, then call rescan_documents.
+- ~/Development/RAG/documents_bak is the old local copy: do not read or write
+  it unless Ashlee asks.
+- The book manuscript is the novelWriter project
+  documents/Book/The Rejected Stone/. Do not write into its content/ folder
+  while novelWriter has it open; give Ashlee text to paste or import instead.
+- Call save_progress when a meaningful step is done, a decision is made, or
+  Ashlee says it's time to stop: task, status, next steps, files."""
+
+
+def _documents_mounted() -> bool:
+    try:
+        root = Path(DOCUMENTS_FOLDER).resolve()
+        return root.is_dir() and any(root.iterdir())
+    except OSError:
+        return False
+
+
+def _memory_db_up(timeout: float = 2.0) -> bool:
+    import urllib.request
+    from memory.memory_config import LIBSQL_URL
+    try:
+        with urllib.request.urlopen(LIBSQL_URL.rstrip("/") + "/health",
+                                    timeout=timeout) as r:
+            return r.status < 500
+    except Exception:
+        return False
+
+
+async def _wait_for_memory_db(seconds: float = 45.0) -> bool:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + seconds
+    while True:
+        if await asyncio.to_thread(_memory_db_up):
+            return True
+        if loop.time() >= deadline:
+            return False
+        await asyncio.sleep(3)
+
+
+async def handle_elroi(arguments: dict) -> CallToolResult:
+    request = (arguments.get("request") or "").strip()
+    lines = ["ElRoi session start"]
+
+    mounted = await asyncio.to_thread(_documents_mounted)
+    if mounted:
+        lines.append(f"- File server: mounted ({Path(DOCUMENTS_FOLDER).resolve()})")
+    else:
+        lines.append(
+            "- File server: NOT MOUNTED. Tell Ashlee to reconnect in Finder "
+            "(Go > Connect to Server, smb://TheVault.local/personal_folder). "
+            "Until it is mounted, do not rescan and do not write documents.")
+
+    db_up = await _wait_for_memory_db()
+    if db_up:
+        lines.append("- memory-db: up")
+    else:
+        lines.append(
+            "- memory-db: NOT REACHABLE after 45 s, so checkpoints are missing "
+            "below. Tell Ashlee to start Docker Desktop (the memory-db "
+            "container restarts on its own) and run /elroi again.")
+
+    # A request naming a known project scopes the resume; anything else is
+    # a task to start on after resuming.
+    project = None
+    task = ""
+    if request:
+        scope = _project_scope(request)
+        known = set(projects.discover())
+        if scope and (scope in known or scope.split("/")[0] in known
+                      or Path(DOCUMENTS_FOLDER, scope).is_dir()):
+            project = scope
+        else:
+            task = request
+    if project:
+        lines.append(f"- Project: {project}")
+
+    resumed = await handle_resume_work({"project": project} if project else {})
+    lines += ["", resumed.content[0].text, "", ELROI_RULES, ""]
+    if task:
+        lines.append(f"Ashlee's request: {task}\nResume from the checkpoint "
+                     "above if it is related, then start on this request.")
+    else:
+        lines.append("Continue from the checkpoint above; do not ask Ashlee to "
+                     "re-explain the work. Briefly say where things stand and "
+                     "what is next.")
+    return CallToolResult(content=[TextContent(type="text", text="\n".join(lines))])
+
+
 async def _dispatch_tool(name: str, arguments: dict) -> CallToolResult:
 
-    if name == "resume_work":
+    if name == "elroi":
+        return await handle_elroi(arguments)
+
+    elif name == "resume_work":
         return await handle_resume_work(arguments)
 
     elif name == "save_progress":
