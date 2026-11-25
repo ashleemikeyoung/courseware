@@ -1125,6 +1125,60 @@ def scoped_indexed_sources(scope: str = None, source_type: str = None) -> dict:
     return filter_sources_by_scope(indexed, scope)
 
 
+def _strip_extension(name: str) -> str:
+    """Drop a trailing file extension (any, supported or not)."""
+    path = Path(name)
+    if path.suffix and " " not in path.suffix and len(path.suffix) <= 6:
+        return str(path.with_suffix(""))
+    return name
+
+
+def _stem_matches(source: str, stem_needle: str) -> bool:
+    """True when source, minus its extension, is or ends with stem_needle."""
+    source_stem = _strip_extension(source.lower())
+    return (source_stem == stem_needle
+            or source_stem.endswith("/" + stem_needle.lstrip("/")))
+
+
+def _find_on_file_server(stem_needle: str, scope: str = None) -> list:
+    """Supported files under the documents folder whose path, minus the
+    extension, matches stem_needle. Returns paths relative to the folder."""
+    root = Path(DOCUMENTS_FOLDER)
+    try:
+        if not root.is_dir():
+            return []
+        root_resolved = root.resolve()
+    except OSError:
+        return []
+    scope = normalize_scope(scope)
+    search_root = root
+    if scope and (root / scope).is_dir():
+        search_root = root / scope
+    name_part = Path(stem_needle).name
+    matches = []
+    try:
+        for path in search_root.rglob("*"):
+            if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+                continue
+            if path.stem.lower() != name_part:
+                continue
+            if not path.is_file():
+                continue
+            try:
+                source = str(path.resolve().relative_to(root_resolved))
+            except ValueError:
+                continue
+            if any(part.startswith(".") for part in Path(source).parts):
+                continue
+            if scope and not source_in_scope(source, scope):
+                continue
+            if _stem_matches(source, stem_needle):
+                matches.append(source)
+    except OSError:
+        return []
+    return matches
+
+
 def resolve_indexed_source(source_query: str, scope: str = None):
     """Match a user-typed path or filename to one indexed source.
 
@@ -1148,11 +1202,28 @@ def resolve_indexed_source(source_query: str, scope: str = None):
     if len(exact_name) > 1:
         return None, sorted(exact_name)
 
+    # Ignore the extension: "Module6 DQ2 response 3" and
+    # "Module6 DQ2 response 3.docx" both find "Module6 DQ2 response 3.odt".
+    stem_needle = _strip_extension(needle_lower)
+    same_stem = [source for source in indexed
+                 if _stem_matches(source, stem_needle)]
+    if len(same_stem) == 1:
+        return same_stem[0], []
+    if len(same_stem) > 1:
+        return None, sorted(same_stem)
+
     contained = [source for source in indexed if needle_lower in source.lower()]
     if len(contained) == 1:
         return contained[0], []
     if len(contained) > 1:
         return None, sorted(contained)
+
+    # Not indexed yet (saved since the last scan): look on the file server.
+    on_disk = _find_on_file_server(stem_needle, scope)
+    if len(on_disk) == 1:
+        return on_disk[0], []
+    if len(on_disk) > 1:
+        return None, sorted(on_disk)
 
     try:
         # Lazy: summarize.py imports this module.

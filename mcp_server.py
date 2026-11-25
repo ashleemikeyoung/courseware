@@ -95,7 +95,15 @@ server = Server(
         "it returns. "
         "IMPORTANT: When you need to read a document's full content (especially .docx, .pdf, .txt files), "
         "ALWAYS call read_document with the exact source path. Do not attempt to use "
-        "external command-line tools like docx2txt - the read_document tool handles all formats."
+        "external command-line tools like docx2txt - the read_document tool handles all formats. "
+        "When the user names a file without an extension (or with a guessed one), "
+        "call read_document with the name exactly as given and no extension added: "
+        "it ignores the extension, matches .odt, .docx, .pdf and every other "
+        "supported type, and also checks the file server (ElRoi FS) for files "
+        "saved since the last index scan. Never conclude a file is missing "
+        "because a guessed extension such as .docx failed, and never ask the "
+        "user for the file type; if read_document still finds nothing, call "
+        "rescan_documents and try once more before telling the user."
     ),
 )
 
@@ -395,7 +403,13 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": (
                             "Indexed source path or filename, e.g. "
-                            "'GCU/Topic5 DQ1.docx' or 'Topic5 DQ1.docx'."
+                            "'GCU/Topic5 DQ1.docx' or 'Topic5 DQ1.docx'. "
+                            "The extension is optional and ignored when it "
+                            "does not match: 'Module6 DQ2 response 3' finds "
+                            "'Module6 DQ2 response 3.odt'. Pass the name as "
+                            "the user gave it; do not guess an extension. "
+                            "Files on the file server that are not indexed "
+                            "yet are found too."
                         ),
                     },
                     "project": {
